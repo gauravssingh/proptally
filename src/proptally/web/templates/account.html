@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Account — PropTally{% endblock %}
+{% block content %}
+<div class="pt-stack pt-gap-6">
+
+    <div class="pt-stack pt-gap-1">
+        <h1 class="pt-fs-h2 pt-fw-bold">Account</h1>
+        <p class="pt-fs-caption pt-text-secondary">
+            Signed in as {{ context.user.display_name }} &lt;{{ context.user.email }}&gt;
+            {% if context.user.is_instance_admin %} · instance administrator{% endif %}
+        </p>
+    </div>
+
+    {% if message %}{{ ui.alert(variant="success", title="Done", text=message) }}{% endif %}
+    {% if error %}{{ ui.alert(variant="error", title="Not saved", text=error) }}{% endif %}
+
+    {# --- Portfolio membership -------------------------------------------- #}
+    <section class="pt-card">
+        <div class="pt-card__header">
+            <h2 class="pt-card__title">Your portfolios</h2>
+        </div>
+        <div class="pt-card__body">
+            <table class="pt-table">
+                <thead>
+                    <tr><th>Portfolio</th><th>Your role</th><th></th></tr>
+                </thead>
+                <tbody>
+                {% for membership in memberships %}
+                    <tr>
+                        <td>{{ membership.name }}</td>
+                        <td>{{ membership.role }}</td>
+                        <td>
+                            {% if membership.tenant_id == context.tenant.id %}
+                            <span class="pt-fs-caption pt-text-secondary">Current</span>
+                            {% else %}
+                            <form method="post" action="/auth/switch-tenant">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <input type="hidden" name="tenant_id" value="{{ membership.tenant_id }}">
+                                <button class="pt-btn pt-btn--secondary pt-btn--sm" type="submit">Switch to this portfolio</button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    {# --- Invitations (owners only) --------------------------------------- #}
+    {% if context.can_administer %}
+    <section class="pt-card">
+        <div class="pt-card__header">
+            <h2 class="pt-card__title">Invite somebody to this portfolio</h2>
+        </div>
+        <div class="pt-card__body">
+            <form method="post" action="/account/invites" class="pt-form-grid pt-form-grid--2">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div class="pt-auth__field">
+                    <label for="invite_email">Email</label>
+                    <input id="invite_email" name="email" type="email" required>
+                </div>
+                <div class="pt-auth__field">
+                    <label for="invite_role">Role</label>
+                    <select id="invite_role" name="role">
+                        <option value="READ_ONLY">Read-only (view and export)</option>
+                        <option value="CPA_REVIEWER">Reviewer (may record external review)</option>
+                    </select>
+                </div>
+                <div style="align-self:end">
+                    <button class="pt-btn pt-btn--primary pt-btn--sm" type="submit">Create invitation</button>
+                </div>
+            </form>
+
+            {% if invite_token %}
+            <div class="pt-alert pt-alert--warning" style="margin-top:1rem">
+                <strong class="pt-alert__title">Invitation link (shown once)</strong>
+                <span class="pt-alert__text" style="word-break:break-all">/auth/invite/{{ invite_token }}</span>
+            </div>
+            {% endif %}
+
+            {% if pending_invites %}
+            <table class="pt-table" style="margin-top:1rem">
+                <thead><tr><th>Email</th><th>Role</th><th>Expires</th></tr></thead>
+                <tbody>
+                {% for invite in pending_invites %}
+                    <tr>
+                        <td>{{ invite.email }}</td>
+                        <td>{{ invite.role }}</td>
+                        <td>{{ invite.expires_at | format_date }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+        </div>
+    </section>
+    {% endif %}
+
+    {# --- Password --------------------------------------------------------- #}
+    <section class="pt-card">
+        <div class="pt-card__header">
+            <h2 class="pt-card__title">Change your password</h2>
+        </div>
+        <div class="pt-card__body">
+            <form method="post" action="/account/password" class="pt-form-grid pt-form-grid--2">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div class="pt-auth__field">
+                    <label for="current_password">Current password</label>
+                    <input id="current_password" name="current_password" type="password" autocomplete="current-password" required>
+                </div>
+                <div class="pt-auth__field">
+                    <label for="new_password">New password</label>
+                    <input id="new_password" name="new_password" type="password" autocomplete="new-password" required>
+                    <small>At least {{ min_password_length }} characters. Signs out your other sessions.</small>
+                </div>
+                <div style="align-self:end">
+                    <button class="pt-btn pt-btn--primary pt-btn--sm" type="submit">Change password</button>
+                </div>
+            </form>
+        </div>
+    </section>
+
+    <form method="post" action="/auth/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="pt-btn pt-btn--secondary pt-btn--sm" type="submit">Sign out</button>
+    </form>
+</div>
+{% endblock %}

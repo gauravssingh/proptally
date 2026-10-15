@@ -19,6 +19,9 @@ dependencies = [
     "watchfiles>=0.21.0",
     "jinja2>=3.1.3",
     "httpx>=0.27.0",
+    # Password hashing for self-hosted accounts. Argon2id is the algorithm named by
+    # docs/architecture/v2/06_SECURITY_AND_DEPLOYMENT.md §3.1.
+    "argon2-cffi>=23.1.0",
 ]
 
 [project.optional-dependencies]

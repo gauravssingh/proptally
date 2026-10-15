@@ -1,0 +1,31 @@
+{% extends "auth_base.html" %}
+{% block title %}Sign in — PropTally{% endblock %}
+{% block card %}
+<h1 class="pt-auth__title">Sign in</h1>
+<p class="pt-auth__sub">Self-hosted portfolio finance. Your data stays on this host.</p>
+
+{% if error %}<div class="pt-auth__error">{{ error }}</div>{% endif %}
+
+<form class="pt-auth__form" method="post" action="/auth/login">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
+    <div class="pt-auth__field">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" required autofocus value="{{ email or '' }}">
+    </div>
+    <div class="pt-auth__field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+    </div>
+    <button class="pt-auth__submit" type="submit">Sign in</button>
+</form>
+
+<div class="pt-auth__links">
+    {% if registration_open %}
+    <span>No account yet? <a href="/auth/register">Create a portfolio</a>.</span>
+    {% else %}
+    <span>Accounts on this instance are created by invitation or by the operator.</span>
+    {% endif %}
+    <span><a href="/auth/reset">Forgot your password?</a></span>
+</div>
+{% endblock %}

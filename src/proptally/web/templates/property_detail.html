@@ -173,6 +173,7 @@
                     </button>
                     {% if not photo.is_cover %}
                     <form method="POST" action="/properties/{{ property.id }}/photos/{{ photo.id }}/cover" class="pt-inline-flex">
+        {{ csrf_field() }}
                         <button type="submit" class="pt-btn pt-btn--ghost pt-btn--xs pt-btn--icon" title="Make cover photo" aria-label="Set as cover photo">
                             {{ ui.icon("star", "sm") }}
                         </button>
@@ -180,6 +181,7 @@
                     {% endif %}
                     <form method="POST" action="/properties/{{ property.id }}/photos/{{ photo.id }}/delete"
                           data-confirm="Delete this property photo?" class="pt-inline-flex">
+        {{ csrf_field() }}
                         <button type="submit" class="pt-btn pt-btn--ghost pt-btn--xs pt-btn--icon" title="Delete photo" aria-label="Delete photo">
                             {{ ui.icon("trash", "sm") }}
                         </button>
@@ -620,6 +622,7 @@
 <!-- Modal 1: Edit Property Details & Google Maps Link -->
 {{ ui.modal_open("edit-details-modal", "Edit Property", subtitle=property.name, size="md") }}
 <form action="/properties/{{ property.id }}/update-details" method="POST" class="pt-modal__form">
+        {{ csrf_field() }}
     <div class="pt-modal__body pt-stack">
         {{ ui.text_field(
             "google_maps_url",
@@ -648,6 +651,7 @@
 <!-- Modal 2: Upload Property Photo -->
 {{ ui.modal_open("upload-photo-modal", "Upload Property Photo", subtitle=property.name, size="md") }}
 <form action="/properties/{{ property.id }}/photos/upload" method="POST" enctype="multipart/form-data" class="pt-modal__form">
+        {{ csrf_field() }}
     <div class="pt-modal__body pt-stack">
         <div class="pt-field">
             <label class="pt-field__label" for="photo-file">Select Image File</label>
@@ -689,6 +693,7 @@
 <!-- Modal 4: Upload Property Document -->
 {{ ui.modal_open("upload-document-modal", "Upload Property Document", subtitle=property.name, size="md") }}
 <form action="/properties/{{ property.id }}/documents/upload" method="POST" enctype="multipart/form-data" class="pt-modal__form">
+        {{ csrf_field() }}
     <div class="pt-modal__body pt-stack">
         <div class="pt-field">
             <label class="pt-field__label" for="doc-file">Select Document File</label>
@@ -734,6 +739,7 @@
 <!-- Modal 5: Register / Edit Lease Terms -->
 {{ ui.modal_open("edit-lease-modal", "Register / Edit Lease Terms", subtitle=property.name, size="md") }}
 <form action="/properties/{{ property.id }}/lease/update" method="POST" class="pt-modal__form">
+        {{ csrf_field() }}
     <div class="pt-modal__body pt-stack">
         {{ ui.text_field(
             "tenant_name",

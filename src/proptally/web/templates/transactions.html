@@ -273,6 +273,7 @@
    --------------------------------------------------------------------------- #}
 {{ ui.modal_open("manual-modal", "Record Manual Transaction", size="md") }}
 <form class="pt-modal__form" action="/transactions/manual" method="POST">
+        {{ csrf_field() }}
     <div class="pt-modal__body">
         {% set account_options = [] %}
         {% for a in accounts %}
@@ -358,6 +359,7 @@
     size="lg"
 ) }}
 <form id="split-form" class="pt-modal__form" action="/transactions/split" method="POST">
+        {{ csrf_field() }}
     <div class="pt-modal__body">
         <input type="hidden" id="split-txn-id" name="transaction_id">
         <input type="hidden" id="split-parent-total-cents" value="0">

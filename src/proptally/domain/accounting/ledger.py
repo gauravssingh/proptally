@@ -91,7 +91,12 @@ def add_journal_line(
     return line
 
 
-def post_journal_entry(session: Session, entry_id: str, commit: bool = True) -> JournalEntry:
+def post_journal_entry(
+    session: Session,
+    entry_id: str,
+    commit: bool = True,
+    actor_id: str = "system",
+) -> JournalEntry:
     """Atomically validates equilibrium and posts a journal entry to permanent ledger.
 
     Invariants enforced:
@@ -99,6 +104,10 @@ def post_journal_entry(session: Session, entry_id: str, commit: bool = True) -> 
     2. Entry must have >= 1 line.
     3. Sum of debits must strictly equal sum of credits.
     4. Total debits must be strictly greater than zero.
+
+    ``actor_id`` is who caused the posting. It is recorded in the audit log and is
+    supplied by the caller from the authenticated session; a route cannot set it by
+    writing a column.
 
     Pass ``commit=False`` to join a caller-owned transaction; the caller is then
     responsible for committing or rolling back.
@@ -139,7 +148,7 @@ def post_journal_entry(session: Session, entry_id: str, commit: bool = True) -> 
         entity_name="journal_entries",
         entity_id=entry_id,
         action="POST",
-        changed_by="system",
+        changed_by=actor_id,
         new_values_json=f'{{"total_cents": {total_debits}, "lines_count": {len(lines)}}}',
     )
     session.add(audit)
@@ -168,6 +177,7 @@ def reverse_journal_entry(
     reversal_date: date,
     reason: str,
     commit: bool = True,
+    actor_id: str = "system",
 ) -> JournalEntry:
     """Creates and posts an independent compensating reversal entry, preserving audit history.
 
@@ -224,7 +234,7 @@ def reverse_journal_entry(
         entity_name="journal_entries",
         entity_id=orig_entry.id,
         action="REVERSE",
-        changed_by="system",
+        changed_by=actor_id,
         reason=reason,
         new_values_json=f'{{"reversal_entry_id": "{posted_reversal.id}"}}',
     )

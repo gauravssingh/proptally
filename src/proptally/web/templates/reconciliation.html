@@ -251,6 +251,7 @@
 
         <form action="/reconciliation/batch-apply-rule" method="POST"
               class="pt-flex pt-flex-wrap pt-items-end pt-gap-3">
+        {{ csrf_field() }}
             <input type="hidden" name="vendor_pattern" value="{{ batch_action_info.pattern }}">
 
             {{ ui.select_field("category", "Category", batch_category_options,
@@ -328,6 +329,7 @@
 
                 <form action="/reconciliation/apply-suggestion" method="POST"
                       class="pt-flex pt-flex-wrap pt-items-center pt-gap-3">
+        {{ csrf_field() }}
                     <input type="hidden" name="transaction_id" value="{{ txn.id }}">
 
                     {% if item.suggestion.requires_client_confirmation or item.policy.requires_client_confirmation %}
@@ -356,6 +358,7 @@
 
             {# --- Row 4: manual assignment → Assign & Post ----------------- #}
             <form action="/reconciliation/assign" method="POST" class="pt-stack-3">
+        {{ csrf_field() }}
                 <input type="hidden" name="transaction_id" value="{{ txn.id }}">
 
                 <div class="pt-review-item__actions">
@@ -441,6 +444,7 @@
     size="xl"
 ) }}
 <form class="pt-modal__form" action="/reconciliation/vendor-rules/create" method="POST">
+        {{ csrf_field() }}
     <div class="pt-modal__body">
         <div class="pt-card pt-card--sunken">
             <div class="pt-card__body pt-stack">

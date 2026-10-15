@@ -1,0 +1,38 @@
+{% extends "auth_base.html" %}
+{% block title %}Reset password — PropTally{% endblock %}
+{% block card %}
+<h1 class="pt-auth__title">Reset your password</h1>
+
+{% if issued_token %}
+<p class="pt-auth__sub">
+    This deployment has no mail transport by design, so the reset token is shown
+    here once rather than emailed. Hand it to the account holder over a channel you
+    trust, or use the link below yourself.
+</p>
+<div class="pt-auth__success">
+    <div style="word-break: break-all; margin-bottom: .5rem;">{{ issued_token }}</div>
+    <a href="/auth/reset/{{ issued_token }}">Continue to set a new password →</a>
+</div>
+{% elif submitted %}
+<p class="pt-auth__sub">
+    If an account exists for that address, a reset token has been created. No email
+    is sent: ask the operator of this instance for the token.
+</p>
+<div class="pt-auth__success">Request processed.</div>
+{% else %}
+<p class="pt-auth__sub">Enter the email address on the account.</p>
+{% if error %}<div class="pt-auth__error">{{ error }}</div>{% endif %}
+<form class="pt-auth__form" method="post" action="/auth/reset">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="pt-auth__field">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" required autofocus>
+    </div>
+    <button class="pt-auth__submit" type="submit">Create reset token</button>
+</form>
+{% endif %}
+
+<div class="pt-auth__links">
+    <span><a href="/auth/login">Back to sign in</a></span>
+</div>
+{% endblock %}

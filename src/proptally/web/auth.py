@@ -1,0 +1,772 @@
+"""Local authentication, sessions, CSRF and portfolio authorisation.
+
+Everything here is self-hosted and dependency-light by design: passwords are hashed
+with Argon2id (the algorithm named by ``docs/architecture/v2/06_SECURITY_AND_DEPLOYMENT.md``
+§3.1), session cookies carry a random token whose digest is the only thing stored,
+and cross-site request forgery is stopped by a per-session double-submit token that
+every unsafe request must echo. No cloud identity provider is involved, so no
+account data leaves the host.
+
+Authorisation is deliberately coarse and explicit:
+
+* ``OWNER`` administers a portfolio.
+* ``CPA_REVIEWER`` may record the external review a Schedule E deduction needs --
+  that attestation is the role's entire purpose -- but may not administer.
+* ``READ_ONLY`` may read and export, never mutate.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import logging
+import os
+import secrets
+import time
+from contextvars import ContextVar
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Optional
+from uuid import uuid4
+
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
+from fastapi import HTTPException, Request
+from sqlalchemy.engine import Engine
+from sqlmodel import Session, select
+
+from proptally.db.system_models import (
+    MUTATING_ROLES,
+    ROLE_CPA_REVIEWER,
+    ROLE_OWNER,
+    ROLE_READ_ONLY,
+    SYSTEM_TABLES,  # noqa: F401  (re-exported for callers building the schema)
+    PasswordResetToken,
+    Tenant,
+    TenantMembership,
+    User,
+    UserInvite,
+    UserSession,
+    utc_now,
+)
+from proptally.db.tenant_manager import TenantManager, TenantPaths, slugify
+
+logger = logging.getLogger(__name__)
+
+#: Session cookie name. HTTP-only, SameSite=Lax, and Secure when the deployment
+#: terminates TLS in front of the app.
+COOKIE_NAME = "pt_session"
+
+#: How long a session lives, and how long an unstretched "remember me" cookie lasts.
+SESSION_LIFETIME = timedelta(hours=12)
+INVITE_LIFETIME = timedelta(days=7)
+RESET_LIFETIME = timedelta(hours=2)
+
+#: Login throttling: this many failures per window, per (address, email) pair.
+LOGIN_ATTEMPT_LIMIT = 5
+LOGIN_ATTEMPT_WINDOW_SECONDS = 15 * 60
+
+#: Requests that change state and therefore require a CSRF token.
+UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+_HASHER = PasswordHasher()
+
+
+class AuthenticationRequired(Exception):
+    """Raised when a request has no valid session. Rendered as a redirect to /auth/login."""
+
+
+class AuthorizationError(PermissionError):
+    """Raised when the authenticated role may not perform the requested change."""
+
+
+# --- Passwords -------------------------------------------------------------
+
+def hash_password(password: str) -> str:
+    """Argon2id hash of a password."""
+    return _HASHER.hash(password)
+
+
+def verify_password(password_hash: str, password: str) -> bool:
+    """Constant-time password check. Never raises on a malformed hash."""
+    try:
+        return _HASHER.verify(password_hash, password)
+    except (VerifyMismatchError, VerificationError, InvalidHashError):
+        return False
+
+
+def password_is_acceptable(password: str) -> tuple[bool, str]:
+    """Minimum password policy for a self-hosted instance."""
+    if len(password) < 10:
+        return False, "Password must be at least 10 characters."
+    if password.strip() != password:
+        return False, "Password must not begin or end with whitespace."
+    return True, ""
+
+
+# --- Tokens ----------------------------------------------------------------
+
+def new_token() -> str:
+    """A high-entropy token for a session cookie, invite link or reset link."""
+    return secrets.token_urlsafe(32)
+
+
+def token_digest(token: str) -> str:
+    """What is stored for a token. A stolen database yields no usable tokens."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def tokens_match(stored_digest: str, presented: str) -> bool:
+    """Constant-time comparison of a stored digest against a presented token."""
+    return hmac.compare_digest(stored_digest, token_digest(presented))
+
+
+# --- Request context -------------------------------------------------------
+
+@dataclass(frozen=True)
+class TenantContext:
+    """Everything a request needs to act on exactly one portfolio."""
+
+    user: User
+    tenant: Tenant
+    role: str
+    session: UserSession
+    engine: Engine
+    paths: TenantPaths
+
+    @property
+    def csrf_token(self) -> str:
+        return self.session.csrf_token
+
+    @property
+    def is_owner(self) -> bool:
+        return self.role == ROLE_OWNER
+
+    @property
+    def can_mutate(self) -> bool:
+        return self.role in MUTATING_ROLES
+
+    @property
+    def can_administer(self) -> bool:
+        return self.role == ROLE_OWNER
+
+    def require_mutation(self) -> None:
+        if not self.can_mutate:
+            raise AuthorizationError(
+                f"Role {self.role} may read this portfolio but not change it."
+            )
+
+    def require_admin(self) -> None:
+        if not self.can_administer:
+            raise AuthorizationError(
+                f"Role {self.role} may not administer this portfolio."
+            )
+
+    def actor_id(self) -> str:
+        """Who to record as the author of an audited change."""
+        return self.user.id
+
+
+#: The context of the request being handled. Set by the dependency and read by
+#: templates, so the shell can render the signed-in user without every route
+#: having to thread it through its template context.
+_current_context: ContextVar[Optional[TenantContext]] = ContextVar("proptally_context", default=None)
+
+
+def current_context() -> Optional[TenantContext]:
+    """The active request's portfolio context, or None outside a request."""
+    return _current_context.get()
+
+
+def set_current_context(context: Optional[TenantContext]) -> None:
+    _current_context.set(context)
+
+
+# --- Login throttling ------------------------------------------------------
+
+class LoginRateLimiter:
+    """In-process throttle for password attempts.
+
+    Keyed by address and email together, so one attacker cannot lock out an account
+    by guessing at it from elsewhere, and a shared address cannot be used to spray
+    many accounts. In-process state is appropriate here: this app is a single
+    self-hosted service, and the limit is a speed bump, not an authorisation control.
+    """
+
+    def __init__(self, limit: int = LOGIN_ATTEMPT_LIMIT, window_seconds: int = LOGIN_ATTEMPT_WINDOW_SECONDS):
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self._failures: dict[tuple[str, str], list[float]] = {}
+
+    def _prune(self, key: tuple[str, str], now: float) -> list[float]:
+        recent = [t for t in self._failures.get(key, []) if now - t < self.window_seconds]
+        if recent:
+            self._failures[key] = recent
+        else:
+            self._failures.pop(key, None)
+        return recent
+
+    def is_blocked(self, ip_address: str, email: str) -> bool:
+        now = time.monotonic()
+        return len(self._prune((ip_address, email.lower()), now)) >= self.limit
+
+    def record_failure(self, ip_address: str, email: str) -> None:
+        now = time.monotonic()
+        key = (ip_address, email.lower())
+        recent = self._prune(key, now)
+        recent.append(now)
+        self._failures[key] = recent
+
+    def clear(self, ip_address: str, email: str) -> None:
+        self._failures.pop((ip_address, email.lower()), None)
+
+
+# --- Accounts, portfolios and memberships ----------------------------------
+
+def normalise_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def find_user(engine: Engine, email: str) -> Optional[User]:
+    with Session(engine) as session:
+        return session.exec(select(User).where(User.email == normalise_email(email))).first()
+
+
+def count_users(engine: Engine) -> int:
+    with Session(engine) as session:
+        return len(session.exec(select(User)).all())
+
+
+def memberships_for(engine: Engine, user_id: str) -> list[TenantMembership]:
+    with Session(engine) as session:
+        return list(
+            session.exec(
+                select(TenantMembership)
+                .where(TenantMembership.user_id == user_id)
+                .order_by(TenantMembership.created_at)
+            ).all()
+        )
+
+
+def tenant_for(engine: Engine, tenant_id: str) -> Optional[Tenant]:
+    with Session(engine) as session:
+        return session.get(Tenant, tenant_id)
+
+
+def unique_slug(engine: Engine, name: str) -> str:
+    """A portfolio slug that is not already taken."""
+    base = slugify(name)
+    with Session(engine) as session:
+        taken = {row for row in session.exec(select(Tenant.slug)).all()}
+    if base not in taken:
+        return base
+    for suffix in range(2, 1000):
+        candidate = f"{base}-{suffix}"
+        if candidate not in taken:
+            return candidate
+    return f"{base}-{secrets.token_hex(3)}"
+
+
+def register_portfolio(
+    control_engine: Engine,
+    tenant_manager: TenantManager,
+    *,
+    email: str,
+    password: str,
+    display_name: str,
+    portfolio_name: str,
+) -> tuple[User, Tenant, TenantMembership]:
+    """Creates an account and its first portfolio, in that order.
+
+    The first account on a fresh instance also becomes the instance administrator,
+    which is what makes a self-hosted deployment bootstrapable without shipping a
+    default password.
+    """
+    ok, reason = password_is_acceptable(password)
+    if not ok:
+        raise ValueError(reason)
+
+    email = normalise_email(email)
+    if not email or "@" not in email:
+        raise ValueError("A valid email address is required.")
+
+    with Session(control_engine) as session:
+        if session.exec(select(User).where(User.email == email)).first():
+            raise ValueError("An account with that email already exists.")
+
+        is_first_user = len(session.exec(select(User)).all()) == 0
+        user = User(
+            id=f"usr_{uuid4().hex[:16]}",
+            email=email,
+            password_hash=hash_password(password),
+            display_name=display_name.strip() or email,
+            is_instance_admin=is_first_user,
+        )
+        session.add(user)
+
+        tenant = Tenant(
+            id=f"tnt_{uuid4().hex[:16]}",
+            name=portfolio_name.strip() or f"{user.display_name}'s portfolio",
+            slug=unique_slug(control_engine, portfolio_name),
+        )
+        session.add(tenant)
+        session.flush()
+
+        membership = TenantMembership(
+            id=f"mem_{uuid4().hex[:16]}",
+            user_id=user.id,
+            tenant_id=tenant.id,
+            role=ROLE_OWNER,
+        )
+        session.add(membership)
+        session.commit()
+        session.refresh(user)
+        session.refresh(tenant)
+        session.refresh(membership)
+
+    # Provision the portfolio's own database, directories and standard accounts.
+    tenant_manager.ensure_tenant_storage(tenant.id)
+    return user, tenant, membership
+
+
+def authenticate(control_engine: Engine, email: str, password: str) -> Optional[User]:
+    """The user for these credentials, or None. Never reveals which part failed."""
+    with Session(control_engine) as session:
+        user = session.exec(select(User).where(User.email == normalise_email(email))).first()
+        if user is None or not user.is_active:
+            # Still hash something, so a missing account is not obviously faster.
+            verify_password(_HASHER.hash("timing-equalisation"), password)
+            return None
+        if not verify_password(user.password_hash, password):
+            return None
+        return user
+
+
+def change_password(control_engine: Engine, user: User, current_password: str, new_password: str) -> None:
+    """Changes a password and revokes every other session.
+
+    Changing a password is how a user responds to suspected compromise, so it must
+    also cut off sessions that were opened with the old one.
+    """
+    ok, reason = password_is_acceptable(new_password)
+    if not ok:
+        raise ValueError(reason)
+    with Session(control_engine) as session:
+        stored = session.get(User, user.id)
+        if stored is None or not verify_password(stored.password_hash, current_password):
+            raise ValueError("Current password is incorrect.")
+        stored.password_hash = hash_password(new_password)
+        stored.password_changed_at = utc_now()
+        session.add(stored)
+        for row in session.exec(select(UserSession).where(UserSession.user_id == user.id)).all():
+            if row.revoked_at is None:
+                row.revoked_at = utc_now()
+                session.add(row)
+        session.commit()
+
+
+def create_invite(
+    control_engine: Engine,
+    *,
+    tenant_id: str,
+    email: str,
+    role: str,
+    invited_by_user_id: str,
+) -> tuple[UserInvite, str]:
+    """Issues a single-use invitation. Returns the row and the plain token."""
+    if role not in (ROLE_CPA_REVIEWER, ROLE_READ_ONLY):
+        raise ValueError(f"Cannot invite somebody as {role!r}.")
+
+    token = new_token()
+    with Session(control_engine) as session:
+        invite = UserInvite(
+            id=f"inv_{uuid4().hex[:16]}",
+            tenant_id=tenant_id,
+            email=normalise_email(email),
+            role=role,
+            token_hash=token_digest(token),
+            invited_by_user_id=invited_by_user_id,
+            expires_at=utc_now() + INVITE_LIFETIME,
+        )
+        session.add(invite)
+        session.commit()
+        session.refresh(invite)
+    return invite, token
+
+
+def find_invite(control_engine: Engine, token: str) -> Optional[UserInvite]:
+    with Session(control_engine) as session:
+        invite = session.exec(
+            select(UserInvite).where(UserInvite.token_hash == token_digest(token))
+        ).first()
+        if invite is None or invite.accepted_at is not None:
+            return None
+        if invite.expires_at <= utc_now():
+            return None
+        return invite
+
+
+def accept_invite(
+    control_engine: Engine,
+    tenant_manager: TenantManager,
+    *,
+    token: str,
+    password: str,
+    display_name: str = "",
+) -> tuple[User, Tenant, TenantMembership]:
+    """Joins the inviting portfolio, creating the account if it does not exist yet."""
+    invite = find_invite(control_engine, token)
+    if invite is None:
+        raise ValueError("This invitation is invalid, already used, or has expired.")
+
+    ok, reason = password_is_acceptable(password)
+    if not ok:
+        raise ValueError(reason)
+
+    with Session(control_engine) as session:
+        user = session.exec(select(User).where(User.email == invite.email)).first()
+        if user is None:
+            user = User(
+                id=f"usr_{uuid4().hex[:16]}",
+                email=invite.email,
+                password_hash=hash_password(password),
+                display_name=display_name.strip() or invite.email,
+            )
+            session.add(user)
+            session.flush()
+        elif not verify_password(user.password_hash, password):
+            raise ValueError("An account already exists for this email; sign in to accept the invitation.")
+
+        existing = session.exec(
+            select(TenantMembership).where(
+                TenantMembership.user_id == user.id,
+                TenantMembership.tenant_id == invite.tenant_id,
+            )
+        ).first()
+        if existing is not None:
+            raise ValueError("This account is already a member of that portfolio.")
+
+        membership = TenantMembership(
+            id=f"mem_{uuid4().hex[:16]}",
+            user_id=user.id,
+            tenant_id=invite.tenant_id,
+            role=invite.role,
+        )
+        session.add(membership)
+
+        stored_invite = session.get(UserInvite, invite.id)
+        stored_invite.accepted_at = utc_now()
+        session.add(stored_invite)
+        session.commit()
+        session.refresh(user)
+        session.refresh(membership)
+        tenant = session.get(Tenant, invite.tenant_id)
+
+    tenant_manager.ensure_tenant_storage(tenant.id)
+    return user, tenant, membership
+
+
+def issue_password_reset(control_engine: Engine, email: str) -> Optional[str]:
+    """Creates a reset token and returns it for out-of-band delivery.
+
+    Returns None when no such account exists, and the caller must render the same
+    response either way so the endpoint cannot be used to enumerate accounts. The
+    token is returned rather than emailed because this deployment has no mail
+    transport by design; the operator hands it over (see the deployment guide).
+    """
+    with Session(control_engine) as session:
+        user = session.exec(select(User).where(User.email == normalise_email(email))).first()
+        if user is None:
+            return None
+        token = new_token()
+        session.add(PasswordResetToken(
+            id=f"rst_{uuid4().hex[:16]}",
+            user_id=user.id,
+            token_hash=token_digest(token),
+            expires_at=utc_now() + RESET_LIFETIME,
+        ))
+        session.commit()
+    return token
+
+
+def consume_password_reset(control_engine: Engine, token: str, new_password: str) -> User:
+    """Sets a new password from a single-use reset token and revokes all sessions."""
+    ok, reason = password_is_acceptable(new_password)
+    if not ok:
+        raise ValueError(reason)
+
+    with Session(control_engine) as session:
+        row = session.exec(
+            select(PasswordResetToken).where(PasswordResetToken.token_hash == token_digest(token))
+        ).first()
+        if row is None or row.used_at is not None or row.expires_at <= utc_now():
+            raise ValueError("This reset link is invalid, already used, or has expired.")
+        user = session.get(User, row.user_id)
+        if user is None:
+            raise ValueError("This reset link is invalid, already used, or has expired.")
+        user.password_hash = hash_password(new_password)
+        user.password_changed_at = utc_now()
+        session.add(user)
+        row.used_at = utc_now()
+        session.add(row)
+        for existing in session.exec(select(UserSession).where(UserSession.user_id == user.id)).all():
+            if existing.revoked_at is None:
+                existing.revoked_at = utc_now()
+                session.add(existing)
+        session.commit()
+        session.refresh(user)
+        return user
+
+
+# --- Sessions --------------------------------------------------------------
+
+def issue_session(
+    control_engine: Engine,
+    user: User,
+    tenant_id: str,
+    *,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> tuple[str, UserSession]:
+    """Opens a session and returns the cookie token with its stored row."""
+    token = new_token()
+    with Session(control_engine) as session:
+        row = UserSession(
+            id=token_digest(token),
+            user_id=user.id,
+            active_tenant_id=tenant_id,
+            csrf_token=new_token(),
+            ip_address=ip_address,
+            user_agent=(user_agent or "")[:255] or None,
+            expires_at=utc_now() + SESSION_LIFETIME,
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+    return token, row
+
+
+def revoke_session(control_engine: Engine, token: str) -> None:
+    with Session(control_engine) as session:
+        row = session.get(UserSession, token_digest(token))
+        if row is not None and row.revoked_at is None:
+            row.revoked_at = utc_now()
+            session.add(row)
+            session.commit()
+
+
+def switch_active_tenant(control_engine: Engine, token: str, tenant_id: str) -> None:
+    """Points a session at another portfolio the user is a member of."""
+    with Session(control_engine) as session:
+        row = session.get(UserSession, token_digest(token))
+        if row is not None:
+            row.active_tenant_id = tenant_id
+            session.add(row)
+            session.commit()
+
+
+def resolve_context(
+    control_engine: Engine,
+    tenant_manager: TenantManager,
+    token: Optional[str],
+) -> Optional[TenantContext]:
+    """The portfolio context for a session cookie, or None if it is not usable."""
+    if not token:
+        return None
+
+    with Session(control_engine) as session:
+        row = session.get(UserSession, token_digest(token))
+        if row is None or row.revoked_at is not None or row.expires_at <= utc_now():
+            return None
+        user = session.get(User, row.user_id)
+        if user is None or not user.is_active:
+            return None
+
+        memberships = list(
+            session.exec(
+                select(TenantMembership)
+                .where(TenantMembership.user_id == user.id)
+                .order_by(TenantMembership.created_at)
+            ).all()
+        )
+        if not memberships:
+            return None
+
+        membership = next(
+            (m for m in memberships if m.tenant_id == row.active_tenant_id),
+            memberships[0],
+        )
+        tenant = session.get(Tenant, membership.tenant_id)
+        if tenant is None:
+            return None
+        session.expunge(user)
+        session.expunge(row)
+        session.expunge(tenant)
+
+    tenant_manager.ensure_tenant_storage(tenant.id)
+    return TenantContext(
+        user=user,
+        tenant=tenant,
+        role=membership.role,
+        session=row,
+        engine=tenant_manager.engine_for(tenant.id),
+        paths=tenant_manager.paths(tenant.id),
+    )
+
+
+# --- Request dependencies --------------------------------------------------
+
+def cookie_name() -> str:
+    return os.environ.get("PROPTALLY_SESSION_COOKIE", COOKIE_NAME)
+
+
+def cookie_is_secure(request) -> bool:
+    """Whether to mark cookies Secure, decided from how the request actually arrived.
+
+    A Secure cookie is never sent back over plain HTTP, so marking one Secure on an
+    http:// deployment locks the user out of their own app. The flag therefore
+    follows the scheme: HTTPS (including behind a reverse proxy that sets
+    X-Forwarded-Proto) gets Secure cookies, plain HTTP does not.
+    ``PROPTALLY_SECURE_COOKIES`` overrides this in either direction.
+    """
+    override = os.environ.get("PROPTALLY_SECURE_COOKIES", "").strip().lower()
+    if override in {"1", "true", "yes"}:
+        return True
+    if override in {"0", "false", "no"}:
+        return False
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    return forwarded == "https" or request.url.scheme == "https"
+
+
+def csrf_token_valid(context: TenantContext, presented: Optional[str]) -> bool:
+    """Double-submit check: the request must echo the session's own token."""
+    if not presented:
+        return False
+    return hmac.compare_digest(context.csrf_token, presented)
+
+
+# --- Pre-session CSRF ------------------------------------------------------
+#
+# Sign-in, registration, invitation and password-reset forms have no session yet,
+# so their token cannot come from one. They use the same double-submit idea with a
+# cookie issued when the form is rendered: an attacker's page can make the browser
+# send the cookie, but cannot read it to put the matching value in the form.
+
+PRE_SESSION_COOKIE = "pt_csrf"
+
+
+def issue_pre_session_csrf(request) -> tuple[str, bool]:
+    """The token for an unauthenticated form, and whether the cookie must be set."""
+    existing = request.cookies.get(PRE_SESSION_COOKIE)
+    if existing:
+        return existing, False
+    return new_token(), True
+
+
+def pre_session_csrf_valid(request, presented: Optional[str]) -> bool:
+    """Whether an unauthenticated post echoes the pre-session cookie."""
+    cookie = request.cookies.get(PRE_SESSION_COOKIE)
+    if not cookie or not presented:
+        return False
+    return hmac.compare_digest(cookie, presented)
+
+
+def set_pre_session_csrf_cookie(response, token: str, request) -> None:
+    response.set_cookie(
+        PRE_SESSION_COOKIE,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=cookie_is_secure(request),
+        path="/",
+    )
+
+
+def set_session_cookie(response, token: str, request) -> None:
+    """Sets the session cookie with the flags the security spec requires."""
+    response.set_cookie(
+        cookie_name(),
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=cookie_is_secure(request),
+        max_age=int(SESSION_LIFETIME.total_seconds()),
+        path="/",
+    )
+
+
+def clear_session_cookie(response) -> None:
+    response.delete_cookie(cookie_name(), path="/")
+
+
+def registration_is_open(control_engine: Engine) -> bool:
+    """Whether self-registration is permitted right now.
+
+    Open when the operator enables it, and also while the instance has no accounts
+    at all: a self-hosted deployment has to be bootstrapable without shipping a
+    default password, and the very first account becomes the instance administrator.
+    """
+    flag = os.environ.get("PROPTALLY_ALLOW_REGISTRATION", "").lower() in {"1", "true", "yes"}
+    return flag or count_users(control_engine) == 0
+
+
+class AuthenticationDependency:
+    """FastAPI dependency resolving (and enforcing) the request's portfolio context.
+
+    Unsafe methods are checked for the CSRF token here rather than in each route, so
+    a route added later cannot forget it: the dependency runs before any handler and
+    rejects the request outright.
+    """
+
+    def __init__(self, control_engine: Engine, tenant_manager: TenantManager):
+        self.control_engine = control_engine
+        self.tenant_manager = tenant_manager
+        self.last_resolved: Optional[TenantContext] = None
+
+    async def __call__(self, request: Request) -> TenantContext:
+        token = request.cookies.get(cookie_name())
+        context = resolve_context(self.control_engine, self.tenant_manager, token)
+        if context is None:
+            raise AuthenticationRequired()
+
+        if request.method in UNSAFE_METHODS:
+            presented = request.headers.get("x-csrf-token")
+            if not presented:
+                presented = await _form_csrf_token(request)
+            if not csrf_token_valid(context, presented):
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Missing or invalid CSRF token. Reload the page and try again; "
+                        "if the problem persists, sign in again."
+                    ),
+                )
+            # A read-only member may never change anything, so the role is checked
+            # here rather than in each route: a route that forgets would otherwise
+            # silently accept the write.
+            if not context.can_mutate:
+                raise AuthorizationError(
+                    f"Role {context.role} may read this portfolio but not change it."
+                )
+
+        set_current_context(context)
+        self.last_resolved = context
+        return context
+
+
+async def _form_csrf_token(request: Request) -> Optional[str]:
+    """The CSRF token from the request's form body, if it has one.
+
+    Starlette caches the parsed form on the request, so parsing it here is not
+    destructive: the route handler that reads the body afterwards gets the same
+    object rather than an exhausted stream.
+    """
+    content_type = request.headers.get("content-type", "")
+    if "form" not in content_type:
+        return None
+    try:
+        form = await request.form()
+    except Exception:  # noqa: BLE001 - a malformed body must not become a 500
+        return None
+    value = form.get("csrf_token")
+    return value if isinstance(value, str) else None

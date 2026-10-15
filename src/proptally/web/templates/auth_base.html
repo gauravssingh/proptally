@@ -1,0 +1,55 @@
+{# ===========================================================================
+   Shared layout for the unauthenticated screens (sign in, register, invite,
+   reset). Deliberately not the application shell: these pages have no portfolio
+   context, so they must not render navigation, door lists or portfolio counts.
+   =========================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#020617">
+    <title>{% block title %}PropTally{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
+    <link rel="stylesheet" href="/static/css/tokens.css">
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <style>
+        .pt-auth { min-height: 100dvh; display: grid; place-items: center; padding: 2rem 1rem; }
+        .pt-auth__card { width: 100%; max-width: 30rem; }
+        .pt-auth__title { font-size: 1.5rem; font-weight: 700; margin: 0 0 .25rem; }
+        .pt-auth__sub { color: var(--pt-text-secondary); margin: 0 0 1.5rem; font-size: .875rem; }
+        .pt-auth__form { display: grid; gap: 1rem; }
+        .pt-auth__error {
+            border: 1px solid var(--pt-danger, #f87171); border-radius: .5rem;
+            padding: .75rem 1rem; font-size: .875rem; margin-bottom: 1rem;
+        }
+        .pt-auth__success {
+            border: 1px solid var(--pt-success, #34d399); border-radius: .5rem;
+            padding: .75rem 1rem; font-size: .875rem; margin-bottom: 1rem;
+        }
+        .pt-auth__field { display: grid; gap: .375rem; }
+        .pt-auth__field label { font-size: .8125rem; font-weight: 600; }
+        .pt-auth__field input {
+            padding: .625rem .75rem; border-radius: .5rem; font: inherit;
+            border: 1px solid var(--pt-border, #334155);
+            background: var(--pt-surface, #0f172a); color: inherit;
+        }
+        .pt-auth__field small { color: var(--pt-text-secondary); font-size: .75rem; }
+        .pt-auth__submit {
+            padding: .75rem 1rem; border-radius: .5rem; border: 0; cursor: pointer;
+            font: inherit; font-weight: 600;
+            background: var(--pt-accent, #38bdf8); color: #04121f;
+        }
+        .pt-auth__links { margin-top: 1.25rem; font-size: .8125rem; display: grid; gap: .5rem; }
+        .pt-auth__links a { color: var(--pt-accent, #38bdf8); }
+    </style>
+</head>
+<body>
+<main class="pt-auth">
+    <div class="pt-auth__card">
+        {% block card %}{% endblock %}
+    </div>
+</main>
+</body>
+</html>

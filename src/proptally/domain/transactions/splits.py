@@ -81,6 +81,7 @@ def apply_transaction_splits(
     splits: List[SplitItem],
     allow_partial: bool = False,
     commit: bool = True,
+    actor_id: str = "system",
 ) -> TransactionProcessingState:
     """Allocates a parent transaction into one or more category/property splits.
     
@@ -159,7 +160,7 @@ def apply_transaction_splits(
         entity_name="transactions",
         entity_id=transaction_id,
         action="SPLIT",
-        changed_by="system",
+        changed_by=actor_id,
         new_values_json=f'{{"splits_count": {len(splits)}, "status": "{proc_state.allocation_status}", "residual_cents": {proc_state.residual_cents}}}',
     )
     session.add(audit)
@@ -308,6 +309,7 @@ def post_transaction_to_ledger(
     user_attested_cpa_review: bool = False,
     idempotency_suffix: str = "",
     commit: bool = True,
+    actor_id: str = "system",
 ) -> JournalEntry:
     """Atomically posts an approved and fully allocated transaction into double-entry journal entries.
 
@@ -448,7 +450,7 @@ def post_transaction_to_ledger(
             )
         add_journal_line(session, je.id, ledger_account_code=balancing_code, credit_cents=total_amount)
 
-    posted_entry = post_journal_entry(session, je.id, commit=False)
+    posted_entry = post_journal_entry(session, je.id, commit=False, actor_id=actor_id)
 
     # Update processing state
     proc_state.posting_status = "POSTED"
@@ -469,6 +471,7 @@ def reclassify_and_repost_transaction(
     client_confirmed: bool = False,
     user_attested_cpa_review: bool = False,
     reversal_reason: str = "Reclassification of transaction splits",
+    actor_id: str = "system",
 ) -> JournalEntry:
     """Safely updates a transaction's splits by reversing the prior posted entry and posting a new replacement.
 
@@ -497,6 +500,7 @@ def reclassify_and_repost_transaction(
             reversal_date=date.today(),
             reason=reversal_reason,
             commit=False,
+            actor_id=actor_id,
         )
         proc_state.posting_status = "REVERSED"
         session.add(proc_state)
@@ -504,7 +508,8 @@ def reclassify_and_repost_transaction(
 
         # 2. Allocate the corrected classification.
         apply_transaction_splits(
-            session, transaction_id, new_splits, allow_partial=False, commit=False
+            session, transaction_id, new_splits, allow_partial=False, commit=False,
+            actor_id=actor_id,
         )
 
         # 3. Post the replacement entry under a fresh idempotency key.
@@ -515,6 +520,7 @@ def reclassify_and_repost_transaction(
             user_attested_cpa_review=user_attested_cpa_review,
             idempotency_suffix=f"v_{uuid4().hex[:6]}",
             commit=False,
+            actor_id=actor_id,
         )
         session.commit()
     except Exception:

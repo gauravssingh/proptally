@@ -30,7 +30,21 @@ from proptally.db.models import (
 )
 from proptally.domain.accounting.metrics import calculate_property_financials
 from proptally.domain.transactions.suggest import suggest_split_for_transaction
+from proptally.web.auth import current_context
 from proptally.web.helpers import format_cents, period_label
+
+
+def _tenant_photos_dir() -> Path:
+    """The signed-in portfolio's photo store.
+
+    Photos are financial records, so they live inside the portfolio's own directory
+    and are served through an authenticated route; there is no process-wide
+    photo directory that any request could reach.
+    """
+    context = current_context()
+    if context is None:
+        raise HTTPException(status_code=503, detail="No portfolio context for this request.")
+    return context.paths.photos
 
 
 def get_google_maps_url(prop: Property) -> str:
@@ -327,9 +341,7 @@ def get_properties_router(templates, get_session_dep):
         if ext not in (".jpg", ".jpeg", ".png", ".webp", ".heic", ".avif", ".gif"):
             raise HTTPException(status_code=400, detail="Only image files are permitted (JPEG, PNG, WebP, HEIC).")
 
-        repo_root = Path(__file__).resolve().parents[4]
-        photos_dir = Path(os.environ.get("PROPTALLY_PHOTOS_DIR", repo_root / "storage" / "photos"))
-        prop_photos_dir = photos_dir / property_id
+        prop_photos_dir = _tenant_photos_dir() / property_id
         prop_photos_dir.mkdir(parents=True, exist_ok=True)
 
         photo_id = f"photo_{uuid4().hex[:12]}"
@@ -404,10 +416,8 @@ def get_properties_router(templates, get_session_dep):
         prop = session.get(Property, property_id)
         photo = session.get(PropertyPhoto, photo_id)
         if photo and photo.property_id == property_id:
-            repo_root = Path(__file__).resolve().parents[4]
-            photos_dir = Path(os.environ.get("PROPTALLY_PHOTOS_DIR", repo_root / "storage" / "photos"))
             relative_name = photo.storage_path.removeprefix("/photos/")
-            disk_path = photos_dir / relative_name
+            disk_path = _tenant_photos_dir() / relative_name
             disk_path.unlink(missing_ok=True)
 
             session.delete(photo)
