@@ -1,0 +1,19 @@
+{
+  "name": "PropTally",
+  "short_name": "PropTally",
+  "description": "Bespoke property, mortgage, and cash flow reconciliation platform for real estate investors.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "icons": [
+    {
+      "src": "/static/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

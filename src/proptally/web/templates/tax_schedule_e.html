@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}IRS Form 1040 Schedule E Workpaper — PropTally{% endblock %}
+
+{% block content %}
+{% set header_meta %}
+    {{ ui.badge("Posted ledger basis", variant="neutral", upper=true, mono=true,
+                title="Every figure is derived from posted journal entries for tax year " ~ tax_year ~ ".") }}
+{% endset %}
+
+{% set year_switcher %}
+    <nav class="pt-segmented" aria-label="Tax year">
+        <a class="pt-segmented__item{% if tax_year == 2025 %} is-active{% endif %}"
+           href="/tax/schedule-e?year=2025"{% if tax_year == 2025 %} aria-current="page"{% endif %}>2025</a>
+        <a class="pt-segmented__item{% if tax_year == 2026 %} is-active{% endif %}"
+           href="/tax/schedule-e?year=2026"{% if tax_year == 2026 %} aria-current="page"{% endif %}>2026</a>
+    </nav>
+{% endset %}
+
+{% call ui.page_header(
+    "IRS Schedule E Tax Workpaper",
+    "Supplemental Income and Loss (Form 1040) per property · Tax Year " ~ tax_year,
+    meta=header_meta
+) %}
+    <div class="pt-flex pt-items-center pt-gap-2">
+        {{ year_switcher }}
+        {{ ui.btn("Export CPA CSV", variant="primary", size="sm", icon_name="download",
+                  href="/tax/schedule-e/csv?year=" ~ tax_year) }}
+    </div>
+{% endcall %}
+
+{# ---------------------------------------------------------------------------
+   Tax architecture: IRC §168 residential rental depreciation.
+   --------------------------------------------------------------------------- #}
+{{ ui.alert(
+    variant="neutral",
+    title="IRC §168 Residential Rental Depreciation (27.5-Year Straight Line)",
+    text="Depreciation applies exclusively to the <strong>depreciable building basis</strong> of active rental doors. Non-depreciable land basis and primary personal residences (Rowan) are strictly isolated and excluded from Schedule E deductions.",
+    icon_name="scale"
+) }}
+
+{# ---------------------------------------------------------------------------
+   Schedule E workpaper grid: one column per door, IRS line per row.
+   Portfolio totals recompute from the rental columns (see report: duplicates
+   the workpaper.total_* accessors).
+   --------------------------------------------------------------------------- #}
+{{ ui.section_open(
+    "Schedule E Workpaper (Tax Year " ~ tax_year ~ ")",
+    "Every deductible line mapped to its IRS Schedule E line number, per property.",
+    flush=true
+) }}
+{{ ui.table_open(label="Schedule E workpaper by property and IRS line") }}
+<thead>
+    <tr>
+        {{ ui.th("IRS Line") }}
+        {{ ui.th("Category Description") }}
+        {% for col in workpaper.columns %}
+        {% set property_heading %}{{ col.property_name }}<span class="pt-table__sub">{{ col.property_type }}</span>{% endset %}
+        {{ ui.th(property_heading, num=true) }}
+        {% endfor %}
+        {{ ui.th("Portfolio Total", num=true, cls="pt-table__total-col") }}
+    </tr>
+</thead>
+<tbody>
+    {# Line 3a — rental income. #}
+    <tr class="pt-table__row--income">
+        <td>Line 3a</td>
+        <td>Rents Received</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_3_rents, mode="income") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">{{ ui.amount(workpaper.total_rents, mode="income") }}</td>
+    </tr>
+
+    {{ ui.th_row("Schedule E Deductible Expenses", 3 + (workpaper.columns | length)) }}
+
+    {# Line 9. #}
+    <tr>
+        <td>Line 9</td>
+        <td>Insurance</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_9_insurance, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_9_insurance') | sum, mode="expense") }}
+        </td>
+    </tr>
+
+    {# Line 12. #}
+    <tr>
+        <td>Line 12</td>
+        <td>Mortgage Interest Paid to Banks</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_12_mortgage_interest, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_12_mortgage_interest') | sum, mode="expense") }}
+        </td>
+    </tr>
+
+    {# Line 14. #}
+    <tr>
+        <td>Line 14</td>
+        <td>Repairs & Maintenance</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_14_repairs, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_14_repairs') | sum, mode="expense") }}
+        </td>
+    </tr>
+
+    {# Line 15. #}
+    <tr>
+        <td>Line 15</td>
+        <td>Supplies & Hardware</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_15_supplies, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_15_supplies') | sum, mode="expense") }}
+        </td>
+    </tr>
+
+    {# Line 16. #}
+    <tr>
+        <td>Line 16</td>
+        <td>Property Taxes</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_16_taxes, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_16_taxes') | sum, mode="expense") }}
+        </td>
+    </tr>
+
+    {# Line 17. #}
+    <tr>
+        <td>Line 17</td>
+        <td>Utilities</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_17_utilities, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_17_utilities') | sum, mode="expense") }}
+        </td>
+    </tr>
+
+    {# Line 20 — MACRS depreciation. #}
+    <tr class="pt-table__row--depreciation">
+        <td>Line 20</td>
+        <td>Depreciation Expense (27.5-Yr MACRS)</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_20_depreciation, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_20_depreciation') | sum, mode="expense") }}
+        </td>
+    </tr>
+
+    {# Line 21 — total deductible expenses. #}
+    <tr class="pt-table__row--subtotal">
+        <td>Line 21</td>
+        <td>Total Expenses</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_21_total_expenses, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">{{ ui.amount(workpaper.total_expenses, mode="expense") }}</td>
+    </tr>
+
+    {# Line 22 — net rental income or (loss). #}
+    <tr class="pt-table__row--total">
+        <td>Line 22</td>
+        <td>Net Rental Income or (Loss)</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_22_net_income_or_loss, mode="signed") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">{{ ui.amount(workpaper.total_net_income, mode="signed") }}</td>
+    </tr>
+</tbody>
+{{ ui.table_close() }}
+{{ ui.section_close() }}
+
+{# ---------------------------------------------------------------------------
+   Depreciation basis per door: what is depreciable, and what is not.
+   --------------------------------------------------------------------------- #}
+{{ ui.section_open(
+    "Depreciation Detail",
+    "MACRS basis split and annual deduction per property · 27.5-year straight line."
+) }}
+<div class="pt-grid pt-md-grid-cols-3 pt-gap-4">
+    {% for col in workpaper.columns %}
+    {{ ui.card_open(cls="pt-detail-card") }}
+        <div class="pt-detail-card__head">
+            <strong>{{ col.property_name }}</strong>
+            {{ ui.badge(col.property_type, variant=("accent" if col.is_rental else "neutral"), upper=false) }}
+        </div>
+        {% if col.depreciation_detail and col.depreciation_detail.is_depreciable %}
+        <div class="pt-kv">
+            <span class="pt-kv__key">Building Basis (27.5-Yr)</span>
+            <span class="pt-kv__value">{{ ui.amount(col.depreciation_detail.building_basis_cents, mode="plain") }}</span>
+        </div>
+        <div class="pt-kv">
+            <span class="pt-kv__key">Land Basis (Non-Deprec)</span>
+            <span class="pt-kv__value">{{ ui.amount(col.depreciation_detail.land_basis_cents, mode="plain") }}</span>
+        </div>
+        {{ ui.stat(
+            "Annual Depreciation",
+            ui.amount(col.line_20_depreciation, mode="expense"),
+            sub=ui.provenance("27.5-year straight line · IRC §168")
+        ) }}
+        <p class="pt-text-muted pt-fs-caption">{{ col.depreciation_detail.notes }}</p>
+        {% else %}
+        {{ ui.alert(
+            variant="neutral",
+            text="Non-depreciable residential asset. Exempt from Schedule E calculations."
+        ) }}
+        {% endif %}
+    {{ ui.card_close() }}
+    {% endfor %}
+</div>
+{{ ui.section_close() }}
+{% endblock %}

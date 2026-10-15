@@ -1,0 +1,67 @@
+name: tests
+
+on:
+  push:
+    branches: ["main", "phase-2.1-mvp-hardening"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    name: pytest (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # requires-python is >=3.11; 3.11 is the declared floor and 3.13 is what
+        # the project is developed against.
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install the package with test tooling
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      - name: Show versions
+        run: python --version && python -m pip show sqlmodel sqlalchemy | head -20
+
+      - name: Run the test suite
+        run: python -m pytest -q
+
+      - name: Migration validation against a freshly built database
+        # The upgrade test builds a Phase 1 database from the current models,
+        # migrates it and asserts parity with a fresh install.
+        run: python -m pytest tests/test_phase2_1_constraints.py -q
+
+  lint:
+    name: ruff (advisory)
+    runs-on: ubuntu-latest
+    # The repository carries a pre-existing lint baseline (unused imports and
+    # typing-modernisation notices) that predates this work and is out of scope
+    # for the current milestone. This job reports the state without failing the
+    # build; promote it to a gate once that baseline is cleared.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install ruff
+        run: python -m pip install --upgrade pip && python -m pip install "ruff>=0.6.0"
+
+      - name: Check the ledger and policy packages
+        run: ruff check src/proptally/domain src/proptally/db tools tests --output-format=concise
+
+      - name: Report the full repository baseline
+        run: ruff check . --output-format=concise | tail -1

@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Mortgages & Escrow — PropTally{% endblock %}
+
+{% block content %}
+{# Evidence first: the basis of every figure on this screen is stated up front. #}
+{% set header_meta %}
+    {{ ui.evidence("posted", label="POSTED LEDGER BALANCES",
+                   title="Ledger principal is derived from posted, immutable journal lines only.") }}
+    {{ ui.badge((loans_data | length) ~ " ACTIVE LOANS", variant="info", upper=true, mono=true) }}
+{% endset %}
+
+{{ ui.page_header(
+    "Mortgages & Escrow Reserves",
+    "Multi-servicer debt tracking, ledger vs. servicer balance reconciliation, and escrow reserve health.",
+    meta=header_meta
+) }}
+
+{# ---------------------------------------------------------------------------
+   Consolidated loan ledger. Ledger-posted and servicer-reported principal are
+   kept in separate columns, each with its own provenance sub-label.
+   --------------------------------------------------------------------------- #}
+{{ ui.section_open(
+    "Consolidated Mortgage Ledger & Reconciliation",
+    "Official debt obligations with strict segregation between ledger-posted and servicer-reported principal.",
+    flush=true
+) }}
+{% if loans_data %}
+{{ ui.table_open(label="Consolidated mortgage ledger by servicer") }}
+    <thead>
+        <tr>
+            {{ ui.th("Servicer & Account") }}
+            {{ ui.th("Securing Property") }}
+            {{ ui.th("Interest Rate", num=true) }}
+            {{ ui.th("Ledger Principal", num=true) }}
+            {{ ui.th("Servicer Reported", num=true) }}
+            {{ ui.th("Clearing Balance", num=true) }}
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in loans_data %}
+        {% set loan = item.loan %}
+        {% set prop = item.property %}
+        <tr>
+            <td>
+                <div class="pt-cell-stack pt-cell-stack--start">
+                    <span class="pt-table__primary">{{ item.institution_name }}</span>
+                    <span class="pt-table__sub">Loan {{ loan.loan_number }} · {{ loan.term_months }} mo</span>
+                </div>
+            </td>
+            <td>
+                <div class="pt-cell-stack pt-cell-stack--start">
+                    <a class="pt-row-action" href="/properties/{{ prop.id }}">{{ prop.name }}</a>
+                    <span class="pt-table__sub">{{ prop.city }}, {{ prop.state }}</span>
+                </div>
+            </td>
+            <td class="pt-table__num">{{ loan.current_interest_rate_bps | format_bps }}</td>
+            <td class="pt-table__num">
+                <div class="pt-cell-stack">
+                    {{ ui.amount(item.ledger_calculated_principal_cents, mode="plain") }}
+                    {{ ui.provenance("POSTED LEDGER" if item.ledger_calculated_principal_cents is not none else "NO POSTED LINES") }}
+                </div>
+            </td>
+            <td class="pt-table__num">
+                <div class="pt-cell-stack">
+                    {{ ui.amount(item.servicer_reported_principal_cents, mode="plain") }}
+                    {{ ui.provenance("FROM STATEMENT" if item.servicer_reported_principal_cents is not none else "NO STATEMENT") }}
+                </div>
+            </td>
+            <td class="pt-table__num">
+                <div class="pt-cell-stack">
+                    {{ ui.amount(item.outstanding_clearing_balance_cents, mode="plain") }}
+                    <span class="pt-provenance"
+                          title="Recorded obligation not yet confirmed as cash-settled and applied by the servicer.">IN-FLIGHT (21x5)</span>
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+{{ ui.table_close() }}
+{% else %}
+{{ ui.empty_state(
+    "No active mortgage debt",
+    "No active loan accounts are recorded for this portfolio. A loan appears here once a servicer statement or a posted ledger line exists."
+) }}
+{% endif %}
+{{ ui.section_close() }}
+
+{# ---------------------------------------------------------------------------
+   Escrow reserve health. Calculated and reported balances are boxed tiles so
+   the two bases never read as one number; projections sit in the panel foot.
+   --------------------------------------------------------------------------- #}
+{% set escrow_actions %}
+    {{ ui.badge("ASSET ACCOUNTS (1110 & 1120)", variant="neutral", upper=true, mono=true,
+                title="Escrow reserves are statement-backed assets, not operating cash.") }}
+{% endset %}
+
+{{ ui.section_open(
+    "Servicer Escrow Reserve Accounts",
+    "Asset reserves held by servicers for county property taxes and hazard insurance.",
+    actions=escrow_actions
+) }}
+{% if escrow_data %}
+<div class="pt-grid pt-md-grid-cols-2 pt-gap-5">
+    {% for e in escrow_data %}
+    <div class="pt-escrow">
+        <div class="pt-escrow__head">
+            <h3 class="pt-escrow__title">{{ e.servicer_name }} Escrow Reserve</h3>
+            {{ ui.badge("Securing · " ~ e.property_name, variant="outline", upper=false) }}
+        </div>
+
+        <div class="pt-escrow__balances">
+            {{ ui.stat(
+                "Calculated Balance",
+                ui.amount(e.calculated_escrow_balance_cents, mode="plain"),
+                sub=ui.provenance("FROM MOVEMENTS"),
+                boxed=true,
+                on_surface=true
+            ) }}
+            {{ ui.stat(
+                "Reported Balance",
+                ui.amount(e.reported_escrow_balance_cents, mode="plain"),
+                sub=ui.provenance("FROM STATEMENT" if e.reported_escrow_balance_cents is not none else "NO STATEMENT"),
+                boxed=true,
+                on_surface=true
+            ) }}
+        </div>
+
+        <div class="pt-escrow__foot">
+            {{ ui.stat("Projected Taxes", ui.amount(e.projected_tax_cents, mode="plain")) }}
+            {{ ui.stat("Projected Insurance", ui.amount(e.projected_ins_cents, mode="plain")) }}
+            {% if e.projected_shortage_cents > 0 %}
+            {{ ui.stat(
+                "Projected Shortage",
+                ui.amount(e.projected_shortage_cents, mode="plain"),
+                sub=ui.badge("ESCROW SHORTAGE", variant="error", upper=true),
+                tone="negative"
+            ) }}
+            {% else %}
+            {{ ui.stat("Projected Shortage", ui.amount(e.projected_shortage_cents, mode="plain")) }}
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+{{ ui.empty_state(
+    "No escrow reserve accounts",
+    "No servicer escrow accounts are recorded. A reserve appears here once an active loan is linked to an escrow account."
+) }}
+{% endif %}
+{{ ui.section_close() }}
+{% endblock %}

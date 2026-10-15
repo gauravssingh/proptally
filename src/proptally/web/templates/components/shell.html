@@ -1,0 +1,327 @@
+{# ===========================================================================
+   PropTally application shell
+   ---------------------------------------------------------------------------
+   The sidebar, mobile app bar, drawer and bottom navigation are built from the
+   navigation model in `proptally.web.navigation`, so the shell exists once
+   instead of being duplicated as markup for desktop and mobile (audit M3).
+
+   base.html imports this file; screens never call it directly.
+   =========================================================================== #}
+
+{% import "components/ui.html" as ui with context %}
+
+{% macro nav_item(item, active_page, review_count=None) -%}
+<a href="{{ item.href }}"
+   class="pt-nav__item{% if item.page and item.page == active_page %} is-active{% endif %}"
+   {% if item.page and item.page == active_page %}aria-current="page"{% endif %}
+   {% if item.blank %}target="_blank" rel="noopener noreferrer"{% endif %}>
+    <span class="pt-nav__icon">{{ ui.icon(item.icon, "lg") }}</span>
+    <span class="pt-nav__label">{{ item.label }}</span>
+    {%- if item.page == "reconciliation" and review_count and review_count > 0 -%}
+    <span class="pt-nav__count" title="{{ review_count }} items awaiting classification">{{ review_count }}</span>
+    {%- endif -%}
+</a>
+{%- endmacro %}
+
+
+{% macro door_nav_item(door) -%}
+<a href="{{ door.href }}"
+   class="pt-nav__item{% if door.is_active %} is-active{% endif %}"
+   {% if door.is_active %}aria-current="page"{% endif %}>
+    <span class="pt-nav__dot{{ ' pt-nav__dot--primary' if door.is_primary else ' pt-nav__dot--rental' }}"></span>
+    <span class="pt-nav__label">{{ door.label }}</span>
+    {%- if door.is_primary %}<span class="pt-nav__qualifier">Primary</span>{% endif -%}
+</a>
+{%- endmacro %}
+
+
+{% macro chrome_status(is_demo) -%}
+{%- endmacro %}
+
+
+{% macro brand(is_demo, version=None) -%}
+<a class="pt-brand" href="/">
+    <span class="pt-brand__mark" aria-hidden="true">P</span>
+    <span>
+        <span class="pt-brand__name">PropTally</span>
+        <span class="pt-brand__meta">Self-hosted · {{ "demo data" if is_demo else "local vault" }}</span>
+    </span>
+</a>
+{%- endmacro %}
+
+
+{% macro mode_badge(is_demo) -%}
+{{ ui.badge("DEMO" if is_demo else "LIVE", variant=("warning" if is_demo else "accent"), upper=true, title="Synthetic demo fixtures — not client data" if is_demo else "Client portfolio data on this host") }}
+{%- endmacro %}
+
+
+{% macro nav_section(section, active_page, review_count) -%}
+<div class="pt-nav__section">{{ section.label }}</div>
+{% for item in section.items %}{{ nav_item(item, active_page, review_count) }}{% endfor %}
+{%- endmacro %}
+
+
+{# ---------------------------------------------------------------------------
+   A1. Desktop sidebar
+   --------------------------------------------------------------------------- #}
+{% macro sidebar(doors, active_page, active_property, review_count, is_demo) -%}
+<aside class="pt-sidebar" aria-label="Primary navigation">
+    <div class="pt-sidebar__brand">
+        {{ brand(is_demo) }}
+        {{ mode_badge(is_demo) }}
+    </div>
+
+    <nav class="pt-nav">
+        {% for section in nav.primary_sections() %}
+        {{ nav_section(section, active_page, review_count) }}
+        {% endfor %}
+
+        <div class="pt-nav__section">Portfolio doors ({{ doors | length }})</div>
+        {% for door in nav.door_items(doors, active_property) %}{{ door_nav_item(door) }}{% endfor %}
+
+        {% for section in nav.financial_sections() %}
+        {{ nav_section(section, active_page, review_count) }}
+        {% endfor %}
+    </nav>
+</aside>
+{%- endmacro %}
+
+
+{# ---------------------------------------------------------------------------
+   A4. Mobile top app bar
+   --------------------------------------------------------------------------- #}
+{% macro appbar(doors, active_property, review_count, is_demo) -%}
+<header class="pt-appbar">
+    <div class="pt-flex pt-items-center pt-gap-3">
+        <button type="button" class="pt-btn pt-btn--ghost pt-btn--icon" id="mobileMenuBtn"
+                data-drawer-open aria-controls="mobileDrawer" aria-expanded="false"
+                aria-label="Open navigation menu">
+            {{ ui.icon("menu", "xl") }}
+        </button>
+        {{ brand(is_demo) }}
+        {{ mode_badge(is_demo) }}
+    </div>
+
+    <div class="pt-flex pt-items-center pt-gap-2">
+        <label class="pt-sr-only" for="quickDoorSelect">Quick select door</label>
+        <select id="quickDoorSelect" class="pt-flex-1" data-nav-select>
+            <option value="/"{{ ' selected' if not active_property }}>All Doors ({{ doors | length }})</option>
+            {% for door in nav.door_items(doors, active_property) %}
+            <option value="{{ door.href }}"{% if door.is_active %} selected{% endif %}>{{ door.label }}</option>
+            {% endfor %}
+        </select>
+
+        {% if review_count and review_count > 0 %}
+        <a href="/reconciliation" class="pt-btn pt-btn--ghost pt-btn--icon" aria-label="{{ review_count }} items awaiting classification">
+            {{ ui.icon("check_circle", "lg") }}
+            <span class="pt-count-bubble">{{ review_count }}</span>
+        </a>
+        {% endif %}
+    </div>
+</header>
+{%- endmacro %}
+
+
+{# ---------------------------------------------------------------------------
+   A6. Mobile/tablet drawer — same navigation, one markup source
+   --------------------------------------------------------------------------- #}
+{% macro drawer(doors, active_page, active_property, review_count, is_demo) -%}
+<div id="mobileDrawer" class="pt-drawer" hidden>
+    <button type="button" class="pt-drawer__scrim" id="mobileDrawerOverlay"
+            data-drawer-close aria-label="Close navigation"></button>
+    <div class="pt-drawer__panel" role="dialog" aria-modal="true" aria-label="Navigation">
+        <div class="pt-drawer__header">
+            {{ brand(is_demo) }}
+            <button type="button" class="pt-btn pt-btn--ghost pt-btn--icon" id="mobileDrawerClose"
+                    data-drawer-close aria-label="Close navigation">
+                {{ ui.icon("close", "lg") }}
+            </button>
+        </div>
+
+        <nav class="pt-nav pt-drawer__body">
+            {% for section in nav.primary_sections() %}
+            {{ nav_section(section, active_page, review_count) }}
+            {% endfor %}
+
+            <div class="pt-nav__section">Portfolio doors ({{ doors | length }})</div>
+            {% for door in nav.door_items(doors, active_property) %}{{ door_nav_item(door) }}{% endfor %}
+
+            {% for section in nav.financial_sections() %}
+            {{ nav_section(section, active_page, review_count) }}
+            {% endfor %}
+        </nav>
+    </div>
+</div>
+{%- endmacro %}
+
+
+{# ---------------------------------------------------------------------------
+   A5. Mobile bottom navigation
+   --------------------------------------------------------------------------- #}
+{% macro bottomnav(active_page, active_property, review_count) -%}
+{% set items = nav.bottom_items() %}
+<nav class="pt-bottomnav" aria-label="Mobile Bottom Navigation">
+    {% for item in items %}
+        {% if loop.index == 2 %}
+        <button type="button" class="pt-bottomnav__item{% if active_property %} is-active{% endif %}"
+                data-drawer-open aria-controls="mobileDrawer" aria-expanded="false">
+            {{ ui.icon("bank", "lg") }}
+            <span>Doors</span>
+        </button>
+        {% endif %}
+        <a href="{{ item.href }}" class="pt-bottomnav__item{% if item.page == active_page %} is-active{% endif %}"
+           {% if item.page == active_page %}aria-current="page"{% endif %}>
+            {{ ui.icon(item.icon, "lg") }}
+            <span>{{ item.short }}</span>
+            {%- if item.page == "reconciliation" and review_count and review_count > 0 -%}
+            <span class="pt-bottomnav__count">{{ review_count }}</span>
+            {%- endif -%}
+        </a>
+    {% endfor %}
+</nav>
+{%- endmacro %}
+
+
+{# ---------------------------------------------------------------------------
+   A7. Desktop environment strip
+   --------------------------------------------------------------------------- #}
+{% macro topbar(is_demo) -%}
+<div class="pt-topbar">
+    <div class="pt-topbar__env pt-topbar__env--{{ 'demo' if is_demo else 'live' }}">
+        <span class="pt-dot{{ ' pt-dot--warning' if is_demo else ' pt-dot--accent' }}"></span>
+        <span>ENVIRONMENT:
+            <strong>{{ "DEMO MODE (SYNTHETIC FIXTURES)" if is_demo else "CLIENT PORTFOLIO (LOCAL VAULT)" }}</strong>
+        </span>
+    </div>
+    <span>Zero external APIs · localhost 127.0.0.1</span>
+</div>
+{%- endmacro %}
+
+
+{# ---------------------------------------------------------------------------
+   Shell behaviour: drawer, modals, focus management, navigation selects.
+   No inline event handlers anywhere in the application (audit m11).
+   --------------------------------------------------------------------------- #}
+{% macro shell_scripts() -%}
+<script>
+(function () {
+    var FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+    /* --- Drawer ------------------------------------------------------- */
+    var drawer = document.getElementById('mobileDrawer');
+    var lastTrigger = null;
+
+    function focusables(root) {
+        return Array.prototype.filter.call(root.querySelectorAll(FOCUSABLE), function (el) {
+            return el.offsetParent !== null || el === document.activeElement;
+        });
+    }
+
+    function openDrawer(trigger) {
+        if (!drawer) return;
+        lastTrigger = trigger || null;
+        drawer.hidden = false;
+        var panel = drawer.querySelector('.pt-drawer__panel');
+        var first = panel && focusables(panel)[0];
+        if (first) first.focus();
+        document.querySelectorAll('[data-drawer-open]').forEach(function (b) {
+            b.setAttribute('aria-expanded', 'true');
+        });
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeDrawer() {
+        if (!drawer || drawer.hidden) return;
+        drawer.hidden = true;
+        document.querySelectorAll('[data-drawer-open]').forEach(function (b) {
+            b.setAttribute('aria-expanded', 'false');
+        });
+        document.body.style.overflow = '';
+        if (lastTrigger) { lastTrigger.focus(); lastTrigger = null; }
+    }
+
+    document.addEventListener('click', function (event) {
+        var opener = event.target.closest('[data-drawer-open]');
+        if (opener) {
+            event.preventDefault();
+            if (drawer && drawer.hidden) { openDrawer(opener); } else { closeDrawer(); }
+            return;
+        }
+        if (event.target.closest('[data-drawer-close]')) {
+            event.preventDefault();
+            closeDrawer();
+        }
+
+        /* --- Modals ---------------------------------------------------- */
+        var modalOpener = event.target.closest('[data-modal-open]');
+        if (modalOpener) {
+            event.preventDefault();
+            window.PT.openModal(modalOpener.getAttribute('data-modal-open'));
+        }
+    });
+
+    /* --- Modal controller --------------------------------------------- */
+    var openStack = [];
+
+    window.PT = window.PT || {};
+    window.PT.openModal = function (id, focusSelector) {
+        var modal = document.getElementById(id);
+        if (!modal) return;
+        modal._returnFocus = document.activeElement;
+        modal.hidden = false;
+        openStack.push(modal);
+        var card = modal.querySelector('.pt-modal__card');
+        var target = (focusSelector && modal.querySelector(focusSelector)) ||
+            (card && focusables(card)[0]);
+        if (target) target.focus();
+    };
+
+    window.PT.closeModal = function (id) {
+        var modal = id ? document.getElementById(id) : openStack[openStack.length - 1];
+        if (!modal) return;
+        modal.hidden = true;
+        openStack = openStack.filter(function (m) { return m !== modal; });
+        if (modal._returnFocus && document.contains(modal._returnFocus)) {
+            modal._returnFocus.focus();
+        }
+    };
+
+    document.addEventListener('click', function (event) {
+        var closer = event.target.closest('[data-modal-close]');
+        if (closer) {
+            var modal = closer.closest('.pt-modal');
+            if (modal) { event.preventDefault(); window.PT.closeModal(modal.id); }
+        }
+    });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') {
+            if (openStack.length) {
+                window.PT.closeModal();
+            } else {
+                closeDrawer();
+            }
+            return;
+        }
+        if (event.key !== 'Tab' || !openStack.length) return;
+        var modal = openStack[openStack.length - 1];
+        var card = modal.querySelector('.pt-modal__card');
+        var items = focusables(card);
+        if (!items.length) return;
+        var first = items[0], last = items[items.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault(); last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault(); first.focus();
+        }
+    });
+
+    /* --- Quick door switcher ----------------------------------------- */
+    document.querySelectorAll('select[data-nav-select]').forEach(function (select) {
+        select.addEventListener('change', function () {
+            if (select.value) window.location.href = select.value;
+        });
+    });
+})();
+</script>
+{%- endmacro %}

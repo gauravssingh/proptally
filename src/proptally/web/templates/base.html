@@ -1,0 +1,72 @@
+{# ===========================================================================
+   PropTally application shell
+   ---------------------------------------------------------------------------
+   One layout for every screen. Screens extend this file and fill `content`.
+
+   Context provided by each route (see web/routes/*.py):
+     active_page       - nav key: dashboard|mortgages|transactions|
+                         reconciliation|tax|properties
+     active_property   - property id when a door screen is open
+     review_count      - true count of transactions awaiting classification
+
+   Shell styling lives in components.css §A and the navigation model in
+   proptally/web/navigation.py — never in a screen.
+   =========================================================================== #}
+{% import "components/ui.html" as ui with context %}
+{% import "components/shell.html" as shell with context %}
+
+{% set doors = nav_doors() %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+    <meta name="theme-color" content="#020617">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="PropTally">
+    <title>{% block title %}PropTally — Portfolio Finance Engine{% endblock %}</title>
+
+    {# PWA manifest & app icons (local assets only: zero network egress) #}
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
+    <link rel="apple-touch-icon" href="/static/icons/icon.svg">
+
+    {# Design system: tokens → base → components. Load order is significant. #}
+    <link rel="stylesheet" href="/static/css/tokens.css">
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+</head>
+<body class="pt-shell">
+
+<a class="pt-skip-link" href="#main-content">Skip to content</a>
+
+{{ shell.appbar(doors, active_property, review_count, is_demo_mode) }}
+{{ shell.drawer(doors, active_page, active_property, review_count, is_demo_mode) }}
+{{ shell.sidebar(doors, active_page, active_property, review_count, is_demo_mode) }}
+
+<main class="pt-main" id="main-content">
+    {% if review_count and review_count > 0 %}
+    <div class="pt-no-print">
+        {{ ui.alert(
+            variant="warning",
+            title="CBD REVIEW",
+            text=("<strong>" ~ review_count ~ ((" item" if review_count == 1 else " items")) ~ "</strong> awaiting classification in the review queue."),
+            action_label="Open queue →",
+            action_href="/reconciliation",
+            strip=true
+        ) }}
+    </div>
+    {% endif %}
+
+    <div class="pt-content">
+        {% block content %}{% endblock %}
+    </div>
+</main>
+
+{{ shell.bottomnav(active_page, active_property, review_count) }}
+{{ shell.shell_scripts() }}
+{% block scripts %}{% endblock %}
+</body>
+</html>

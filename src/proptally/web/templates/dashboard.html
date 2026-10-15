@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Portfolio Overview — PropTally{% endblock %}
+
+{% block content %}
+{% set actions %}
+    {{ ui.btn("New Transaction", variant="neutral", href="/transactions", icon_name="plus") }}
+{% endset %}
+{% set header_meta %}
+    {{ ui.badge("Posted entries only", variant="neutral", upper=true, mono=true,
+                title="Every figure on this screen is derived from posted journal entries.") }}
+{% endset %}
+
+{% call ui.page_header(
+    "Portfolio Financial Overview",
+    "Multi-property mortgage amortisation, rental performance, and cash flow.",
+    meta=header_meta
+) %}{{ actions }}{% endcall %}
+
+{# ---------------------------------------------------------------------------
+   Headline metrics. Each figure states where it came from (ui.evidence).
+   --------------------------------------------------------------------------- #}
+<div class="pt-grid pt-sm-grid-cols-2 pt-lg-grid-cols-4 pt-gap-4">
+    {{ ui.kpi(
+        "Portfolio Equity",
+        ui.amount(equity.net_equity_cents, mode="plain"),
+        sub="Valuation " ~ (equity.total_valuation_cents | format_cents) ~ " · asset equity across all doors",
+        evidence_kind="estimated",
+        evidence_title="Total recorded valuation less total mortgage debt. Valuation is manual or appraised input, not a market quote."
+    ) }}
+
+    {{ ui.kpi(
+        "Total Debt Outstanding",
+        ui.amount(equity.total_debt_cents, mode="plain"),
+        sub=("Awaiting balance confirmation for " ~ (equity.unavailable_property_ids | length) ~ " door(s)"
+             if equity.unavailable_property_ids
+             else "Statement-backed debt balance verified across all doors"),
+        evidence_kind=("verified" if equity.debt_fully_verified else "needs_review"),
+        evidence_label=debt_basis_label,
+        evidence_title="Servicer-reported principal is authoritative where a statement exists; otherwise the ledger-derived principal is used."
+    ) }}
+
+    {{ ui.kpi(
+        "Rental Portfolio NOI",
+        ui.amount(financials.noi_cents, mode="plain"),
+        sub="Unleveraged operating income · excludes debt service and personal draws",
+        evidence_kind="calculated"
+    ) }}
+
+    {{ ui.kpi(
+        "Net Cash Flow (CADS)",
+        ui.amount(financials.cads_cents, mode="signed"),
+        sub="Cash retained after full debt service and operating expenses",
+        evidence_kind="calculated"
+    ) }}
+</div>
+
+{# ---------------------------------------------------------------------------
+   Doors. Primary residence is visually segregated by surface, and by badge —
+   never by colour alone.
+   --------------------------------------------------------------------------- #}
+{{ ui.section_open("Portfolio Doors (" ~ equity.property_metrics | length ~ ")",
+                   "Rental doors and the primary residence are kept separate: operating metrics apply to rentals only.") }}
+<div class="pt-grid pt-md-grid-cols-3 pt-gap-4">
+    {% for prop_meta in equity.property_metrics %}
+    {% set p = prop_meta.property %}
+    {% set loan = prop_meta.loan %}
+    {% set is_primary = p.property_type != 'RENTAL_INVESTMENT' %}
+    <article class="pt-card pt-card--interactive{% if is_primary %} pt-card--sunken{% endif %}">
+        <div class="pt-card__body pt-stack-3">
+            <div class="pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-2">
+                {% if is_primary %}
+                {{ ui.badge("PRIMARY RESIDENCE", variant="rule", upper=true) }}
+                {% else %}
+                {{ ui.badge("RENTAL DOOR", variant="accent", upper=true) }}
+                {% endif %}
+                {{ ui.badge("Acquired " ~ (p.acquisition_date | format_date), variant="outline", mono=true, upper=false) }}
+            </div>
+
+            <div>
+                <h3 class="pt-card__title">{{ p.name }}</h3>
+                <p class="pt-card__text">{{ p.city }}, {{ p.state }} {{ p.zip_code }}</p>
+            </div>
+
+            <div class="pt-summary-grid pt-gap-3">
+                {{ ui.stat("Est. value", ui.amount(prop_meta.valuation_cents, mode="plain")) }}
+                {{ ui.stat(
+                    "Debt service rate",
+                    (loan.current_interest_rate_bps | format_bps) if loan else "Debt free",
+                    sub=('Loan <span class="pt-num">···' ~ loan.loan_number[-4:] ~ '</span>') if loan else None
+                ) }}
+            </div>
+        </div>
+
+        <div class="pt-section__footer">
+            {% if is_primary %}
+            {{ ui.badge("Non-operating asset", variant="neutral", upper=false, mono=false,
+                        title="Rental metrics are excluded for the primary residence (IRC §280A).") }}
+            {% else %}
+            {{ ui.badge("Active rental", variant="success", upper=false, mono=false) }}
+            {% endif %}
+            <a class="pt-row-action" href="/properties/{{ p.id }}">Operating statement →</a>
+        </div>
+    </article>
+    {% endfor %}
+</div>
+{{ ui.section_close() }}
+
+{# ---------------------------------------------------------------------------
+   Cash-flow waterfall: one row per ledger step, signs from ui.amount only.
+   --------------------------------------------------------------------------- #}
+{% set waterfall_actions %}
+    {{ ui.badge(period_label, variant="neutral", mono=true, upper=false) }}
+    {{ ui.badge("FILTERED WINDOW" if period_is_filtered else "LIFETIME TO DATE", variant="outline", upper=true) }}
+{% endset %}
+
+{{ ui.section_open("Financial Performance & Waterfall Ledger",
+                   "Reconciled double-entry flow from gross rental receipts to cash retained.",
+                   actions=waterfall_actions, flush=true) }}
+
+{% if not financials.gross_rental_income_cents and not financials.repairs_cents and not financials.total_debt_service_cents %}
+<div class="pt-section__body">
+    {{ ui.alert(
+        variant="warning",
+        title="Awaiting bank statement ingestion",
+        text="Operating figures are recognised only from posted journal entries. Once checking and credit-card statements are ingested and posted, verified cash flow populates this ledger."
+    ) }}
+</div>
+{% endif %}
+
+{{ ui.statement_open() }}
+    {{ ui.statement_row(
+        "Gross rental revenue",
+        ui.amount(financials.gross_rental_income_cents, mode="income", strong=true)
+    ) }}
+    {{ ui.statement_row(
+        "Repairs & maintenance",
+        ui.amount(financials.repairs_cents, mode="expense"),
+        line="Sch. E line 14",
+        indent=true
+    ) }}
+    {{ ui.statement_row(
+        "Supplies & hardware",
+        ui.amount(financials.supplies_cents, mode="expense"),
+        line="Sch. E line 17",
+        indent=true
+    ) }}
+    {{ ui.statement_row(
+        "Net operating income (NOI)",
+        ui.amount(financials.noi_cents, mode="plain", size="lg"),
+        note="Unleveraged property earnings",
+        kind="subtotal"
+    ) }}
+    {{ ui.statement_row(
+        "Operating cash flow (OCF)",
+        ui.amount(financials.ocf_cents, mode="plain", size="lg"),
+        note="Actual liquidity before debt service",
+        kind="graded"
+    ) }}
+    {{ ui.statement_row(
+        "Mortgage interest expense",
+        ui.amount(financials.mortgage_interest_cents, mode="expense"),
+        line="Sch. E line 12",
+        indent=true
+    ) }}
+    {{ ui.statement_row(
+        "Mortgage principal paydown",
+        ui.amount(financials.principal_paid_cents, mode="movement"),
+        note="Equity build, not an expense",
+        indent=true
+    ) }}
+    {{ ui.statement_row(
+        "Escrow reserve contributions",
+        ui.amount(financials.escrow_funded_cents, mode="movement"),
+        note="Pre-funding of taxes and insurance",
+        indent=true
+    ) }}
+    {{ ui.statement_row(
+        "Cash flow after debt service (CADS)",
+        ui.amount(financials.cads_cents, mode="signed", size="lg"),
+        note="Net cash retained in the operating account",
+        kind="total"
+    ) }}
+{{ ui.statement_close() }}
+{{ ui.section_close() }}
+{% endblock %}

@@ -1,0 +1,549 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Transactions Register — PropTally{% endblock %}
+
+{% block content %}
+{# Register summary. The old strip rendered two non-interactive chips
+   ("All Accounts" / "All Doors") under a "Filter By:" heading; the register is
+   not filtered, so it now states the count it actually has. #}
+{% set ns = namespace(posted=0, awaiting=0) %}
+{% for item in transactions_data %}
+    {% if item.state.posting_status == 'POSTED' %}{% set ns.posted = ns.posted + 1 %}{% endif %}
+    {% if item.state.allocation_status != 'FULLY_ALLOCATED' %}{% set ns.awaiting = ns.awaiting + 1 %}{% endif %}
+{% endfor %}
+{% set row_count = transactions_data | length %}
+
+{% set header_meta %}
+    {% if current_filters.is_filtered %}
+        {{ ui.badge(total_items ~ " of " ~ total_recorded ~ " matching filters", variant="accent", upper=false, mono=false,
+                    title="Active filter: showing matching transactions.") }}
+    {% else %}
+        {{ ui.badge(total_recorded ~ " transactions recorded", variant="neutral", upper=false, mono=false,
+                    title="Every recorded transaction, newest first.") }}
+    {% endif %}
+{% endset %}
+
+{% call ui.page_header(
+    "Transaction Register",
+    "Direct register of checking, credit card, and mortgage cash movements with multi-property splitting.",
+    meta=header_meta
+) %}
+    {{ ui.btn("Manual Transaction", variant="neutral", icon_name="plus", attrs='data-modal-open="manual-modal"') }}
+{% endcall %}
+
+<!-- Quick Filter Chips -->
+<div class="pt-chips" role="navigation" aria-label="Transaction quick filters">
+    {{ ui.chip("All Recorded", "/transactions?per_page=" ~ current_filters.per_page, active=(not current_filters.is_filtered), count=total_recorded) }}
+    {{ ui.chip("Awaiting Allocation", "/transactions?status=UNALLOCATED&per_page=" ~ current_filters.per_page, active=(current_filters.status == 'UNALLOCATED'), count=global_unallocated) }}
+    {{ ui.chip("Posted to Ledger", "/transactions?status=POSTED&per_page=" ~ current_filters.per_page, active=(current_filters.status == 'POSTED'), count=global_posted) }}
+    {{ ui.chip("Inflows", "/transactions?direction=INFLOW&per_page=" ~ current_filters.per_page, active=(current_filters.direction == 'INFLOW'), count=global_inflows) }}
+    {{ ui.chip("Outflows", "/transactions?direction=OUTFLOW&per_page=" ~ current_filters.per_page, active=(current_filters.direction == 'OUTFLOW'), count=global_outflows) }}
+</div>
+
+<!-- Interactive Multi-Filter Bar -->
+<form method="GET" action="/transactions" class="pt-filterbar" role="search" aria-label="Filter transactions register">
+    <div class="pt-filterbar__grid">
+        <div class="pt-field pt-filterbar__grid--wide">
+            <label class="pt-field__label" for="filter-q">Search Description / Counterparty</label>
+            <input type="search" id="filter-q" name="q" value="{{ current_filters.q }}" placeholder="e.g. Zelle, Home Depot, Lowe's, Check, Chase...">
+        </div>
+
+        <div class="pt-field">
+            <label class="pt-field__label" for="filter-account">Account</label>
+            <select id="filter-account" name="account_id">
+                <option value="ALL"{% if current_filters.account_id == 'ALL' %} selected{% endif %}>All Accounts</option>
+                {% for acct in accounts %}
+                <option value="{{ acct.id }}"{% if current_filters.account_id == acct.id %} selected{% endif %}>{{ acct.account_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="pt-field">
+            <label class="pt-field__label" for="filter-status">Allocation Status</label>
+            <select id="filter-status" name="status">
+                <option value="ALL"{% if current_filters.status == 'ALL' %} selected{% endif %}>All Statuses</option>
+                <option value="UNALLOCATED"{% if current_filters.status == 'UNALLOCATED' %} selected{% endif %}>Awaiting Allocation</option>
+                <option value="PARTIALLY_ALLOCATED"{% if current_filters.status == 'PARTIALLY_ALLOCATED' %} selected{% endif %}>Partially Allocated</option>
+                <option value="FULLY_ALLOCATED"{% if current_filters.status == 'FULLY_ALLOCATED' %} selected{% endif %}>Allocated (Unposted)</option>
+                <option value="POSTED"{% if current_filters.status == 'POSTED' %} selected{% endif %}>Posted to Ledger</option>
+                <option value="NEEDS_ATTENTION"{% if current_filters.status == 'NEEDS_ATTENTION' %} selected{% endif %}>Needs Attention (Auth / Review)</option>
+            </select>
+        </div>
+
+        <div class="pt-field">
+            <label class="pt-field__label" for="filter-property">Property / Door</label>
+            <select id="filter-property" name="property_id">
+                <option value="ALL"{% if current_filters.property_id == 'ALL' %} selected{% endif %}>All Doors</option>
+                {% for p in properties %}
+                <option value="{{ p.id }}"{% if current_filters.property_id == p.id %} selected{% endif %}>{{ p.name }}</option>
+                {% endfor %}
+                <option value="UNASSIGNED"{% if current_filters.property_id == 'UNASSIGNED' %} selected{% endif %}>Unassigned / Personal</option>
+            </select>
+        </div>
+
+        <div class="pt-field">
+            <label class="pt-field__label" for="filter-direction">Flow Direction</label>
+            <select id="filter-direction" name="direction">
+                <option value="ALL"{% if current_filters.direction == 'ALL' %} selected{% endif %}>All Flows</option>
+                <option value="INFLOW"{% if current_filters.direction == 'INFLOW' %} selected{% endif %}>Inflow (Deposits / Credits)</option>
+                <option value="OUTFLOW"{% if current_filters.direction == 'OUTFLOW' %} selected{% endif %}>Outflow (Debits / Expenses)</option>
+            </select>
+        </div>
+
+        <div class="pt-field">
+            <label class="pt-field__label" for="filter-per-page">Per Page</label>
+            <select id="filter-per-page" name="per_page">
+                <option value="25"{% if current_filters.per_page == '25' %} selected{% endif %}>25 per page</option>
+                <option value="50"{% if current_filters.per_page == '50' %} selected{% endif %}>50 per page</option>
+                <option value="100"{% if current_filters.per_page == '100' %} selected{% endif %}>100 per page</option>
+                <option value="250"{% if current_filters.per_page == '250' %} selected{% endif %}>250 per page</option>
+                <option value="ALL"{% if current_filters.per_page == 'ALL' %} selected{% endif %}>All</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="pt-filterbar__actions">
+        <div class="pt-flex pt-items-center pt-gap-2">
+            <button type="submit" class="pt-btn pt-btn--primary pt-btn--sm">
+                {{ ui.icon("sliders", "sm") }}
+                <span>Apply Filters</span>
+            </button>
+            {% if current_filters.is_filtered %}
+            <a href="/transactions" class="pt-btn pt-btn--ghost pt-btn--sm">Clear Filters</a>
+            {% endif %}
+        </div>
+        <div class="pt-text-secondary">
+            <span>Showing <strong>{{ start_item }}</strong>–<strong>{{ end_item }}</strong> of <strong>{{ total_items }}</strong> matching transactions{% if current_filters.is_filtered %} (filtered from {{ total_recorded }}){% endif %}</span>
+        </div>
+    </div>
+</form>
+
+{% if total_items %}
+{% set summary_items = [ui.badge(global_posted ~ " posted to ledger", variant="outline", upper=false, mono=false)] %}
+{% if global_unallocated %}
+    {% set summary_items = summary_items + [ui.badge(global_unallocated ~ " awaiting allocation", variant="warning", upper=false, mono=false)] %}
+{% endif %}
+{% set summary %}{{ ui.meta_row(summary_items) }}{% endset %}
+{% else %}
+{% set summary = "" %}
+{% endif %}
+
+{{ ui.section_open(
+    "Recorded transactions",
+    "Allocation status and posting provenance are derived from the ledger, never from the transaction description.",
+    actions=summary,
+    flush=true
+) }}
+
+{% if transactions_data %}
+<div class="pt-table-legend">
+    <div class="pt-table-legend__group">
+        <span class="pt-table-legend__title">Legend:</span>
+        <span class="pt-table-legend__item">
+            {{ ui.badge("Posted", variant="success", pill=true, dot=true) }}
+            <span class="pt-table-legend__desc">Ledger confirmed</span>
+        </span>
+        <span class="pt-table-legend__item">
+            {{ ui.badge("Allocated", variant="info", pill=true, dot=true) }}
+            <span class="pt-table-legend__desc">Ready to post</span>
+        </span>
+        <span class="pt-table-legend__item">
+            {{ ui.badge("Unallocated", variant="neutral", pill=true, dot=true) }}
+            <span class="pt-table-legend__desc">Pending split</span>
+        </span>
+        <span class="pt-table-legend__item">
+            <span class="pt-status-flag pt-status-flag--warning">{{ ui.icon("info", "sm") }}<span>Review Flag</span></span>
+            <span class="pt-table-legend__desc">Mixed-use card / review rule</span>
+        </span>
+        <span class="pt-table-legend__item">
+            <span class="pt-status-flag pt-status-flag--error">{{ ui.icon("alert_triangle", "sm") }}<span>Auth Required</span></span>
+            <span class="pt-table-legend__desc">Client confirmation gate</span>
+        </span>
+    </div>
+</div>
+{{ ui.table_open(label="Transaction register") }}
+    <thead>
+        <tr>
+            {{ ui.th("Date", cls="pt-table__date") }}
+            {{ ui.th("Account") }}
+            {{ ui.th("Description") }}
+            {{ ui.th("Amount", num=true) }}
+            {{ ui.th("Allocation status") }}
+            {{ ui.th("Splits / assignment") }}
+            {{ ui.th("Actions", cls="pt-table__actions") }}
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in transactions_data %}
+        {% set txn = item.transaction %}
+        {% set state = item.state %}
+        {% set reasons = item.policy.reasons | join('; ') %}
+        <tr>
+            <td class="pt-table__date pt-num">{{ txn.transaction_date | format_date }}</td>
+            <td>{{ item.account_name }}</td>
+            <td><span class="pt-table__primary">{{ txn.raw_description }}</span></td>
+            <td class="pt-table__num">{{ ui.amount(txn.amount_cents, mode="signed", strong=true) }}</td>
+            <td>
+                <div class="pt-status-cluster">
+                    {% if state.posting_status == 'POSTED' %}
+                        {{ ui.badge("Posted", variant="success", pill=true, dot=true, title="Reconciled & posted to double-entry ledger") }}
+                    {% elif state.allocation_status == 'FULLY_ALLOCATED' %}
+                        {{ ui.badge("Allocated", variant="info", pill=true, dot=true, title="Allocated across doors; awaiting ledger post") }}
+                    {% elif state.allocation_status == 'PARTIALLY_ALLOCATED' %}
+                        {{ ui.badge("Partial (" ~ (state.residual_cents | format_cents) ~ ")", variant="warning", pill=true, dot=true, title="Partial allocation; residual remains") }}
+                    {% else %}
+                        {{ ui.badge("Unallocated", variant="neutral", pill=true, dot=true, title="No allocation recorded yet") }}
+                    {% endif %}
+
+                    {% if item.policy.requires_authorization %}
+                    <span class="pt-status-flag pt-status-flag--error" title="{{ reasons }}">
+                        {{ ui.icon("alert_triangle", "sm") }}
+                        <span>Auth Required</span>
+                    </span>
+                    {% elif item.policy.should_offer_review %}
+                    <span class="pt-status-flag pt-status-flag--warning" title="{{ reasons }}">
+                        {{ ui.icon("info", "sm") }}
+                        <span>Review Flag</span>
+                    </span>
+                    {% endif %}
+                </div>
+            </td>
+            <td>
+                {% if item.splits %}
+                <span class="pt-cell-stack pt-cell-stack--start">
+                    {% for split in item.splits %}
+                    <span>{{ split.category }} <span class="pt-provenance">{{ ui.amount(split.amount_cents, mode="plain") }}</span></span>
+                    {% endfor %}
+                </span>
+                {% else %}
+                <span class="pt-provenance">NONE ASSIGNED</span>
+                {% endif %}
+            </td>
+            <td class="pt-table__actions">
+                {% set split_attrs %}
+                    data-split-open
+                    data-split-id="{{ txn.id }}"
+                    data-split-cents="{{ txn.amount_cents }}"
+                    data-split-desc="{{ txn.raw_description }}"
+                    data-requires-client="{{ 'true' if item.policy.requires_client_confirmation else 'false' }}"
+                    data-requires-cpa="{{ 'true' if item.policy.requires_cpa_review else 'false' }}"
+                    data-may-require-review="{{ 'true' if item.policy.should_offer_review else 'false' }}"
+                    data-policy-reasons="{{ reasons }}"
+                {% endset %}
+                {% if state.allocation_status == 'FULLY_ALLOCATED' %}
+                    {{ ui.btn("Edit Split", variant="secondary", size="sm", icon_name="edit", attrs=split_attrs) }}
+                {% elif state.allocation_status == 'PARTIALLY_ALLOCATED' %}
+                    {{ ui.btn("Complete Split", variant="primary", size="sm", icon_name="sliders", attrs=split_attrs) }}
+                {% else %}
+                    {{ ui.btn("Allocate", variant="secondary", size="sm", icon_name="sliders", attrs=split_attrs) }}
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+{{ ui.table_close() }}
+{{ ui.pagination(page, total_pages, start_item, end_item, total_items, prev_url, next_url) }}
+{% else %}
+{% if current_filters.is_filtered %}
+{{ ui.empty_state(
+    "No transactions match your filters",
+    "Try adjusting your search query, account selection, or allocation status.",
+    action_label="Clear all filters",
+    action_href="/transactions",
+    icon_name="sliders"
+) }}
+{% else %}
+{{ ui.empty_state(
+    "No transactions recorded",
+    "Manual entries and ingested statements appear here. Record a manual transaction to open the register.",
+    action_label="Record a manual transaction",
+    action_href="/transactions",
+    action_attrs='data-modal-open="manual-modal"',
+    icon_name="ledger"
+) }}
+{% endif %}
+{% endif %}
+
+{{ ui.section_close() }}
+
+{# ---------------------------------------------------------------------------
+   Manual entry. Every control is labelled by the field macros; the modal is
+   opened by `data-modal-open` and closed by the shell's controller.
+   --------------------------------------------------------------------------- #}
+{{ ui.modal_open("manual-modal", "Record Manual Transaction", size="md") }}
+<form class="pt-modal__form" action="/transactions/manual" method="POST">
+    <div class="pt-modal__body">
+        {% set account_options = [] %}
+        {% for a in accounts %}
+            {% set account_options = account_options + [{"value": a.id, "label": a.account_name}] %}
+        {% endfor %}
+        {{ ui.select_field(
+            "account_id",
+            "Financial Account",
+            options=account_options if account_options else [
+                {"value": "acct_bofa_chk_9456", "label": "BoA Checking (...9456)"},
+                {"value": "acct_bofa_cc_9306", "label": "BoA Visa (...9306)"},
+                {"value": "acct_apple_card", "label": "Apple Card (...AppleCard)"}
+            ],
+            required=true
+        ) }}
+
+        {{ ui.select_field(
+            "counter_account_id",
+            "Transfer To / Settles (optional)",
+            options=[
+                {"value": "acct_bofa_cc_9306", "label": "BoA Visa (...9306)"},
+                {"value": "acct_apple_card", "label": "Apple Card (...AppleCard)"}
+            ],
+            placeholder="— Not a transfer —",
+            help="Paying a credit card from a deposit account: the payment is posted as a transfer (debit card liability, credit checking) and never re-expenses the original purchases. Classification comes from the accounts, not the wording."
+        ) }}
+
+        {{ ui.date_field("transaction_date", "Date", value="2026-03-25", required=true) }}
+
+        {{ ui.text_field("description", "Description / Merchant",
+                         placeholder="e.g. Lowe's Home Improvement", required=true) }}
+
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.number_field("amount_dollars", "Amount ($ Dollars)",
+                               step="0.01", placeholder="150.00", required=true) }}
+            {{ ui.select_field(
+                "direction",
+                "Direction",
+                options=[
+                    {"value": "OUTFLOW", "label": "OUTFLOW (Expense)"},
+                    {"value": "INFLOW", "label": "INFLOW (Deposit)"}
+                ]
+            ) }}
+        </div>
+    </div>
+    <div class="pt-modal__footer">
+        {{ ui.btn("Cancel", variant="secondary", attrs="data-modal-close") }}
+        {{ ui.btn("Save Transaction", variant="neutral", type="submit") }}
+    </div>
+</form>
+{{ ui.modal_close() }}
+
+{# ---------------------------------------------------------------------------
+   Split / allocate. The residual math, the governance gates and the submit
+   all stay client-side; only the surfacing changed (components + aria labels).
+   --------------------------------------------------------------------------- #}
+{% macro split_row() %}
+<div class="split-row pt-form-grid pt-form-grid--3">
+    <select name="property_id[]" aria-label="Property or personal for this split">
+        {% if properties %}
+            {% for p in properties %}
+            <option value="{{ p.id }}">{{ p.name }}</option>
+            {% endfor %}
+        {% else %}
+            <option value="prop_tinsley_huntley">12307 Larkspur St</option>
+            <option value="prop_cimmaron_pingree">582 Foxglove Ct</option>
+            <option value="prop_burkey_algonquin">3345 Elderberry (Primary)</option>
+        {% endif %}
+        <option value="">Personal / Unassigned</option>
+    </select>
+    <select name="category[]" aria-label="Schedule E category for this split">
+        <option value="REPAIRS">Repairs (Line 14)</option>
+        <option value="MANAGEMENT">Property Mgmt / Realtor Fee (Line 11)</option>
+        <option value="COMMISSIONS">Tenant Placement Commission (Line 8)</option>
+        <option value="HOA">HOA Assessments (Line 19)</option>
+        <option value="SUPPLIES">Supplies (Line 15)</option>
+        <option value="RENT_INCOME">Rent Income (Line 3)</option>
+        <option value="TAXES">Taxes (Line 16)</option>
+        <option value="PERSONAL">Personal Draw</option>
+    </select>
+    <input type="number" step="0.01" name="amount_dollars[]" placeholder="0.00"
+           aria-label="Split amount in dollars" class="split-amount-input" required>
+</div>
+{% endmacro %}
+
+{{ ui.modal_open(
+    "split-modal",
+    "Split / Allocate Transaction",
+    subtitle="Allocate every cent of this transaction before it can be posted to the ledger.",
+    size="lg"
+) }}
+<form id="split-form" class="pt-modal__form" action="/transactions/split" method="POST">
+    <div class="pt-modal__body">
+        <input type="hidden" id="split-txn-id" name="transaction_id">
+        <input type="hidden" id="split-parent-total-cents" value="0">
+
+        <p class="pt-modal__subtitle" id="split-modal-desc"></p>
+
+        <div class="pt-kv">
+            <span class="pt-kv__key">Target transaction total</span>
+            <span class="pt-kv__value"><span class="pt-amount pt-amount--strong" id="split-target-display">$0.00</span></span>
+        </div>
+
+        <div id="split-lines-container" class="pt-stack-2">
+            {{ split_row() }}
+        </div>
+
+        <div class="pt-flex pt-flex-wrap pt-items-end pt-justify-between pt-gap-3">
+            {{ ui.btn("Add Split Line", variant="ghost", size="sm", icon_name="plus", attrs="data-add-split") }}
+            <div class="pt-cell-stack">
+                <span>Allocated <span class="pt-amount pt-amount--strong" id="allocated-sum-display">$0.00</span></span>
+                <span>Residual <span class="pt-amount pt-amount--neutral" id="residual-display">$0.00</span></span>
+            </div>
+        </div>
+
+        {# Saving is blocked while the splits exceed the total: say why in words. #}
+        <p class="pt-field__error" id="split-residual-error" role="alert" hidden></p>
+
+        <div class="pt-form-section">
+            {{ ui.checkbox_field(
+                "post_to_ledger",
+                "Post to General Ledger immediately upon saving (if fully allocated)",
+                value="true",
+                checked=true,
+                id="post_to_ledger_cb",
+                touch=true
+            ) }}
+        </div>
+
+        {# Governance gates, shown when the domain policy for this transaction
+           requires or may require them. CBD-1 (client authorisation) and CBD-2
+           (external review) are separate controls; neither satisfies the other. #}
+        <div id="split-policy" class="pt-fieldset pt-form-section" hidden>
+            <span class="pt-fieldset__legend" id="split-policy-heading">Posting authorization required</span>
+            <p class="pt-provenance" id="split-policy-reasons"></p>
+            <div id="split-policy-client-row">
+                {{ ui.cbd_gate(
+                    "cbd1",
+                    "client_confirmed",
+                    "Client confirmation (CBD-1)",
+                    "split-client-confirmed",
+                    hint="Client authorisation to post on the client's instruction. It does not satisfy CBD-2."
+                ) }}
+            </div>
+            <div id="split-policy-cpa-row">
+                {{ ui.cbd_gate(
+                    "cbd2",
+                    "user_attested_cpa_review",
+                    "I attest that external review occurred (CBD-2)",
+                    "split-cpa-approved",
+                    hint="Self-attestation, not verified CPA approval. Client confirmation does not substitute for it."
+                ) }}
+            </div>
+        </div>
+
+        <template id="split-row-template">{{ split_row() }}</template>
+    </div>
+    <div class="pt-modal__footer">
+        {{ ui.btn("Cancel", variant="secondary", attrs="data-modal-close") }}
+        {{ ui.btn("Save & Post Splits", variant="primary", type="submit", id="save-split-btn") }}
+    </div>
+</form>
+{{ ui.modal_close() }}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    'use strict';
+
+    var SPLIT_MODAL_ID = 'split-modal';
+    var targetTotalCents = 0;
+
+    /* Currency, two decimals, thousands separators, signed when negative. */
+    function formatCents(cents) {
+        var sign = cents < 0 ? '-' : '';
+        return sign + '$' + (Math.abs(cents) / 100).toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+    }
+
+    function openSplitModal(txnId, amountCents, description, trigger) {
+        if (!trigger) return;
+
+        document.getElementById('split-txn-id').value = txnId;
+        targetTotalCents = Math.abs(parseInt(amountCents, 10)) || 0;
+        document.getElementById('split-parent-total-cents').value = targetTotalCents;
+        document.getElementById('split-target-display').textContent = formatCents(targetTotalCents);
+        document.getElementById('split-modal-desc').textContent = description || '';
+
+        /* Authorization controls mirror the domain policy for this transaction. */
+        var requiresClient = trigger.dataset.requiresClient === 'true';
+        var requiresCpa = trigger.dataset.requiresCpa === 'true';
+        var mayRequireReview = trigger.dataset.mayRequireReview === 'true';
+
+        document.getElementById('split-client-confirmed').checked = false;
+        document.getElementById('split-cpa-approved').checked = false;
+        document.getElementById('split-policy-reasons').textContent = trigger.dataset.policyReasons || '';
+        document.getElementById('split-policy-heading').textContent = requiresCpa
+            ? 'Posting authorization required'
+            : 'Review may be required once allocated';
+        document.getElementById('split-policy-client-row').hidden = !requiresClient;
+        document.getElementById('split-policy-cpa-row').hidden = !mayRequireReview;
+        document.getElementById('split-policy').hidden = !(requiresClient || mayRequireReview);
+
+        window.PT.openModal(SPLIT_MODAL_ID, '#split-lines-container select');
+        updateSplitMath();
+    }
+
+    function addSplitRow() {
+        var container = document.getElementById('split-lines-container');
+        var template = document.getElementById('split-row-template');
+        if (!container || !template || !template.content) return;
+        var row = template.content.firstElementChild;
+        if (!row) return;
+        container.appendChild(row.cloneNode(true));
+    }
+
+    function updateSplitMath() {
+        var totalCents = 0;
+        document.querySelectorAll('.split-amount-input').forEach(function (input) {
+            var value = parseFloat(input.value);
+            if (!isNaN(value)) totalCents += Math.round(value * 100);
+        });
+
+        document.getElementById('allocated-sum-display').textContent = formatCents(totalCents);
+
+        var overAllocated = totalCents > targetTotalCents;
+        var residualDisplay = document.getElementById('residual-display');
+        residualDisplay.textContent = formatCents(targetTotalCents - totalCents);
+        residualDisplay.className = overAllocated
+            ? 'pt-amount pt-amount--negative pt-amount--strong'
+            : 'pt-amount pt-amount--neutral';
+
+        var error = document.getElementById('split-residual-error');
+        if (error) {
+            if (overAllocated) {
+                error.textContent = 'Over-allocated by ' + formatCents(totalCents - targetTotalCents) +
+                    '. Reduce a split line to match the transaction total.';
+                error.hidden = false;
+            } else {
+                error.hidden = true;
+            }
+        }
+
+        document.getElementById('save-split-btn').disabled = overAllocated;
+    }
+
+    document.addEventListener('click', function (event) {
+        var trigger = event.target.closest('[data-split-open]');
+        if (trigger) {
+            event.preventDefault();
+            openSplitModal(trigger.dataset.splitId, trigger.dataset.splitCents,
+                           trigger.dataset.splitDesc, trigger);
+            return;
+        }
+        if (event.target.closest('[data-add-split]')) {
+            event.preventDefault();
+            addSplitRow();
+        }
+    });
+
+    var container = document.getElementById('split-lines-container');
+    if (container) {
+        container.addEventListener('input', function (event) {
+            if (event.target.classList.contains('split-amount-input')) {
+                updateSplitMath();
+            }
+        });
+    }
+})();
+</script>
+{% endblock %}

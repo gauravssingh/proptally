@@ -1,0 +1,477 @@
+/* ==========================================================================
+   PropTally Base Layer
+   --------------------------------------------------------------------------
+   Reset, element defaults, typography, and the closed utility set.
+   Every value references a token from tokens.css.
+
+   The utility set is deliberately small and namespaced `pt-`. Components carry
+   their own spacing; utilities exist only for composition (grid/flex/gap/stack).
+   Normative specification: docs/ui-ux/03_DESIGN_TOKENS.md, 06_*.md §4.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Reset
+   -------------------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+}
+
+body {
+    min-height: 100vh;
+    background-color: var(--pt-bg);
+    color: var(--pt-text);
+    font-family: var(--pt-font-sans);
+    font-size: var(--pt-fs-body);
+    line-height: var(--pt-lh-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+img,
+svg,
+video {
+    display: block;
+    max-width: 100%;
+}
+
+svg {
+    flex-shrink: 0;
+}
+
+/* `hidden` must defeat component display values (modals/drawers use flex). */
+[hidden] {
+    display: none !important;
+}
+
+/* --------------------------------------------------------------------------
+   2. Typography
+   -------------------------------------------------------------------------- */
+h1,
+h2,
+h3 {
+    font-weight: var(--pt-fw-semibold);
+    line-height: var(--pt-lh-heading);
+    color: var(--pt-text);
+}
+
+h1 {
+    font-size: var(--pt-fs-title);
+    font-weight: var(--pt-fw-bold);
+    letter-spacing: var(--pt-tracking-tight);
+}
+
+h2 {
+    font-size: var(--pt-fs-section);
+    letter-spacing: -0.01em;
+}
+
+h3 {
+    font-size: var(--pt-fs-subsection);
+    line-height: var(--pt-lh-body);
+}
+
+p {
+    line-height: var(--pt-lh-body);
+}
+
+strong,
+b {
+    font-weight: var(--pt-fw-semibold);
+}
+
+code,
+kbd,
+samp,
+pre {
+    font-family: var(--pt-font-mono);
+    font-size: 0.95em;
+}
+
+/* Numeric/identifier type: monospace, tabular, never re-decided per screen. */
+.pt-num {
+    font-family: var(--pt-font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+}
+
+/* --------------------------------------------------------------------------
+   3. Links
+   -------------------------------------------------------------------------- */
+a {
+    color: var(--pt-accent-text);
+    text-decoration: none;
+}
+
+a:hover {
+    color: var(--pt-accent-hover);
+    text-decoration: underline;
+}
+
+/* Chrome surfaces own their own link colours; content links keep the accent. */
+.pt-sidebar a,
+.pt-appbar a,
+.pt-drawer a,
+.pt-bottomnav a,
+.pt-topbar a {
+    color: inherit;
+}
+
+.pt-sidebar a:hover,
+.pt-appbar a:hover,
+.pt-drawer a:hover,
+.pt-bottomnav a:hover,
+.pt-topbar a:hover {
+    text-decoration: none;
+}
+
+/* The shell: chrome beside the content canvas. */
+.pt-shell {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+@media (min-width: 1024px) {
+    .pt-shell {
+        flex-direction: row;
+    }
+}
+
+/* --------------------------------------------------------------------------
+   4. Focus visibility  (audit C2 — every control must show focus)
+   -------------------------------------------------------------------------- */
+:focus-visible {
+    outline: var(--pt-focus-ring);
+    outline-offset: var(--pt-focus-offset);
+    border-radius: var(--pt-radius-sm);
+}
+
+/* :focus-visible is not universal; the fallback below keeps keyboard users
+   visible on engines without it, without double-ringing modern ones. */
+@supports not selector(:focus-visible) {
+    a:focus,
+    button:focus,
+    input:focus,
+    select:focus,
+    textarea:focus,
+    [tabindex]:focus {
+        outline: var(--pt-focus-ring);
+        outline-offset: var(--pt-focus-offset);
+    }
+}
+
+.pt-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.pt-skip-link {
+    position: absolute;
+    top: var(--pt-space-2);
+    left: var(--pt-space-2);
+    z-index: var(--pt-z-toast);
+    padding: var(--pt-space-2) var(--pt-space-4);
+    background-color: var(--pt-surface);
+    color: var(--pt-text);
+    border: var(--pt-border-w) solid var(--pt-border-strong);
+    border-radius: var(--pt-radius-md);
+    box-shadow: var(--pt-shadow-md);
+    transform: translateY(-200%);
+}
+
+.pt-skip-link:focus {
+    transform: translateY(0);
+}
+
+/* --------------------------------------------------------------------------
+   5. Form element defaults
+   --------------------------------------------------------------------------
+   Bare elements are styled so that any control renders consistently even
+   before it is wrapped in a component. Component classes (components.css §6)
+   add size/variant on top.
+   -------------------------------------------------------------------------- */
+input[type="text"],
+input[type="number"],
+input[type="date"],
+input[type="url"],
+input[type="search"],
+input[type="email"],
+input[type="password"],
+input[type="file"],
+select,
+textarea {
+    width: 100%;
+    min-height: var(--pt-input-h);
+    padding: var(--pt-space-2) var(--pt-space-3);
+    background-color: var(--pt-surface);
+    color: var(--pt-text);
+    font-family: inherit;
+    font-size: var(--pt-fs-supporting);
+    line-height: var(--pt-lh-snug);
+    border: var(--pt-border-w) solid var(--pt-border);
+    border-radius: var(--pt-radius-md);
+    transition: border-color var(--pt-transition-fast) var(--pt-ease),
+        box-shadow var(--pt-transition-fast) var(--pt-ease);
+}
+
+textarea {
+    min-height: 6rem;
+    resize: vertical;
+    line-height: var(--pt-lh-body);
+}
+
+input[type="number"],
+input[type="date"] {
+    font-family: var(--pt-font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+input:hover:not(:disabled),
+select:hover:not(:disabled),
+textarea:hover:not(:disabled) {
+    border-color: var(--pt-border-strong);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+    border-color: var(--pt-accent);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+    background-color: var(--pt-neutral-bg);
+    color: var(--pt-text-disabled);
+    cursor: not-allowed;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+    width: 1rem;
+    height: 1rem;
+    min-height: 0;
+    accent-color: var(--pt-accent);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+input[type="file"] {
+    padding: var(--pt-space-1);
+    cursor: pointer;
+}
+
+select {
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2352627a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right var(--pt-space-2) center;
+    padding-right: var(--pt-space-8);
+}
+
+::placeholder {
+    color: var(--pt-text-muted);
+    opacity: 1;
+}
+
+/* --------------------------------------------------------------------------
+   6. Tables (structure only; data-table styling lives in components.css)
+   -------------------------------------------------------------------------- */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+}
+
+th {
+    font-size: var(--pt-fs-th);
+    font-weight: var(--pt-fw-semibold);
+    letter-spacing: var(--pt-tracking-wide);
+    text-transform: uppercase;
+    color: var(--pt-text-muted);
+}
+
+/* --------------------------------------------------------------------------
+   7. Buttons (base; variants live in components.css)
+   -------------------------------------------------------------------------- */
+button {
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+button:disabled {
+    cursor: not-allowed;
+}
+
+/* --------------------------------------------------------------------------
+   8. Utilities — closed set
+   -------------------------------------------------------------------------- */
+.pt-flex { display: flex; }
+.pt-inline-flex { display: inline-flex; }
+.pt-grid { display: grid; }
+.pt-block { display: block; }
+.pt-hidden { display: none !important; }
+
+.pt-flex-col { flex-direction: column; }
+.pt-flex-row { flex-direction: row; }
+.pt-flex-wrap { flex-wrap: wrap; }
+.pt-flex-1 { flex: 1 1 0%; }
+.pt-shrink-0 { flex-shrink: 0; }
+.pt-min-w-0 { min-width: 0; }
+.pt-w-full { width: 100%; }
+.pt-overflow-x { overflow-x: auto; }
+.pt-overflow-y { overflow-y: auto; }
+.pt-nowrap { white-space: nowrap; }
+.pt-truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pt-items-center { align-items: center; }
+.pt-items-start { align-items: flex-start; }
+.pt-items-end { align-items: flex-end; }
+.pt-items-baseline { align-items: baseline; }
+.pt-justify-between { justify-content: space-between; }
+.pt-justify-center { justify-content: center; }
+.pt-justify-end { justify-content: flex-end; }
+
+.pt-gap-1 { gap: var(--pt-space-1); }
+.pt-gap-2 { gap: var(--pt-space-2); }
+.pt-gap-3 { gap: var(--pt-space-3); }
+.pt-gap-4 { gap: var(--pt-space-4); }
+.pt-gap-5 { gap: var(--pt-space-5); }
+.pt-gap-6 { gap: var(--pt-space-6); }
+
+/* Vertical rhythm: a stack owns the space *between* its children. */
+.pt-stack > * + * { margin-top: var(--pt-space-4); }
+.pt-stack-1 > * + * { margin-top: var(--pt-space-1); }
+.pt-stack-2 > * + * { margin-top: var(--pt-space-2); }
+.pt-stack-3 > * + * { margin-top: var(--pt-space-3); }
+.pt-stack-5 > * + * { margin-top: var(--pt-space-5); }
+.pt-stack-6 > * + * { margin-top: var(--pt-space-6); }
+
+/* Text */
+.pt-text-right { text-align: right; }
+.pt-text-center { text-align: center; }
+.pt-text-left { text-align: left; }
+.pt-text-muted { color: var(--pt-text-muted); }
+.pt-text-muted-sunken { color: var(--pt-text-muted-sunken); }
+.pt-text-secondary { color: var(--pt-text-secondary); }
+
+.pt-fs-caption { font-size: var(--pt-fs-caption); line-height: var(--pt-lh-snug); }
+.pt-fs-supporting { font-size: var(--pt-fs-supporting); line-height: var(--pt-lh-body); }
+.pt-fs-body { font-size: var(--pt-fs-body); }
+.pt-fs-subsection { font-size: var(--pt-fs-subsection); }
+.pt-fs-section { font-size: var(--pt-fs-section); }
+.pt-fs-title { font-size: var(--pt-fs-title); }
+
+.pt-fw-medium { font-weight: var(--pt-fw-medium); }
+.pt-fw-semibold { font-weight: var(--pt-fw-semibold); }
+.pt-fw-bold { font-weight: var(--pt-fw-bold); }
+
+/* Grids: mobile-first, one column, widening at md/lg. */
+.pt-grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pt-grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pt-grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.pt-col-span-2 { grid-column: span 2 / span 2; }
+
+@media (min-width: 640px) {
+    .pt-sm-grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pt-sm-grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+@media (min-width: 768px) {
+    .pt-md-flex { display: flex; }
+    .pt-md-flex-row { flex-direction: row; }
+    .pt-md-grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pt-md-grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .pt-md-grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .pt-md-items-center { align-items: center; }
+    .pt-md-justify-between { justify-content: space-between; }
+    .pt-md-hidden { display: none !important; }
+    .pt-md-block { display: block; }
+    .pt-md-text-right { text-align: right; }
+}
+
+/* Shell switches from drawer navigation to the fixed sidebar at lg (1024px). */
+@media (min-width: 1024px) {
+    .pt-lg-flex { display: flex; }
+    .pt-lg-grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pt-lg-grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .pt-lg-grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .pt-lg-grid-cols-12 { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+    .pt-lg-col-span-5 { grid-column: span 5 / span 5; }
+    .pt-lg-col-span-7 { grid-column: span 7 / span 7; }
+    .pt-lg-hidden { display: none !important; }
+    .pt-lg-block { display: block; }
+}
+
+.pt-lg-only { display: none; }
+
+@media (min-width: 1024px) {
+    .pt-lg-only { display: flex; }
+}
+
+/* --------------------------------------------------------------------------
+   9. Motion preference  (audit: animation must be removable)
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* --------------------------------------------------------------------------
+   10. Print  (tax workpaper and audit reports are printed)
+   -------------------------------------------------------------------------- */
+@media print {
+    .pt-shell,
+    .pt-drawer,
+    .pt-bottomnav,
+    .pt-appbar,
+    .pt-no-print {
+        display: none !important;
+    }
+
+    body {
+        background-color: var(--pt-surface);
+    }
+
+    .pt-card,
+    .pt-table-wrap {
+        box-shadow: none;
+        border-color: var(--pt-border);
+    }
+
+    a[href]::after {
+        content: "";
+    }
+}
