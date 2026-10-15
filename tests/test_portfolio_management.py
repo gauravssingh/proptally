@@ -245,3 +245,138 @@ def test_an_unopenable_portfolio_is_reported_not_omitted(owner, monkeypatch):
     assert "Alice Portfolio" in response.text
     assert "Ghost Portfolio" in response.text
     assert "could not be opened" in response.text
+
+
+def _owner_who_can_remove_their_portfolio(owner, monkeypatch, *, keep_name="Keep Portfolio",
+                                          doomed_name="Doomed Portfolio"):
+    """A keeper, and a second owner who may legitimately remove their own portfolio.
+
+    An account is refused removal when it would be left with nothing to sign in to, so
+    the second owner is also made a member of the keeper's portfolio first.
+    """
+    monkeypatch.setenv("PROPTALLY_ALLOW_REGISTRATION", "true")
+    keeper = owner(portfolio_name=keep_name)
+    doomed = owner(app=keeper.app, email="doomed@example.com", password="doomed-pass-1",
+                   portfolio_name=doomed_name)
+    token = _invite(keeper, keeper.tenant_id, doomed.email, ROLE_READ_ONLY)
+    accepted = doomed.client.post(
+        f"/auth/invite/{token}",
+        data={"password": "doomed-pass-1", "csrf_token": doomed.client.cookies.get("pt_csrf")},
+        follow_redirects=False,
+    )
+    assert accepted.status_code == 303, accepted.text[:300]
+    return keeper, doomed
+
+
+def test_deleting_a_portfolio_removes_its_files_and_its_rows(owner, monkeypatch):
+    """Removal takes the portfolio's database and its control-plane rows with it."""
+    alice, doomed = _owner_who_can_remove_their_portfolio(owner, monkeypatch)
+    _add_property(doomed, "Doomed Duplex")
+
+    tenant_manager = alice.app.state.tenant_manager
+    doomed_root = tenant_manager.paths(doomed.tenant_id).root
+    assert doomed_root.is_dir()
+
+    # Alice is an owner of her own portfolio and not a member of the doomed one, so she
+    # cannot even see its removal page.
+    assert alice.client.get(f"/portfolios/{doomed.tenant_id}/delete").status_code == 404
+
+    page = doomed.client.get(f"/portfolios/{doomed.tenant_id}/delete")
+    assert page.status_code == 200
+    assert "Doomed Portfolio" in page.text
+    assert "What would be destroyed" in page.text
+    assert "Download an export now" in page.text, "an export must be offered before removal"
+
+    # A wrong confirmation is refused and nothing is removed.
+    refused = doomed.post(
+        f"/portfolios/{doomed.tenant_id}/delete", {"confirm_name": "Not The Name"},
+        follow_redirects=False,
+    )
+    assert refused.status_code == 303
+    assert "error=" in refused.headers["location"]
+    assert doomed_root.is_dir(), "a refused confirmation must not remove anything"
+    assert doomed.client.get("/portfolios").status_code == 200
+
+    # With the name typed exactly, the portfolio goes.
+    removed = doomed.post(
+        f"/portfolios/{doomed.tenant_id}/delete", {"confirm_name": "Doomed Portfolio"},
+        follow_redirects=False,
+    )
+    assert removed.status_code == 303 and removed.headers["location"] == "/portfolios"
+    assert not doomed_root.exists(), "the portfolio's files must be gone"
+
+    with Session(doomed.control_engine) as session:
+        from proptally.db.system_models import Tenant, TenantMembership
+
+        assert session.get(Tenant, doomed.tenant_id) is None
+        assert not session.exec(
+            select(TenantMembership).where(TenantMembership.tenant_id == doomed.tenant_id)
+        ).all()
+    assert "Doomed Portfolio" not in doomed.client.get("/portfolios").text
+
+
+def test_the_last_portfolio_cannot_be_removed(owner, monkeypatch):
+    """An account with nothing left to sign in to is refused, not stranded."""
+    monkeypatch.setenv("PROPTALLY_ALLOW_REGISTRATION", "true")
+    alice = owner(portfolio_name="Only Portfolio")
+
+    page = alice.client.get(f"/portfolios/{alice.tenant_id}/delete")
+    assert page.status_code == 200
+
+    refused = alice.post(
+        f"/portfolios/{alice.tenant_id}/delete", {"confirm_name": "Only Portfolio"},
+        follow_redirects=False,
+    )
+    assert refused.status_code == 303
+    assert "error=" in refused.headers["location"]
+    assert alice.app.state.tenant_manager.paths(alice.tenant_id).root.is_dir()
+    assert "Only Portfolio" in alice.client.get("/portfolios").text
+
+
+def test_a_read_only_member_cannot_remove_a_portfolio(owner, monkeypatch):
+    """Neither the page nor the action is available without ownership."""
+    monkeypatch.setenv("PROPTALLY_ALLOW_REGISTRATION", "true")
+    alice = owner(portfolio_name="Alice Portfolio")
+    token = _invite(alice, alice.tenant_id, "viewer@example.com", ROLE_READ_ONLY)
+    viewer = owner(app=alice.app, email="viewer@example.com", password="viewer-pass-1",
+                   portfolio_name="Viewer Portfolio")
+    accepted = viewer.client.post(
+        f"/auth/invite/{token}",
+        data={"password": "viewer-pass-1", "csrf_token": viewer.client.cookies.get("pt_csrf")},
+        follow_redirects=False,
+    )
+    assert accepted.status_code == 303, accepted.text[:300]
+
+    page = viewer.client.get("/portfolios").text
+    assert f"/portfolios/{alice.tenant_id}/delete" not in page, "no removal control for a read-only member"
+    assert viewer.client.get(f"/portfolios/{alice.tenant_id}/delete").status_code == 403
+    # The viewer owns their own portfolio, so a read-only membership elsewhere is the
+    # only thing stopping this; the role check is what refuses it.
+    refused = viewer.post(
+        f"/portfolios/{alice.tenant_id}/delete", {"confirm_name": "Alice Portfolio"},
+        follow_redirects=False,
+    )
+    assert refused.status_code == 403
+    assert alice.app.state.tenant_manager.paths(alice.tenant_id).root.is_dir()
+
+
+def test_deleting_a_portfolio_repaints_the_sessions_looking_at_it(owner, monkeypatch):
+    """The member's session moves to a portfolio they still have, not into a broken state."""
+    keeper, doomed = _owner_who_can_remove_their_portfolio(owner, monkeypatch)
+
+    # Their session is now looking at the keeper's portfolio; switch back to their own
+    # and delete it while it is the active one.
+    back = doomed.post(f"/portfolios/{doomed.tenant_id}/open", {}, follow_redirects=False)
+    assert back.status_code == 303
+    assert doomed.client.get("/").status_code == 200
+
+    removed = doomed.post(
+        f"/portfolios/{doomed.tenant_id}/delete", {"confirm_name": "Doomed Portfolio"},
+        follow_redirects=False,
+    )
+    assert removed.status_code == 303 and removed.headers["location"] == "/portfolios"
+
+    # The active portfolio was the one removed, so the session was repointed and the
+    # next page load works rather than failing.
+    assert doomed.client.get("/").status_code == 200
+    assert doomed.client.get("/portfolios").status_code == 200

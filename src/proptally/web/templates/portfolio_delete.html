@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Remove {{ portfolio.name }} — PropTally{% endblock %}
+{% block content %}
+<div class="pt-stack pt-gap-6">
+
+    <div class="pt-stack pt-gap-1">
+        <h1 class="pt-fs-h2 pt-fw-bold">Remove “{{ portfolio.name }}”</h1>
+        <p class="pt-fs-caption pt-text-secondary">
+            This portfolio is its own database. Removing it destroys that database and its
+            document store, and nothing is kept.
+        </p>
+    </div>
+
+    {% if error %}{{ ui.alert(variant="error", title="Not removed", text=error) }}{% endif %}
+
+    <section class="pt-card">
+        <div class="pt-card__header">
+            <h2 class="pt-card__title">What would be destroyed</h2>
+        </div>
+        <div class="pt-card__body">
+            {% if portfolio.readable %}
+            <table class="pt-table">
+                <tbody>
+                    <tr><th>Doors (properties)</th><td>{{ portfolio.properties }}</td></tr>
+                    <tr><th>Mortgage loans</th><td>{{ portfolio.loans }}</td></tr>
+                    <tr><th>Documents</th><td>{{ portfolio.documents }}</td></tr>
+                    <tr><th>Transactions</th><td>{{ portfolio.transactions }}</td></tr>
+                    <tr><th>Posted journal entries</th><td>{{ portfolio.journal_entries }}</td></tr>
+                    <tr><th>Stored files (vault and photos)</th><td>{{ portfolio.stored_files }}</td></tr>
+                </tbody>
+            </table>
+            {% else %}
+            <p>
+                This portfolio's database could not be opened, so its contents cannot be
+                listed. Removing it will still delete whatever is there.
+            </p>
+            {% endif %}
+        </div>
+    </section>
+
+    <section class="pt-card">
+        <div class="pt-card__header">
+            <h2 class="pt-card__title">Keep a copy first</h2>
+        </div>
+        <div class="pt-card__body pt-stack pt-gap-3">
+            <p class="pt-fs-caption pt-text-secondary">
+                An export contains the ledger database, the documents and the photos, with a
+                manifest. Take one before removing the portfolio; it cannot be taken after.
+            </p>
+            <a class="pt-btn pt-btn--secondary pt-btn--sm"
+               href="/portfolios/{{ portfolio.tenant_id }}/export">Download an export now</a>
+        </div>
+    </section>
+
+    <section class="pt-card">
+        <div class="pt-card__header">
+            <h2 class="pt-card__title">Confirm</h2>
+        </div>
+        <div class="pt-card__body pt-stack pt-gap-3">
+            <form method="post" action="/portfolios/{{ portfolio.tenant_id }}/delete"
+                  class="pt-stack pt-gap-3">
+                {{ csrf_field() }}
+                {{ ui.text_field(
+                    "confirm_name",
+                    "Portfolio name",
+                    required=true,
+                    placeholder="Type it exactly",
+                    help="Type " ~ portfolio.name ~ " exactly, including capitals."
+                ) }}
+                <div class="pt-flex pt-flex-row pt-gap-2">
+                    <button class="pt-btn pt-btn--destructive pt-btn--sm" type="submit">
+                        Remove this portfolio permanently
+                    </button>
+                    <a class="pt-btn pt-btn--secondary pt-btn--sm" href="/portfolios">Cancel</a>
+                </div>
+            </form>
+            <p class="pt-fs-caption pt-text-secondary">
+                This cannot be undone and there is no recycle bin. Backups taken with
+                <code>scripts/backup.sh</code> are unaffected.
+            </p>
+        </div>
+    </section>
+</div>
+{% endblock %}

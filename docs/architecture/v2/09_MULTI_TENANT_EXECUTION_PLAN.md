@@ -441,11 +441,16 @@ to reversal.
   a `.tar.gz` of one portfolio: a WAL-safe `VACUUM INTO` snapshot of its database, its
   `vault/` and `photos/`, and a `manifest.json`. Owner-only, and resolved through the
   requesting account's own memberships, so a portfolio id from elsewhere is not found.
-* **Portfolio delete — deliberately not built.** It is irreversible, and the plan left
-  it to the user to decide what deletion should mean (immediate removal versus an
-  export-then-remove flow, and whether anything is retained). `TenantManager.drop_tenant_storage()`
-  exists for an operator with shell access; no route calls it. Export delivers the part
-  of that need that carries no risk of data loss.
+* **Portfolio delete — delivered with defined semantics.** Decided as: immediate and
+  irreversible removal of the portfolio's files and its control-plane rows, because
+  anything else (a recycle bin, a retention window) is a policy the deployment should
+  choose rather than the code assume. Guard rails: owner-only; a dedicated
+  confirmation page that lists precisely what would be destroyed and offers an export
+  first; the portfolio's name must be typed to confirm; and removal is refused when it
+  would leave any member with no portfolio at all, since such an account cannot sign
+  in to anything. Sessions pointing at the removed portfolio are moved to one the
+  member still has. Nothing is retained, so an owner who wants a copy must export or
+  restore from `scripts/backup.sh`.
 * **`PROPTALLY_DEMO_SEED` posture — decided.** Demo seeding defaults off and requires an
   explicit `PROPTALLY_DEMO_PASSWORD`; enabling it without one reports the mistake and
   seeds nothing rather than minting a guessable credential. Demo data is also per
@@ -453,10 +458,10 @@ to reversal.
   deployment and can be dropped whenever it is convenient to remove the code path.
 
 ### Still open for the user
-* Portfolio deletion semantics (above).
 * Login throttling and the session store are per-process; a multi-worker deployment
   multiplies the login allowance and re-opens databases per worker (`ADR-010`).
-* Whether a reviewer should be able to *work across* several portfolios in one
-  screen rather than switching between them.
+* Whether a reviewer should be able to *edit across* several portfolios in one screen
+  rather than switching between them. The read-only listing exists; batch operations
+  across portfolios do not.
 
 *End of Multi-Tenant Self-Hosted Architecture & Execution Plan.*

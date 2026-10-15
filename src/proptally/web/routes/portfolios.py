@@ -12,12 +12,19 @@ request asks for.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+import urllib.parse
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
 from starlette.background import BackgroundTask
 
 from proptally.db.models import Property
+from proptally.db.portfolio_lifecycle import (
+    PortfolioDeletionError,
+    delete_portfolio,
+    portfolio_summary,
+)
 from proptally.db.portfolio_archive import build_portfolio_archive, discard_archive
 from proptally.db.system_models import ROLE_CPA_REVIEWER, ROLE_OWNER, ROLE_READ_ONLY, Tenant
 from proptally.db.tenant_manager import TenantManager
@@ -32,6 +39,33 @@ ROLE_DESCRIPTIONS = {
 
 #: Roles that may take a full copy of a portfolio away with them.
 EXPORT_ROLES = (ROLE_OWNER,)
+
+#: Roles that may retire a portfolio.
+DELETE_ROLES = (ROLE_OWNER,)
+
+
+def _membership_for(request: Request, context, tenant_id: str, *, roles):
+    """The account's own membership of ``tenant_id``, if it is in ``roles``.
+
+    A portfolio the account is not a member of is reported as not found, so the page
+    cannot be used to discover which portfolios exist.
+    """
+    membership = next(
+        (
+            m
+            for m in memberships_for(request.app.state.control_engine, context.user.id)
+            if m.tenant_id == tenant_id
+        ),
+        None,
+    )
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    if membership.role not in roles:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role {membership.role} may not do that in this portfolio.",
+        )
+    return membership
 
 
 def _portfolio_rows(control_engine, tenant_manager: TenantManager, user_id: str) -> list[dict]:
@@ -111,21 +145,7 @@ def get_portfolios_router(templates, auth_dep, session_dep=None):
         by looking the portfolio up among this account's own memberships, so an id
         from anywhere else is simply not found.
         """
-        membership = next(
-            (
-                m
-                for m in memberships_for(request.app.state.control_engine, context.user.id)
-                if m.tenant_id == tenant_id
-            ),
-            None,
-        )
-        if membership is None:
-            raise HTTPException(status_code=404, detail="Portfolio not found")
-        if membership.role not in EXPORT_ROLES:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Role {membership.role} may read this portfolio but not export it.",
-            )
+        _membership_for(request, context, tenant_id, roles=EXPORT_ROLES)
 
         tenant_manager = request.app.state.tenant_manager
         if not tenant_manager.tenant_exists(tenant_id):
@@ -148,6 +168,77 @@ def get_portfolios_router(templates, auth_dep, session_dep=None):
             background=BackgroundTask(discard_archive, archive),
         )
 
+    # The two removal routes take the session-scoped dependency rather than the
+    # shared one. The shared dependency gates an unsafe method on the role held in the
+    # *active* portfolio, but this operation concerns a portfolio the account selects,
+    # and the route checks the role held in that portfolio below. Gating on the active
+    # one instead would refuse an owner who happens to be viewing a different portfolio
+    # -- for example a read-only invitation they accepted.
+    @router.get("/portfolios/{tenant_id}/delete", response_class=HTMLResponse, dependencies=[Depends(session_scope)])
+    def confirm_delete_portfolio(tenant_id: str, request: Request, context=Depends(session_scope)):
+        """Shows what removing this portfolio would destroy, and how to keep a copy."""
+        _membership_for(request, context, tenant_id, roles=DELETE_ROLES)
+
+        tenant_manager = request.app.state.tenant_manager
+        summary = portfolio_summary(request.app.state.control_engine, tenant_manager, tenant_id)
+        if summary is None:
+            raise HTTPException(status_code=404, detail="Portfolio not found")
+
+        return templates.TemplateResponse(
+            request=request,
+            name="portfolio_delete.html",
+            context={
+                "active_page": "portfolios",
+                "context": context,
+                "portfolio": summary,
+                "error": request.query_params.get("error"),
+                "csrf_token": context.csrf_token,
+            },
+        )
+
+    @router.post("/portfolios/{tenant_id}/delete", dependencies=[Depends(session_scope)])
+    def delete_portfolio_route(
+        tenant_id: str,
+        request: Request,
+        confirm_name: str = Form(""),
+        context=Depends(session_scope),
+    ):
+        """Removes the portfolio, once the owner has typed its name to confirm.
+
+        The typed name is the confirmation: it cannot be satisfied by a stray click,
+        and it forces the page that lists what will be lost to be read.
+        """
+        _membership_for(request, context, tenant_id, roles=DELETE_ROLES)
+
+        tenant_manager = request.app.state.tenant_manager
+        summary = portfolio_summary(request.app.state.control_engine, tenant_manager, tenant_id)
+        if summary is None:
+            raise HTTPException(status_code=404, detail="Portfolio not found")
+
+        if confirm_name.strip() != summary.name:
+            return RedirectResponse(
+                url=f"/portfolios/{tenant_id}/delete"
+                    f"?error={urllib.parse.quote('Type the portfolio name exactly to confirm.')}",
+                status_code=303,
+            )
+
+        try:
+            delete_portfolio(
+                request.app.state.control_engine,
+                tenant_manager,
+                tenant_id=tenant_id,
+                actor_user_id=context.user.id,
+            )
+        except PortfolioDeletionError as exc:
+            return RedirectResponse(
+                url=f"/portfolios/{tenant_id}/delete?error={urllib.parse.quote(str(exc))}",
+                status_code=303,
+            )
+
+        # The session may have been looking at the portfolio that just went away; the
+        # deletion repointed it, so the list is the safe place to land.
+        return RedirectResponse(url="/portfolios", status_code=303)
+
     @router.post("/portfolios/{tenant_id}/open", dependencies=[Depends(session_scope)])
     def open_portfolio(tenant_id: str, request: Request, context=Depends(session_scope)):
         """Switches the session's active portfolio to one this account belongs to."""
@@ -159,7 +250,8 @@ def get_portfolios_router(templates, auth_dep, session_dep=None):
             # The posted value never chooses which database is opened; the membership
             # list does.
             return RedirectResponse(
-                url="/portfolios?error=Not+a+member+of+that+portfolio", status_code=303
+                url=f"/portfolios?error={urllib.parse.quote('Not a member of that portfolio.')}",
+                status_code=303,
             )
         switch_active_tenant(
             request.app.state.control_engine, request.cookies.get(cookie_name()), tenant_id
