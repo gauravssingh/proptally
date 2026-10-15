@@ -6,9 +6,16 @@ import argparse
 import json
 from pathlib import Path
 
-from sqlmodel import Session
+from sqlalchemy import Engine
+from sqlmodel import Session, select
 
 from proptally.db.connection import get_engine
+from proptally.db.system_models import Tenant
+from proptally.db.tenant_manager import (
+    TenantManager,
+    get_system_engine,
+    init_system_schema,
+)
 from proptally.ingestion.service import (
     approve_extraction,
     import_approved_extraction,
@@ -16,6 +23,44 @@ from proptally.ingestion.service import (
     initialize_database,
     update_extraction,
 )
+
+
+def _resolve_tenant(parser: argparse.ArgumentParser, reference: str) -> tuple[str, TenantManager]:
+    """The portfolio this command targets, named by tenant id or slug.
+
+    The control plane is the authority on which portfolios exist, exactly as it
+    is for the web app, so the CLI can never invent a portfolio or write into
+    another one's database.
+    """
+    control_engine = get_system_engine()
+    init_system_schema(control_engine)
+    with Session(control_engine) as session:
+        tenant = session.get(Tenant, reference)
+        if tenant is None:
+            tenant = session.exec(select(Tenant).where(Tenant.slug == reference)).first()
+    if tenant is None:
+        parser.error(f"No portfolio matches --tenant {reference!r}; pass a tenant id or slug.")
+    return tenant.id, TenantManager()
+
+
+def _resolve_target(parser: argparse.ArgumentParser, args) -> tuple[Engine, Path | None]:
+    """The engine for the target portfolio, and its vault when it has one.
+
+    ``--db`` keeps the original single-database behaviour: one file, its own
+    vault beside it. ``--tenant`` targets one portfolio of this instance through
+    the same tenant storage layout the web app uses. The two are exclusive.
+    """
+    if args.tenant is not None:
+        if args.db is not None:
+            parser.error("--tenant and --db are mutually exclusive.")
+        tenant_id, tenant_manager = _resolve_tenant(parser, args.tenant)
+        paths = tenant_manager.ensure_tenant_storage(tenant_id)
+        return tenant_manager.engine_for(tenant_id), paths.vault
+    if args.db is not None:
+        args.db = args.db.resolve()
+        args.db.parent.mkdir(parents=True, exist_ok=True)
+        return get_engine(f"sqlite:///{args.db}"), None
+    return get_engine(), None
 
 
 def main() -> None:
@@ -30,23 +75,19 @@ def main() -> None:
     parser.add_argument("--inbox-dir", type=Path, default=Path("inbox"), help="Inbox directory for watcher (default: inbox)")
     parser.add_argument("--poll-interval", type=float, default=3.0, help="Polling interval in seconds (default: 3.0)")
     parser.add_argument("--once", action="store_true", help="Process inbox once and exit without running continuous loop")
-    parser.add_argument("--vault-dir", type=Path, default=None, help="Document vault directory (defaults to <db_parent>/vault)")
+    parser.add_argument("--vault-dir", type=Path, default=None, help="Document vault directory (defaults to the portfolio's own vault)")
     parser.add_argument("--db", type=Path, default=None, help="Database path (defaults to PROPTALLY_DB_PATH)")
+    parser.add_argument("--tenant", metavar="ID_OR_SLUG", default=None, help="Target one portfolio by tenant id or slug, using its own database and vault")
     parser.add_argument("--commit", action="store_true", help="Persist documents and extraction data, and copy PDFs into the local vault")
     args = parser.parse_args()
 
     is_watch = args.watch or (args.folder is not None and str(args.folder) == "watch")
 
     if is_watch:
-        if args.db:
-            args.db = args.db.resolve()
-            args.db.parent.mkdir(parents=True, exist_ok=True)
-            engine = get_engine(f"sqlite:///{args.db}")
-        else:
-            engine = get_engine()
+        engine, portfolio_vault = _resolve_target(parser, args)
         initialize_database(engine)
         db_file = args.db.resolve() if args.db else Path(engine.url.database or ".")
-        vault_dir = (args.vault_dir.resolve() if args.vault_dir else (db_file.parent / "vault"))
+        vault_dir = args.vault_dir.resolve() if args.vault_dir else (portfolio_vault or db_file.parent / "vault")
         vault_dir.mkdir(parents=True, exist_ok=True)
 
         target_inbox = args.inbox_dir
@@ -85,7 +126,7 @@ def main() -> None:
     if args.approve_extraction or args.import_approved_extraction or args.update_extraction:
         if args.commit:
             parser.error("--commit applies only to folder ingestion; approval/import/update operations persist directly.")
-        engine = get_engine(f"sqlite:///{args.db.resolve()}" if args.db else None)
+        engine, _portfolio_vault = _resolve_target(parser, args)
         initialize_database(engine)
         with Session(engine) as session:
             if args.update_extraction:
@@ -122,18 +163,16 @@ def main() -> None:
         parser.error("folder is required for ingestion (or specify --watch)")
     if not args.folder.is_dir():
         parser.error(f"Folder does not exist: {args.folder}")
-    if args.commit:
-        if args.db:
-            args.db = args.db.resolve()
-            args.db.parent.mkdir(parents=True, exist_ok=True)
-            engine = get_engine(f"sqlite:///{args.db}")
-        else:
-            engine = get_engine()
+    if args.commit or args.tenant is not None:
+        # A dry run against a named portfolio is still matched against that
+        # portfolio's own accounts, which is the whole point of naming it.
+        engine, portfolio_vault = _resolve_target(parser, args)
     else:
         engine = get_engine("sqlite://")
+        portfolio_vault = None
     initialize_database(engine)
     db_file = args.db.resolve() if args.db else Path(engine.url.database or ".")
-    vault_dir = (args.vault_dir.resolve() if args.vault_dir else (db_file.parent / "documents"))
+    vault_dir = args.vault_dir.resolve() if args.vault_dir else (portfolio_vault or db_file.parent / "documents")
     with Session(engine) as session:
         report = ingest_folder(args.folder, session, vault_dir, commit=args.commit)
     print(json.dumps({"mode": "commit" if args.commit else "dry-run", **report}, indent=2))

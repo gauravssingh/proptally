@@ -424,8 +424,13 @@ class PostingAuthorization(SQLModel, table=True):
     user attested external review.
 
     ``*_at`` records when the authorization was accepted with the posting; the
-    application does not capture consent earlier than the posting request, and
-    this is a user self-attestation, never a verified CPA approval.
+    application does not capture consent earlier than the posting request.
+
+    ``authorized_by_*`` attributes the CBD-2 attestation to the identity that
+    supplied it and the capacity it acted in. ``verified_cpa_reviewer`` is True
+    only when that identity was a member holding the ``CPA_REVIEWER`` role, so an
+    owner self-attestation stays recorded as a self-attestation and is never
+    promoted to a verified CPA authorization.
     """
 
     __tablename__ = "posting_authorizations"
@@ -441,6 +446,11 @@ class PostingAuthorization(SQLModel, table=True):
     client_confirmed_at: datetime | None = Field(default=None)
     user_attested_cpa_review: bool = Field(default=False)
     user_attested_cpa_review_at: datetime | None = Field(default=None)
+    # Who asserted the external review, and in what capacity. Set only when a
+    # review attestation was supplied; the identity is the user that supplied it.
+    authorized_by_user_id: Optional[str] = Field(default=None)
+    authorized_by_role: Optional[str] = Field(default=None)
+    verified_cpa_reviewer: bool = Field(default=False)
     # The allocation the authorization applied to, so a later reclassification
     # does not retroactively alter what was authorised.
     split_count: int = Field(default=0)

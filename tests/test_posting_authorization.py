@@ -137,21 +137,21 @@ def test_split_review_status_is_not_an_authorization_grant(policy_env):
 # --- Every HTTP posting path enforces the same rules -----------------------
 
 @pytest.fixture(name="client")
-def client_fixture(tmp_path):
-    from starlette.testclient import TestClient
+def client_fixture(owner, tmp_path):
+    """A signed-in owner, so posted requests carry both the session and CSRF token.
 
-    from proptally.web.app import create_app
-
+    The returned owner's ``post`` attaches the CSRF token the auth boundary now
+    requires; ``db_url``/``engine`` reach the portfolio the app wrote to.
+    """
     db_path = tmp_path / "auth.db"
-    app = create_app(db_url=f"sqlite:///{db_path}")
-    with TestClient(app) as test_client:
-        test_client.db_url = f"sqlite:///{db_path}"
-        yield test_client
+    db_url = f"sqlite:///{db_path}"
+    signed_in = owner(db_url=db_url, demo_seed=True)
+    signed_in.db_url = db_url
+    return signed_in
 
 
 def _open_session(client):
-    from proptally.db.connection import get_engine
-    return Session(get_engine(client.db_url))
+    return Session(client.engine)
 
 
 def _posting_state(client, txn_id):
@@ -305,7 +305,7 @@ def test_direct_post_route_enforces_the_same_rules(client):
     assert allocated.status_code == 200
     assert _posting_state(client, CBD1_TXN) == ("FULLY_ALLOCATED", "UNPOSTED")
 
-    rejected = client.post(f"/transactions/{CBD1_TXN}/post")
+    rejected = client.post(f"/transactions/{CBD1_TXN}/post", data={})
     assert rejected.status_code == 403
     assert "CBD-1" in rejected.text
     assert _posting_state(client, CBD1_TXN)[1] == "UNPOSTED"

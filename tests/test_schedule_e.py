@@ -1,7 +1,7 @@
 """Tests for IRS Form 1040 Schedule E tax workpaper engine and depreciation."""
 
 from datetime import date
-from fastapi.testclient import TestClient
+
 from sqlmodel import Session
 
 from proptally.db.connection import get_engine
@@ -9,8 +9,10 @@ from proptally.db.models import Property
 from proptally.db.schema import init_schema
 from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
 from proptally.domain.tax.depreciation import calculate_annual_depreciation
-from proptally.domain.tax.schedule_e import export_schedule_e_csv, generate_schedule_e_workpaper
-from proptally.web.app import create_app
+from proptally.domain.tax.schedule_e import (
+    export_schedule_e_csv,
+    generate_schedule_e_workpaper,
+)
 
 
 def test_macrs_27_5_depreciation():
@@ -54,7 +56,7 @@ def test_macrs_27_5_depreciation():
     assert deprec_primary.depreciation_cents == 0
 
 
-def test_schedule_e_workpaper_and_web_endpoints(tmp_path):
+def test_schedule_e_workpaper_and_web_endpoints(tmp_path, owner):
     db_file = tmp_path / "test_tax.db"
     db_uri = f"sqlite:///{db_file}"
     engine = get_engine(db_uri)
@@ -104,8 +106,7 @@ def test_schedule_e_workpaper_and_web_endpoints(tmp_path):
         assert "12363.64" in csv_text
 
     # Web endpoints
-    app = create_app(db_uri)
-    client = TestClient(app)
+    client = owner(db_url=db_uri).client
 
     resp_html = client.get("/tax/schedule-e?year=2026")
     assert resp_html.status_code == 200

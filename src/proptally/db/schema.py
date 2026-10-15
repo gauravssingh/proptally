@@ -209,6 +209,25 @@ COLUMN_MIGRATIONS = [
         "escrow_ledger_code",
         _sql("ALTER TABLE loan_accounts ADD COLUMN escrow_ledger_code INTEGER REFERENCES ledger_accounts (code)"),
     ),
+    # Reviewer identity on the authorization evidence: who asserted the external
+    # review, in what capacity, and whether that identity was a verified
+    # CPA_REVIEWER member rather than the owner self-attesting.
+    (
+        "posting_authorizations",
+        "authorized_by_user_id",
+        _sql("ALTER TABLE posting_authorizations ADD COLUMN authorized_by_user_id VARCHAR"),
+    ),
+    (
+        "posting_authorizations",
+        "authorized_by_role",
+        _sql("ALTER TABLE posting_authorizations ADD COLUMN authorized_by_role VARCHAR"),
+    ),
+    (
+        "posting_authorizations",
+        "verified_cpa_reviewer",
+        _sql("ALTER TABLE posting_authorizations ADD COLUMN "
+             "verified_cpa_reviewer BOOLEAN NOT NULL DEFAULT 0"),
+    ),
 ]
 
 
@@ -401,6 +420,7 @@ SCHEMA_MIGRATIONS = (
     (5, "create vendor_rules table and seed standard rules", _migrate_vendor_rules),
     (6, "add per-entity ledger account code columns", lambda engine: _apply(engine, _migrate_columns)),
     (7, "allocate per-entity ledger accounts", _allocate_entity_ledger_accounts),
+    (8, "add reviewer identity columns to posting authorizations", lambda engine: _apply(engine, _migrate_columns)),
 )
 
 

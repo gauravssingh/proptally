@@ -1,9 +1,8 @@
 """Tests for vendor classification model, review queue search, filtering, and batch rule application."""
 
 from datetime import date
-from uuid import uuid4
+
 import pytest
-from starlette.testclient import TestClient
 from sqlmodel import Session, select
 
 from proptally.db.connection import get_engine
@@ -22,11 +21,9 @@ from proptally.db.schema import init_schema
 from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
 from proptally.domain.fixtures.demo_seed import DEMO_VENDOR_RULES
 from proptally.domain.transactions.suggest import (
-    DEFAULT_VENDOR_RULES,
     seed_vendor_rules,
     suggest_split_for_transaction,
 )
-from proptally.web.app import create_app
 
 
 def test_repeat_vendor_classification_model():
@@ -81,7 +78,7 @@ def test_repeat_vendor_classification_model():
 
 
 @pytest.fixture
-def queue_env(tmp_path, monkeypatch):
+def queue_env(tmp_path, monkeypatch, owner):
     monkeypatch.setenv("PROPTALLY_DEMO_SEED", "false")
     db_file = tmp_path / "test_queue.db"
     db_uri = f"sqlite:///{db_file}"
@@ -138,16 +135,15 @@ def queue_env(tmp_path, monkeypatch):
 
         session.commit()
 
-    app = create_app(db_uri)
-    with TestClient(app) as test_client:
-        yield test_client, db_uri
+    signed_in = owner(db_url=db_uri)
+    yield signed_in, db_uri
 
 
 def test_review_queue_page_and_filtering(queue_env):
-    client, _ = queue_env
+    signed_in, _ = queue_env
 
     # 1. Base page load returns total count (6 items: 3 Apple + 2 Hertz + 1 ATM)
-    res = client.get("/reconciliation")
+    res = signed_in.client.get("/reconciliation")
     assert res.status_code == 200
     html = res.text
     assert "Reconciliation & Review Queue" in html
@@ -157,30 +153,30 @@ def test_review_queue_page_and_filtering(queue_env):
     assert "Vendor Classification Rules" in html
 
     # 2. Search query filter (?q=apple)
-    res_apple = client.get("/reconciliation?q=apple")
+    res_apple = signed_in.client.get("/reconciliation?q=apple")
     assert res_apple.status_code == 200
     assert "APPLE.COM/BILL" in res_apple.text
     assert "HERTZ RENT A CAR" not in res_apple.text
 
     # 3. Vendor pattern chip filter (?vendor_pattern=HERTZ)
-    res_hertz = client.get("/reconciliation?vendor_pattern=HERTZ")
+    res_hertz = signed_in.client.get("/reconciliation?vendor_pattern=HERTZ")
     assert res_hertz.status_code == 200
     assert "HERTZ RENT A CAR" in res_hertz.text
     assert "APPLE.COM/BILL" not in res_hertz.text
     assert "Found 2 unallocated transactions" in res_hertz.text
 
     # 4. Governance gate filter (?gate=CBD1)
-    res_cbd1 = client.get("/reconciliation?gate=CBD1")
+    res_cbd1 = signed_in.client.get("/reconciliation?gate=CBD1")
     assert res_cbd1.status_code == 200
     assert "BKOFAMERICA ATM DEPOSIT CARPENTERSVILLE" in res_cbd1.text
     assert "APPLE.COM/BILL" not in res_cbd1.text
 
 
 def test_batch_vendor_rule_application(queue_env):
-    client, db_uri = queue_env
+    signed_in, db_uri = queue_env
 
     # Batch classify all 3 Apple transactions as PERSONAL
-    res_batch = client.post(
+    res_batch = signed_in.post(
         "/reconciliation/batch-apply-rule",
         data={
             "vendor_pattern": "APPLE.COM",
@@ -209,10 +205,10 @@ def test_batch_vendor_rule_application(queue_env):
 
 
 def test_create_custom_vendor_rule(queue_env):
-    client, db_uri = queue_env
+    signed_in, db_uri = queue_env
 
     # Create a new custom vendor rule
-    res = client.post(
+    res = signed_in.post(
         "/reconciliation/vendor-rules/create",
         data={
             "pattern": "AIRBNB",

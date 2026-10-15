@@ -264,7 +264,77 @@ flowchart LR
 
 ---
 
-## 5. Summary of Milestones, Files & Effort
+## 5. Implementation Status
+
+Recorded as the milestone work lands on `feat/multi-tenant-selfhosted`. Each entry
+states what was verified, not merely what was written.
+
+| Milestone | Status | Verification |
+| :--- | :--- | :--- |
+| **M1 Portfolio-Agnostic Core** | **Done** | `tests/test_custom_portfolio.py` drives the full lifecycle (opening balances, rent, split card purchase, card settlement, two-stage mortgage, tax bill, Schedule E) on a portfolio with entirely new identifiers and asserts hand-computed figures; `tests/test_ledger_code_allocation.py` pins the allocator contract (legacy-numbering reproduction, monotonicity, collision-freedom, exhaustion, skip-occupied ranges). Both fail against the previous source. |
+| **M2 Accounts, Sessions & Isolation** | **Done** | `tests/test_multitenant_isolation.py` (9 tests): separate database and trigger set per portfolio; zero rows of one portfolio visible in the other by raw SQL; 404s for another portfolio's property, document and photo; path-traversal refusal; unauthenticated redirect with no write; CSRF refusal; sign-out revocation; mutating-role refusal; registration closure after bootstrap; audit attribution of the acting user. |
+| **M3 Onboarding & Portfolio Setup** | **Done** | `tests/test_onboarding_ui.py` (6 tests): a fresh portfolio shows the onboarding empty state; creating a property, deposit account, card and mortgage loan through the POST routes creates the rows *and* allocates distinct ledger accounts to each; opening balances are accepted once and refused for the same date; a `READ_ONLY` member is refused and an anonymous POST is redirected; the sample portfolio seeds into one owner's database only. |
+| **M4 Statement Ingestion** | **Done** | `tests/test_multitenant_ingestion.py` (9 tests) drives it through the browser: a synthetic servicer statement is uploaded, matched to the portfolio's own `LoanAccount` by the loan number printed on it, approved and imported into that portfolio only; the same document against a portfolio without that loan lands `NEEDS_REVIEW` with the actionable reason and imports nothing; a synthetic BofA-shaped checking statement is recognised by the institution's template, unmatched, then registered from the statement itself on the review screen and imported with its transactions; non-PDF uploads, unauthenticated uploads and token-less POSTs are refused. `tests/test_ingestion.py` (21) and `tests/test_bank_ingestion.py` (4) re-expressed through in-test fixtures. |
+| **M5 Roles, Migration & Operations** | **Done** | `tests/test_roles_and_migration.py` (11 tests): a posting on behalf of a verified `CPA_REVIEWER` records that identity and role while an owner self-attestation is never promoted to it; the migrator preserves metrics and journal-line count and refuses a second run; a two-tenant backup/restore round trip (driven as subprocesses) leaves both portfolios intact. |
+
+### End-to-end verification (live server, not tests)
+`python main.py` was run against a temporary storage root and driven over real HTTP.
+All fourteen checks passed: an anonymous `GET /` redirects to sign-in and an anonymous
+POST writes nothing; a fresh owner sees the onboarding empty state and creates a
+property, an account and opening balances through the real forms; a POST without the
+CSRF token returns 403; a second owner receives 404 for the first owner's property and
+sees only their own portfolio; sign-out revokes the session; two tenant databases exist
+on disk; and the listener is bound to `127.0.0.1` only.
+
+### Guard defect found and fixed during verification
+The migrator refused a second run by comparing the source database's **file** hash.
+These databases run in WAL mode, so committed pages can live in the `-wal` sidecar and
+a later checkpoint rewrites the main file: the same logical database produced a
+different hash and the refusal silently did not fire. It reproduced as an
+order-dependent test failure that passed in isolation. The guard now keys on the source
+**path**, with the hash retained as a record of what was migrated, plus an explicit
+`--force-remigrate` for the deliberate case of restoring an older copy.
+
+### Deviation from the plan as written
+* **Ingestion entity coupling moved from M1 to M4.** The parser and
+  `ingestion.service` hardcoded the reference portfolio's loans, properties and
+  account numbers. Removing that before there is any way for an owner to register
+  their own accounts would leave statement import non-functional, so the decoupling
+  is done with the upload and review UI that makes it usable.
+* **Role enforcement landed in M2, not M5.** The shared authentication dependency
+  rejects a non-mutating role on unsafe methods, because a per-route check is exactly
+  the kind of thing a later route forgets. M5 narrows to verified reviewer identity.
+* **Parsers report identity; a separate resolver step attaches entities (M4).** Rather
+  than `extract_pdf(path, session)`, the parsers observe only what the document says
+  (`servicer_name`, `loan_number`, `account_last4`, `institution_name`, statement type)
+  and `ingestion.service.resolve_extraction_data` matches that against the portfolio's
+  own `LoanAccount.loan_number`, `FinancialAccount.account_number_masked` and
+  institution names. The resolver is also re-run after every correction, so a
+  corrected statement is matched against the portfolio again rather than keeping a
+  stale match. Unmatched statements are kept as `NEEDS_REVIEW` with the reason
+  "No registered account matches loan number …; register the account and re-run, or
+  choose a registered loan" — the reason this milestone's scope text states differs in
+  wording, not intent.
+* **Approve and import are two endpoints (M4).** `POST …/{id}/approve` and
+  `POST …/{id}/import` are separate, matching `approve_extraction` /
+  `import_approved_extraction` and the CLI's existing `--approve-extraction` /
+  `--import-approved-extraction` pair, instead of the single `approve-and-import`
+  endpoint named in this plan's scope text.
+* **A bank statement can register its own account (M4).** A bank or card statement
+  states its institution and last four digits, so the review screen offers to register
+  that account and re-validate; a mortgage statement does not, because registering a
+  loan would mean inventing a property. `_prepare_entities` therefore never creates a
+  property or a loan: a mortgage statement is booked only against a registered loan.
+* **The watcher still scans one inbox at a time (M4, not done).** `--tenant` makes
+  `--watch` operate on that portfolio's own inbox, database and vault, but the scan of
+  every `storage/tenants/*/inbox/` in one process is not implemented.
+* **Session storage, login throttling and the engine cache are per-process.** Running
+  several workers multiplies the login-attempt allowance and re-opens databases per
+  worker. Documented in `ADR-010` and `ADR-009` rather than solved here.
+
+---
+
+## 6. Summary of Milestones, Files & Effort
 
 | Milestone | Key Objective | Primary Files Created / Modified | Estimated Effort | Verification Artifact |
 | :--- | :--- | :--- | :---: | :--- |
@@ -277,7 +347,7 @@ flowchart LR
 
 ---
 
-## 6. Document Registration & Consistency
+## 7. Document Registration & Consistency
 
 This plan is a *new* architecture document and must be wired into the existing suite, otherwise it is not discoverable from the project's declared source of truth:
 
@@ -287,7 +357,7 @@ This plan is a *new* architecture document and must be wired into the existing s
 
 ---
 
-## 7. Review Record (verified citations & open decisions)
+## 8. Review Record (verified citations & open decisions)
 
 Every file/line citation in §3 was checked against the working tree at the time of review. Corrections applied to this document:
 
@@ -305,10 +375,38 @@ Every file/line citation in §3 was checked against the working tree at the time
 | Unstated dependency | none | M2 now names the missing Argon2/CSRF dependencies | no `argon|passlib|bcrypt|itsdangerous|pwdlib` in `pyproject.toml` |
 | Unaddressed network posture | none | M2 deliverable 5 | `main.py:42` defaults `HOST=0.0.0.0`, contradicting `06_SECURITY_AND_DEPLOYMENT.md §2.1` |
 
-### Decisions required before M1 begins
-1. **Isolation model confirmation.** This plan commits to Database-per-Tenant. If any target deployment must run on a filesystem where one SQLite file per user is unacceptable (e.g. a single-volume appliance with a hard file-count limit), the entire §3 refactor becomes a different, larger job (composite keys + `tenant_id` predicate on every query). Confirm before M1.
-2. **Rate of onboarding.** Whether tenants are self-registered (open instance) or operator-provisioned (invite-only) determines whether `/auth/register` ships at all and who owns `is_instance_admin`. This plan assumes invite/opt-in.
-3. **Shared-instance trust.** Multiple unrelated individuals on one host share a process, an OS user, and a SQLite page cache. Confirm that per-tenant filesystem encryption is **not** required for v1 (v1 has isolation, not at-rest separation between tenants — `06_SECURITY_AND_DEPLOYMENT.md §4.1` specifies LUKS at the volume level only).
-4. **Tenant lifecycle scope.** Neither deletion/export of a tenant nor a CPAs'-reverse-view (one CPA across many owners' portfolios) is currently specified; the schema in M2 permits both but no milestone delivers them. Confirm in-scope or explicitly deferred.
+### Decisions taken during implementation
+
+The plan left four decisions to the user. This session was authorised to take the
+recommended option, so they are recorded here with the reasoning, and remain open
+to reversal.
+
+1. **Isolation model: Database-per-portfolio — taken.** Implemented as `ADR-009`.
+   Reversal cost is high: the alternative (a `tenant_id` predicate on every query in
+   `metrics.py`, `schedule_e.py` and all routers) is a different and larger change.
+2. **Onboarding rate: invite-or-flag, closed by default — taken.** Registration is open
+   only while the instance has no accounts (so a fresh deployment is bootstrapable
+   without a shipped default password) or when `PROPTALLY_ALLOW_REGISTRATION=true`. The
+   first account becomes the instance administrator; everybody else joins an existing
+   portfolio through a single-use invitation. Reversible with one environment variable.
+3. **Shared-instance trust: isolation only, no per-portfolio encryption — kept as
+   planned.** Portfolios on one host share the process, the OS user and the volume-level
+   encryption. `ADR-009` states this explicitly as a limit rather than implying
+   at-rest separation between owners. If that is unacceptable, the mitigation is a
+   host per owner, not a code change.
+4. **Tenant lifecycle: partially deferred.** Portfolio switching, invitation and
+   membership are implemented; a self-service "delete/export my portfolio" action and a
+   CPA's reverse view across many owners' portfolios are **not**. The schema supports
+   both (`tenant_memberships` is many-to-many, and a portfolio is one directory), so
+   this is a scoped addition rather than a redesign. `TenantManager.drop_tenant_storage()`
+   exists for the operator but no route calls it.
+
+### Still open for the user
+* Whether an owner may delete or export their own portfolio from the UI.
+* Whether one reviewer account should span several portfolios in one screen.
+* Whether login throttling must survive a multi-worker deployment (currently
+  per-process, see `ADR-010`).
+* Whether the reference deployment should keep `PROPTALLY_DEMO_SEED` available at all in
+  production, now that the demo portfolio is opt-in per portfolio rather than global.
 
 *End of Multi-Tenant Self-Hosted Architecture & Execution Plan.*

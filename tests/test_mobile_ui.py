@@ -1,17 +1,12 @@
 """Tests for mobile-responsive web interface and PWA manifest."""
 
 import pytest
-from starlette.testclient import TestClient
-
-from proptally.web.app import create_app
 
 
 @pytest.fixture
-def client(tmp_path):
-    db_file = tmp_path / "test_mobile.db"
-    app = create_app(f"sqlite:///{db_file}")
-    with TestClient(app) as test_client:
-        yield test_client
+def client(owner):
+    """A signed-in owner's client; every page below requires a session."""
+    return owner(demo_seed=True).client
 
 
 def test_manifest_json_endpoint(client):

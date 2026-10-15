@@ -4,6 +4,40 @@
 {% block title %}Portfolio Overview — PropTally{% endblock %}
 
 {% block content %}
+{% if not has_properties %}
+{# ---------------------------------------------------------------------------
+   Empty portfolio. Nothing has been declared yet, so the screen's job is to
+   explain the first step rather than to render figures for no doors.
+   --------------------------------------------------------------------------- #}
+{% call ui.page_header(
+    "Set up your portfolio",
+    "PropTally reports on the doors, accounts and loans you declare. None are declared yet."
+) %}{% endcall %}
+
+{{ ui.section_open("Nothing to report on yet",
+                   "Two ways to start, and neither one needs a command line.") }}
+<div class="pt-stack">
+    {{ ui.alert(
+        variant="info",
+        title="This portfolio has no properties",
+        text="Add your own doors, accounts, mortgage loans and opening balances on the portfolio setup screen — everything is editable there afterwards. Or load a synthetic sample portfolio to see a fully worked example with the same screens."
+    ) }}
+    <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-3">
+        {{ ui.btn("Set up your portfolio", variant="primary", href="/settings", icon_name="sliders") }}
+        {% if can_mutate %}
+        <form method="post" action="/settings/sample-portfolio" class="pt-inline-flex">
+            {{ csrf_field() }}
+            {{ ui.btn("Load a sample portfolio", variant="secondary", type="submit", icon_name="sparkline") }}
+        </form>
+        {% endif %}
+    </div>
+    <p class="pt-fs-caption pt-text-secondary">
+        The sample is written into this portfolio only. Every figure in it is synthetic, and it can be
+        replaced with your own data at any time.
+    </p>
+</div>
+{{ ui.section_close() }}
+{% else %}
 {% set actions %}
     {{ ui.btn("New Transaction", variant="neutral", href="/transactions", icon_name="plus") }}
 {% endset %}
@@ -184,4 +218,5 @@
     ) }}
 {{ ui.statement_close() }}
 {{ ui.section_close() }}
+{% endif %}
 {% endblock %}

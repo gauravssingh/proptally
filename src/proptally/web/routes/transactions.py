@@ -25,6 +25,7 @@ from proptally.domain.transactions.policy import (
     evaluate_posting_policy,
 )
 from proptally.domain.transactions.splits import SplitItem, apply_transaction_splits
+from proptally.web.auth import posting_actor_kwargs
 
 
 def get_transactions_router(templates, get_session_dep):
@@ -372,6 +373,7 @@ def get_transactions_router(templates, get_session_dep):
                     client_confirmed=client_confirmed,
                     user_attested_cpa_review=user_attested_cpa_review,
                     reversal_reason="User reclassified transaction splits via register",
+                    **posting_actor_kwargs(),
                 )
             except GovernanceAuthorizationError as exc:
                 raise HTTPException(status_code=403, detail=str(exc))
@@ -387,6 +389,7 @@ def get_transactions_router(templates, get_session_dep):
                         transaction_id=transaction_id,
                         client_confirmed=client_confirmed,
                         user_attested_cpa_review=user_attested_cpa_review,
+                        **posting_actor_kwargs(),
                     )
                 except GovernanceAuthorizationError as exc:
                     raise HTTPException(status_code=403, detail=str(exc))
@@ -409,6 +412,7 @@ def get_transactions_router(templates, get_session_dep):
                 transaction_id=transaction_id,
                 client_confirmed=form.get("client_confirmed") == "true",
                 user_attested_cpa_review=form.get("user_attested_cpa_review") == "true",
+                **posting_actor_kwargs(),
             )
         except GovernanceAuthorizationError as exc:
             raise HTTPException(status_code=403, detail=str(exc))

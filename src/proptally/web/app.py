@@ -11,6 +11,7 @@ database session handed to a route can only reach that one. There is no request
 path that opens a portfolio chosen by the client.
 """
 
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -38,15 +39,27 @@ from proptally.web.helpers import (
 )
 from proptally.web.routes.auth import get_auth_router
 from proptally.web.routes.dashboard import get_dashboard_router
+from proptally.web.routes.ingestion import get_ingestion_router
 from proptally.web.routes.mortgages import get_mortgages_router
 from proptally.web.routes.properties import get_properties_router
 from proptally.web.routes.reconciliation import get_reconciliation_router
+from proptally.web.routes.settings import get_settings_router
 from proptally.web.routes.tax import get_tax_router
 from proptally.web.routes.transactions import get_transactions_router
 
 
+logger = logging.getLogger(__name__)
+
+
 def _demo_mode() -> bool:
-    return os.environ.get("PROPTALLY_DEMO_SEED", "true").lower() not in {"0", "false", "no"}
+    """Whether to create a demo account and portfolio on startup.
+
+    Off unless explicitly requested. The previous default was on, which meant a fresh
+    deployment shipped an account with a well-known password -- unacceptable for an
+    instance that holds real financial records, and exactly what ADR-010 says the
+    bootstrap path avoids.
+    """
+    return os.environ.get("PROPTALLY_DEMO_SEED", "false").lower() in {"1", "true", "yes"}
 
 
 def create_app(
@@ -194,6 +207,8 @@ def create_app(
         get_transactions_router(templates, get_session),
         get_reconciliation_router(templates, get_session),
         get_tax_router(templates, get_session),
+        get_settings_router(templates, get_session),
+        get_ingestion_router(templates, get_session),
     ]
     for router in protected:
         app.include_router(router, dependencies=[Depends(auth_dep)])
@@ -207,7 +222,13 @@ def create_app(
 
 
 def _seed_demo_portfolio(control_engine, tenant_manager: TenantManager) -> None:
-    """Creates a demo account and portfolio on a fresh instance, if none exists."""
+    """Creates a demo account and portfolio on a fresh instance, if none exists.
+
+    The password must be supplied explicitly. It is never defaulted to a known value,
+    and never generated-and-logged: writing a credential to the application log would
+    break the zero-PII logging rule in 06_SECURITY_AND_DEPLOYMENT.md §4.2. Enabling the
+    demo without a password is an operator error, so it is reported and skipped.
+    """
     from sqlmodel import select
 
     from proptally.db.system_models import Tenant, User
@@ -222,10 +243,20 @@ def _seed_demo_portfolio(control_engine, tenant_manager: TenantManager) -> None:
 
     from proptally.web.auth import register_portfolio
 
+    email = os.environ.get("PROPTALLY_DEMO_EMAIL", "demo@proptally.local")
+    password = os.environ.get("PROPTALLY_DEMO_PASSWORD")
+    if not password:
+        logger.error(
+            "PROPTALLY_DEMO_SEED is enabled but PROPTALLY_DEMO_PASSWORD is not set, so no "
+            "demo portfolio was created. Set PROPTALLY_DEMO_PASSWORD to a password of at "
+            "least 10 characters, or disable PROPTALLY_DEMO_SEED and register at /auth/register."
+        )
+        return
+
     _user, tenant, _ = register_portfolio(
         control_engine, tenant_manager,
-        email=os.environ.get("PROPTALLY_DEMO_EMAIL", "demo@proptally.local"),
-        password=os.environ.get("PROPTALLY_DEMO_PASSWORD", "proptally-demo"),
+        email=email,
+        password=password,
         display_name="Demo Owner",
         portfolio_name="Demo Portfolio",
     )

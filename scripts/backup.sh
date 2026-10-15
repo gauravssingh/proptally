@@ -1,16 +1,33 @@
 #!/usr/bin/env bash
-# scripts/backup.sh - Hot non-blocking backup for PropTally SQLite database and tamper-evident vault.
+# scripts/backup.sh - Hot non-blocking backup for PropTally's control plane,
+# every portfolio database and each portfolio's tamper-evident vault.
+#
+# Two layouts are supported:
+#
+#   multi-tenant (default)  storage/system.db plus storage/tenants/<id>/proptally.db
+#                           and storage/tenants/<id>/vault for every portfolio.
+#                           Pass --tenant <id> to export a single portfolio.
+#   legacy single-portfolio  one --db file and its --vault directory, staged as
+#                           database.sqlite at the archive root (older archives).
+#
+# Each database is copied with `sqlite3 ... "VACUUM INTO"` and verified with
+# `PRAGMA integrity_check` before it is staged, then the whole staging tree is
+# bundled into a compressed tar with a SHA-256 sidecar.
 set -euo pipefail
 
 # Parse arguments or use environment / default fallbacks
 DB_PATH=""
 VAULT_DIR=""
 BACKUP_DIR=""
+STORAGE_ROOT=""
+TENANT_ID=""
+DB_GIVEN=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --db)
             DB_PATH="$2"
+            DB_GIVEN=true
             shift 2
             ;;
         --vault)
@@ -21,8 +38,22 @@ while [[ $# -gt 0 ]]; do
             BACKUP_DIR="$2"
             shift 2
             ;;
+        --storage)
+            STORAGE_ROOT="$2"
+            shift 2
+            ;;
+        --tenant)
+            TENANT_ID="$2"
+            shift 2
+            ;;
         -h|--help)
-            echo "Usage: $0 [--db DB_PATH] [--vault VAULT_DIR] [--out BACKUP_DIR]"
+            echo "Usage: $0 [--storage STORAGE_ROOT] [--tenant TENANT_ID] [--out BACKUP_DIR]"
+            echo "       $0 --db DB_PATH [--vault VAULT_DIR] [--out BACKUP_DIR]"
+            echo
+            echo "  (no --db)      Back up storage/system.db and every storage/tenants/*/proptally.db"
+            echo "                 with each tenant's vault. --tenant <id> exports just that"
+            echo "                 portfolio (control plane excluded)."
+            echo "  --db DB_PATH   Legacy single-portfolio backup of one database and its vault."
             exit 0
             ;;
         *)
@@ -39,29 +70,43 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Resolve DB_PATH
-if [ -z "$DB_PATH" ]; then
-    if [ -n "${PROPTALLY_DB_PATH:-}" ]; then
-        DB_PATH="$PROPTALLY_DB_PATH"
-    elif [ -f "$REPO_ROOT/storage/client-portfolio.db" ]; then
-        DB_PATH="$REPO_ROOT/storage/client-portfolio.db"
-    elif [ -f "$REPO_ROOT/storage/proptally.db" ]; then
-        DB_PATH="$REPO_ROOT/storage/proptally.db"
-    else
-        DB_PATH="$REPO_ROOT/storage/proptally.db"
+# Resolve the storage root (multi-tenant layout).
+if [ -z "$STORAGE_ROOT" ]; then
+    STORAGE_ROOT="${PROPTALLY_STORAGE_ROOT:-$REPO_ROOT/storage}"
+fi
+
+# Decide the layout. An explicit --db always means the legacy single-database
+# layout, so an operator backing up one file never has the repository's own
+# storage/ directory silently pulled in.
+MODE="legacy"
+if [ "$DB_GIVEN" = false ]; then
+    if [ -f "$STORAGE_ROOT/system.db" ] || [ -d "$STORAGE_ROOT/tenants" ]; then
+        MODE="multi"
     fi
 fi
 
-# Resolve VAULT_DIR
-if [ -z "$VAULT_DIR" ]; then
-    if [ -n "${PROPTALLY_VAULT_DIR:-}" ]; then
-        VAULT_DIR="$PROPTALLY_VAULT_DIR"
-    elif [ -d "$REPO_ROOT/storage/vault" ]; then
-        VAULT_DIR="$REPO_ROOT/storage/vault"
-    elif [ -d "$REPO_ROOT/storage/documents" ]; then
-        VAULT_DIR="$REPO_ROOT/storage/documents"
-    else
-        VAULT_DIR="$REPO_ROOT/storage/vault"
+if [ "$MODE" = "legacy" ]; then
+    if [ -z "$DB_PATH" ]; then
+        if [ -n "${PROPTALLY_DB_PATH:-}" ]; then
+            DB_PATH="$PROPTALLY_DB_PATH"
+        elif [ -f "$STORAGE_ROOT/client-portfolio.db" ]; then
+            DB_PATH="$STORAGE_ROOT/client-portfolio.db"
+        elif [ -f "$STORAGE_ROOT/proptally.db" ]; then
+            DB_PATH="$STORAGE_ROOT/proptally.db"
+        else
+            DB_PATH="$STORAGE_ROOT/proptally.db"
+        fi
+    fi
+    if [ -z "$VAULT_DIR" ]; then
+        if [ -n "${PROPTALLY_VAULT_DIR:-}" ]; then
+            VAULT_DIR="$PROPTALLY_VAULT_DIR"
+        elif [ -d "$STORAGE_ROOT/vault" ]; then
+            VAULT_DIR="$STORAGE_ROOT/vault"
+        elif [ -d "$STORAGE_ROOT/documents" ]; then
+            VAULT_DIR="$STORAGE_ROOT/documents"
+        else
+            VAULT_DIR="$STORAGE_ROOT/vault"
+        fi
     fi
 fi
 
@@ -72,13 +117,12 @@ fi
 
 mkdir -p "$BACKUP_DIR"
 
-if [ ! -f "$DB_PATH" ]; then
-    echo "ERROR: SQLite database file not found at '$DB_PATH'" >&2
-    exit 1
-fi
-
 TIMESTAMP="$(date +"%Y%m%d_%H%M%S")"
-BACKUP_NAME="proptally_backup_${TIMESTAMP}"
+SUFFIX=""
+if [ -n "$TENANT_ID" ]; then
+    SUFFIX="_${TENANT_ID}"
+fi
+BACKUP_NAME="proptally_backup_${TIMESTAMP}${SUFFIX}"
 ARCHIVE_FILE="$BACKUP_DIR/${BACKUP_NAME}.tar.gz"
 CHECKSUM_FILE="${ARCHIVE_FILE}.sha256"
 
@@ -86,53 +130,130 @@ TEMP_STAGE="$(mktemp -d 2>/dev/null || mktemp -d -t 'proptally_backup')"
 trap 'rm -rf "$TEMP_STAGE"' EXIT
 
 echo "=== PropTally Automated Hot Backup ==="
-echo "Source DB:   $DB_PATH"
-echo "Vault Dir:   $VAULT_DIR"
+echo "Mode:        $MODE"
+echo "Storage:     $STORAGE_ROOT"
 echo "Destination: $ARCHIVE_FILE"
 
-# 1. Hot SQLite non-blocking atomic backup using VACUUM INTO
-TEMP_DB="$TEMP_STAGE/database.sqlite"
-echo "Executing SQLite VACUUM INTO..."
-sqlite3 "$DB_PATH" "VACUUM INTO '$TEMP_DB';"
+# stage_database SOURCE_DESTINATION STAGE_PATH
+# Hot-copies one SQLite database with VACUUM INTO and verifies its integrity.
+stage_database() {
+    local source="$1"
+    local destination="$2"
 
-# 2. Run integrity check on the isolated copy
-set +e
-INTEGRITY="$(sqlite3 "$TEMP_DB" "PRAGMA integrity_check;" 2>&1)"
-SQLITE_STATUS=$?
-set -e
+    if [ ! -f "$source" ]; then
+        echo "ERROR: SQLite database file not found at '$source'" >&2
+        exit 1
+    fi
 
-if [ $SQLITE_STATUS -ne 0 ] || [ "$INTEGRITY" != "ok" ]; then
-    echo "ERROR: Integrity check failed on backup copy: $INTEGRITY" >&2
-    exit 2
-fi
-echo "✓ Database integrity verified: $INTEGRITY"
+    mkdir -p "$(dirname "$destination")"
+    echo "Executing SQLite VACUUM INTO for '$(basename "$(dirname "$source")")/$(basename "$source")'..."
+    sqlite3 "$source" "VACUUM INTO '$destination';"
 
-# 3. Copy vault documents if existing
-STAGE_VAULT="$TEMP_STAGE/vault"
-mkdir -p "$STAGE_VAULT"
+    set +e
+    local integrity
+    integrity="$(sqlite3 "$destination" "PRAGMA integrity_check;" 2>&1)"
+    local status=$?
+    set -e
+
+    if [ $status -ne 0 ] || [ "$integrity" != "ok" ]; then
+        echo "ERROR: Integrity check failed on backup copy of '$source': $integrity" >&2
+        exit 2
+    fi
+    echo "✓ Database integrity verified: $integrity"
+}
+
+# stage_vault SOURCE_DIR STAGE_DIR
+# Copies a directory tree, counting the files that landed.
+stage_vault() {
+    local source="$1"
+    local destination="$2"
+
+    mkdir -p "$destination"
+    if [ -d "$source" ]; then
+        cp -R "$source/." "$destination/" 2>/dev/null || true
+    fi
+}
+
 VAULT_COUNT=0
-if [ -d "$VAULT_DIR" ]; then
-    cp -R "$VAULT_DIR/." "$STAGE_VAULT/" 2>/dev/null || true
-    VAULT_COUNT=$(find "$STAGE_VAULT" -type f | wc -l | tr -d ' ')
-fi
-echo "✓ Document vault staged ($VAULT_COUNT files)"
+TENANTS_JSON="[]"
+INCLUDES_SYSTEM="false"
 
-# 4. Generate manifest
+if [ "$MODE" = "multi" ]; then
+    # A single-tenant export is portfolio-only: it must not carry (and on restore
+    # silently overwrite) the control plane that describes every other portfolio.
+    if [ -n "$TENANT_ID" ]; then
+        echo "Single-tenant export: control plane (system.db) excluded."
+    elif [ -f "$STORAGE_ROOT/system.db" ]; then
+        stage_database "$STORAGE_ROOT/system.db" "$TEMP_STAGE/system/database.sqlite"
+        INCLUDES_SYSTEM="true"
+    else
+        echo "Warning: '$STORAGE_ROOT/system.db' not found; backing up portfolios only." >&2
+    fi
+
+    TENANT_ENTRIES=""
+    TENANT_LIST=""
+    if [ -n "$TENANT_ID" ]; then
+        if [ ! -d "$STORAGE_ROOT/tenants/$TENANT_ID" ]; then
+            echo "ERROR: No such tenant directory: $STORAGE_ROOT/tenants/$TENANT_ID" >&2
+            exit 1
+        fi
+        TENANT_LIST="$STORAGE_ROOT/tenants/$TENANT_ID"
+    else
+        shopt -s nullglob
+        for candidate in "$STORAGE_ROOT"/tenants/*/; do
+            TENANT_LIST="${TENANT_LIST}${candidate}
+"
+        done
+        shopt -u nullglob
+    fi
+
+    if [ -z "$TENANT_LIST" ]; then
+        echo "Warning: no tenants found under '$STORAGE_ROOT/tenants'." >&2
+    fi
+
+    while IFS= read -r tenant_dir; do
+        [ -n "$tenant_dir" ] || continue
+        tenant_id="$(basename "${tenant_dir%/}")"
+        tenant_db="$tenant_dir/proptally.db"
+        if [ ! -f "$tenant_db" ]; then
+            continue
+        fi
+        stage_database "$tenant_db" "$TEMP_STAGE/tenants/$tenant_id/proptally.db"
+        stage_vault "$tenant_dir/vault" "$TEMP_STAGE/tenants/$tenant_id/vault"
+        tenant_vault_files="$(find "$TEMP_STAGE/tenants/$tenant_id/vault" -type f | wc -l | tr -d ' ')"
+        VAULT_COUNT=$((VAULT_COUNT + tenant_vault_files))
+        echo "✓ Portfolio '$tenant_id' staged ($tenant_vault_files vault files)"
+        TENANT_ENTRIES="${TENANT_ENTRIES}${TENANT_ENTRIES:+, }\"$tenant_id\""
+    done <<< "$TENANT_LIST"
+    TENANTS_JSON="[$TENANT_ENTRIES]"
+else
+    echo "Source DB:   $DB_PATH"
+    echo "Vault Dir:   $VAULT_DIR"
+    stage_database "$DB_PATH" "$TEMP_STAGE/database.sqlite"
+    stage_vault "$VAULT_DIR" "$TEMP_STAGE/vault"
+    VAULT_COUNT="$(find "$TEMP_STAGE/vault" -type f | wc -l | tr -d ' ')"
+    echo "✓ Document vault staged ($VAULT_COUNT files)"
+fi
+
+# Generate manifest
 cat <<EOF > "$TEMP_STAGE/manifest.json"
 {
   "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "source_db": "$DB_PATH",
-  "db_integrity": "$INTEGRITY",
+  "mode": "$MODE",
+  "storage_root": "$STORAGE_ROOT",
+  "includes_system": $INCLUDES_SYSTEM,
+  "tenants": $TENANTS_JSON,
+  "db_integrity": "ok",
   "vault_file_count": $VAULT_COUNT,
   "backup_name": "$BACKUP_NAME"
 }
 EOF
 
-# 5. Create compressed tarball
+# Create compressed tarball
 tar -czf "$ARCHIVE_FILE" -C "$TEMP_STAGE" .
 echo "✓ Compressed archive created: $(du -h "$ARCHIVE_FILE" | awk '{print $1}')"
 
-# 6. Compute SHA-256 digest
+# Compute SHA-256 digest
 if command -v sha256sum >/dev/null 2>&1; then
     (cd "$BACKUP_DIR" && sha256sum "$(basename "$ARCHIVE_FILE")") > "$CHECKSUM_FILE"
 elif command -v shasum >/dev/null 2>&1; then

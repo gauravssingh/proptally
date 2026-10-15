@@ -33,6 +33,7 @@ from proptally.domain.transactions.splits import (
     post_transaction_to_ledger,
 )
 from proptally.domain.transactions.suggest import suggest_split_for_transaction
+from proptally.web.auth import posting_actor_kwargs
 
 
 def get_reconciliation_router(templates, get_session_dep):
@@ -287,6 +288,7 @@ def get_reconciliation_router(templates, get_session_dep):
                 transaction_id=txn.id,
                 client_confirmed=client_confirmed,
                 user_attested_cpa_review=user_attested_cpa_review,
+                **posting_actor_kwargs(),
             )
         except GovernanceAuthorizationError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
@@ -334,6 +336,7 @@ def get_reconciliation_router(templates, get_session_dep):
                     transaction_id=txn.id,
                     client_confirmed=client_confirmed,
                     user_attested_cpa_review=user_attested_cpa_review,
+                    **posting_actor_kwargs(),
                 )
             except GovernanceAuthorizationError as exc:
                 raise HTTPException(status_code=403, detail=str(exc))
@@ -379,6 +382,7 @@ def get_reconciliation_router(templates, get_session_dep):
             transaction_id=txn.id,
             client_confirmed=client_confirmed,
             user_attested_cpa_review=user_attested_cpa_review,
+            **posting_actor_kwargs(),
         )
         return RedirectResponse(url="/reconciliation", status_code=303)
 
@@ -436,6 +440,7 @@ def get_reconciliation_router(templates, get_session_dep):
                         transaction_id=txn.id,
                         client_confirmed=client_confirmed,
                         user_attested_cpa_review=user_attested_cpa_review,
+                        **posting_actor_kwargs(),
                     )
                     applied_count += 1
                 except Exception:

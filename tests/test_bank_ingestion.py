@@ -1,24 +1,20 @@
 """Tests for deterministic bank and credit card statement ingestion."""
 
 import os
-from datetime import date
-from decimal import Decimal
 from pathlib import Path
+
 from sqlmodel import Session, select
 
 from proptally.db.connection import get_engine
 from proptally.db.models import (
-    Document,
     DocumentExtraction,
     FinancialAccount,
     FinancialInstitution,
-    Statement,
     Transaction,
     TransactionProcessingState,
 )
 from proptally.db.schema import init_schema
 from proptally.ingestion.bank_parsers import (
-    extract_bank_or_card_pdf,
     parse_apple_card,
     parse_bofa_checking,
     parse_bofa_credit_card,
@@ -28,7 +24,6 @@ from proptally.ingestion.service import (
     import_approved_extraction,
     ingest_folder,
 )
-
 
 DOCS_BASE = Path(
     os.environ.get(
@@ -47,7 +42,10 @@ def test_bofa_checking_parsing():
     assert ext is not None
     assert ext.parser_name == "BofaCheckingParser"
     assert ext.statement_type == "CHECKING"
-    assert ext.financial_account_id == "acct_bofa_chk_9456"
+    # The parser reports the identity the statement prints; which portfolio
+    # account that is, is resolved against the portfolio's own records.
+    assert ext.institution_name == "Bank of America"
+    assert ext.account_last4 == "9456"
     assert ext.opening_balance_cents == 392695  # $3,926.95
     assert ext.closing_balance_cents == 48586   # $485.86
     assert ext.status == "VALIDATED"
@@ -73,17 +71,19 @@ def test_bofa_credit_card_parsing():
     assert ext is not None
     assert ext.parser_name == "BofaCreditCardParser"
     assert ext.statement_type == "CREDIT_CARD"
-    assert ext.financial_account_id == "acct_bofa_cc_9306"
+    assert ext.institution_name == "Bank of America"
+    assert ext.account_last4 == "9306"
     assert ext.opening_balance_cents == 138531  # $1,385.31
     assert ext.closing_balance_cents == 274012  # $2,740.12
     assert ext.status == "VALIDATED"
     assert len(ext.transactions) == 23
 
-    # Check payment settlement matches checking account counter
+    # The payment names the checking account in words; which of the portfolio's
+    # own accounts that is, is resolved when the statement is imported (see
+    # tests/test_multitenant_ingestion.py).
     payment_tx = [t for t in ext.transactions if "Online payment from CHK 9456" in t.raw_description]
     assert len(payment_tx) == 1
     assert payment_tx[0].amount_cents == -138531
-    assert payment_tx[0].counter_account_id == "acct_bofa_chk_9456"
 
 
 def test_apple_card_parsing():
@@ -95,7 +95,7 @@ def test_apple_card_parsing():
     assert ext is not None
     assert ext.parser_name == "AppleCardParser"
     assert ext.statement_type == "CREDIT_CARD"
-    assert ext.financial_account_id == "acct_apple_card"
+    assert ext.institution_name == "Goldman Sachs Bank USA"
     assert ext.opening_balance_cents == 266362  # $2,663.62
     assert ext.closing_balance_cents == 490185  # $4,901.85
     assert ext.status == "VALIDATED"
@@ -112,6 +112,21 @@ def test_bank_statement_vault_and_database_persistence(tmp_path):
     vault_dir = tmp_path / "vault"
     engine = get_engine(f"sqlite:///{db_file}")
     init_schema(engine)
+
+    # A statement is only booked against an account the portfolio holds, so the
+    # checking account is registered first -- the same thing an operator does
+    # before pointing the ingester at a portfolio.
+    with Session(engine) as session:
+        session.add(FinancialInstitution(id="inst_bofa", name="Bank of America"))
+        session.flush()
+        session.add(FinancialAccount(
+            id="acct_bofa_chk_9456",
+            institution_id="inst_bofa",
+            account_name="Bank of America Advantage Plus Checking",
+            account_type="CHECKING",
+            account_number_masked="...9456",
+        ))
+        session.commit()
 
     # Ingest one BofA checking statement
     chk_dir = DOCS_BASE / "BOFA Checking"

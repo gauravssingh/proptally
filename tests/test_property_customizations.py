@@ -1,25 +1,23 @@
 """Tests for property personalization: narratives, Google Maps links, and photo management."""
 
 import io
+
 import pytest
-from starlette.testclient import TestClient
 from sqlmodel import Session, select
 
 from proptally.db.connection import get_engine
 from proptally.db.models import Property, PropertyPhoto
-from proptally.web.app import create_app
 from proptally.web.routes.properties import get_google_maps_url
 
 
 @pytest.fixture
-def custom_env(tmp_path, monkeypatch):
-    photos_dir = tmp_path / "photos"
-    photos_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("PROPTALLY_PHOTOS_DIR", str(photos_dir))
+def custom_env(tmp_path, monkeypatch, owner):
     db_file = tmp_path / "test_customizations.db"
-    app = create_app(f"sqlite:///{db_file}")
-    with TestClient(app) as test_client:
-        yield test_client, f"sqlite:///{db_file}", photos_dir
+    db_url = f"sqlite:///{db_file}"
+    signed_in = owner(db_url=db_url, demo_seed=True)
+    # Photos live in the portfolio's own store, not a process-wide directory.
+    photos_dir = signed_in.app.state.tenant_manager.paths(signed_in.tenant_id).photos
+    yield signed_in, db_url, photos_dir
 
 
 def test_google_maps_url_helper():
@@ -44,8 +42,8 @@ def test_google_maps_url_helper():
 
 
 def test_property_page_renders_maps_and_narrative_sections(custom_env):
-    client, _, _ = custom_env
-    res = client.get("/properties/prop_tinsley_huntley")
+    signed_in, _, _ = custom_env
+    res = signed_in.client.get("/properties/prop_tinsley_huntley")
     assert res.status_code == 200
     html = res.text
 
@@ -59,13 +57,13 @@ def test_property_page_renders_maps_and_narrative_sections(custom_env):
 
 
 def test_update_property_narrative_and_maps_url(custom_env):
-    client, db_url, _ = custom_env
+    signed_in, db_url, _ = custom_env
 
     # 1. Update narrative and custom maps URL
     custom_story = "Acquired in 2021 as a cornerstone rental asset with strong cash flows."
     custom_map = "https://maps.google.com/?q=Custom+Westbrook+Pin"
 
-    res = client.post(
+    res = signed_in.post(
         "/properties/prop_tinsley_huntley/update-details",
         data={"description": custom_story, "google_maps_url": custom_map},
         follow_redirects=True,
@@ -82,7 +80,7 @@ def test_update_property_narrative_and_maps_url(custom_env):
         assert prop.google_maps_url == custom_map
 
     # 2. Reset back to empty/auto-detect
-    res = client.post(
+    res = signed_in.post(
         "/properties/prop_tinsley_huntley/update-details",
         data={"description": "", "google_maps_url": ""},
         follow_redirects=True,
@@ -95,12 +93,12 @@ def test_update_property_narrative_and_maps_url(custom_env):
 
 
 def test_photo_upload_cover_and_delete_lifecycle(custom_env):
-    client, db_url, photos_dir = custom_env
+    signed_in, db_url, photos_dir = custom_env
     prop_id = "prop_tinsley_huntley"
 
     # 1. Upload first photo (should automatically become cover)
     img_data_1 = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"fake_jpeg_data_1"
-    res1 = client.post(
+    res1 = signed_in.post(
         f"/properties/{prop_id}/photos/upload",
         files={"photo": ("front_elevation.jpg", io.BytesIO(img_data_1), "image/jpeg")},
         data={"caption": "Front Elevation 2024", "is_cover": "false"},
@@ -125,13 +123,13 @@ def test_photo_upload_cover_and_delete_lifecycle(custom_env):
         assert stored_file.read_bytes() == img_data_1
 
     # 2. Verify serving via /photos static mount
-    res_static = client.get(photo1.storage_path)
+    res_static = signed_in.client.get(photo1.storage_path)
     assert res_static.status_code == 200
     assert res_static.content == img_data_1
 
     # 3. Upload second photo as cover
     img_data_2 = b"\x89PNG\r\n\x1a\n" + b"fake_png_data_2"
-    res2 = client.post(
+    res2 = signed_in.post(
         f"/properties/{prop_id}/photos/upload",
         files={"photo": ("renovated_kitchen.png", io.BytesIO(img_data_2), "image/png")},
         data={"caption": "Renovated Kitchen", "is_cover": "true"},
@@ -151,8 +149,9 @@ def test_photo_upload_cover_and_delete_lifecycle(custom_env):
         photo2_id = p2.id
 
     # 4. Switch cover photo back to photo 1
-    res_cover = client.post(
+    res_cover = signed_in.post(
         f"/properties/{prop_id}/photos/{photo1_id}/cover",
+        data={},
         follow_redirects=True,
     )
     assert res_cover.status_code == 200
@@ -163,8 +162,9 @@ def test_photo_upload_cover_and_delete_lifecycle(custom_env):
         assert p2.is_cover is False
 
     # 5. Delete cover photo 1 (photo 2 should now promote to cover)
-    res_del = client.post(
+    res_del = signed_in.post(
         f"/properties/{prop_id}/photos/{photo1_id}/delete",
+        data={},
         follow_redirects=True,
     )
     assert res_del.status_code == 200
@@ -180,8 +180,8 @@ def test_photo_upload_cover_and_delete_lifecycle(custom_env):
 
 
 def test_photo_upload_disallows_invalid_extensions(custom_env):
-    client, _, _ = custom_env
-    res = client.post(
+    signed_in, _, _ = custom_env
+    res = signed_in.post(
         "/properties/prop_tinsley_huntley/photos/upload",
         files={"photo": ("malicious_script.sh", io.BytesIO(b"echo 123"), "text/plain")},
         data={"caption": "Bad file"},
@@ -197,12 +197,12 @@ def test_property_document_upload_and_vaulting(custom_env, tmp_path, monkeypatch
     vault_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("PROPTALLY_VAULT_DIR", str(vault_dir))
 
-    client, db_uri, _ = custom_env
+    signed_in, db_uri, _ = custom_env
     engine = get_engine(db_uri)
     prop_id = "prop_tinsley_huntley"
 
     fake_pdf = b"%PDF-1.4 test lease content with Tyler Saxsma contract details"
-    res_upload = client.post(
+    res_upload = signed_in.post(
         f"/properties/{prop_id}/documents/upload",
         files={"file": ("Tyler_Saxsma_Lease_2026.pdf", io.BytesIO(fake_pdf), "application/pdf")},
         data={
@@ -236,12 +236,12 @@ def test_property_document_upload_and_vaulting(custom_env, tmp_path, monkeypatch
         assert lease.document_id == doc.id
 
     # Test view and download endpoints
-    res_view = client.get(f"/documents/{doc_id}/view")
+    res_view = signed_in.client.get(f"/documents/{doc_id}/view")
     assert res_view.status_code == 200
     assert res_view.headers["content-type"] == "application/pdf"
     assert res_view.content == fake_pdf
 
-    res_dl = client.get(f"/documents/{doc_id}/download")
+    res_dl = signed_in.client.get(f"/documents/{doc_id}/download")
     assert res_dl.status_code == 200
     assert res_dl.content == fake_pdf
 
@@ -249,11 +249,11 @@ def test_property_document_upload_and_vaulting(custom_env, tmp_path, monkeypatch
 def test_property_lease_update_endpoint(custom_env):
     from proptally.db.models import Lease
 
-    client, db_uri, _ = custom_env
+    signed_in, db_uri, _ = custom_env
     engine = get_engine(db_uri)
     prop_id = "prop_cimmaron_pingree"
 
-    res_lease = client.post(
+    res_lease = signed_in.post(
         f"/properties/{prop_id}/lease/update",
         data={
             "tenant_name": "Riley Smith",

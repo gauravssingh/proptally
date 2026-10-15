@@ -1,4 +1,13 @@
-"""Deterministic first-pass parsers for supported mortgage statements."""
+"""Deterministic first-pass parsers for supported mortgage statements.
+
+A parser reports only what the document itself says: the loan number printed on
+it, the servicer name printed before that number, the last four digits of the
+account, the payment amounts and the statement type. It never names a portfolio
+entity, so the same statement is parseable for every portfolio. Matching the
+observed identity against the portfolio's own registered accounts is a separate
+step (``proptally.ingestion.service.resolve_extraction_data``), which fills the
+``financial_account_id`` / ``loan_account_id`` / ``property_id`` fields.
+"""
 
 from __future__ import annotations
 
@@ -8,16 +17,17 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-PARSER_VERSION = "0.2.0"
+PARSER_VERSION = "0.3.0"
 
 
 @dataclass
 class MortgageExtraction:
     parser_name: str
     statement_type: str
-    financial_account_id: str | None
-    loan_account_id: str | None
-    property_id: str | None
+    # Observed identity: what the document itself says about which account it is.
+    servicer_name: str | None
+    loan_number: str | None
+    account_last4: str | None
     statement_date: date | None
     payment_due_date: date | None
     principal_cents: int | None
@@ -27,30 +37,106 @@ class MortgageExtraction:
     total_due_cents: int | None
     outstanding_principal_cents: int | None
     reported_interest_rate_milli_percent: int | None
+    # Resolved identity: filled in by the ingestion service from this portfolio's
+    # own registered accounts, never by a parser.
+    financial_account_id: str | None = None
+    loan_account_id: str | None = None
+    property_id: str | None = None
     escrow_balance_cents: int | None = None
     field_ambiguities: list[str] = field(default_factory=list)
     status: str = "EXTRACTED"
     review_reasons: list[str] = field(default_factory=list)
+    # Why this statement could not be attached to a registered account. Kept
+    # apart from the structural reasons above so re-validating rewrites only the
+    # latter.
+    resolution_reasons: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {key: value.isoformat() if isinstance(value, date) else value
                 for key, value in asdict(self).items()}
 
 
-LOANS = {
-    "0700000001": {
-        "vendor": "Rocket Mortgage", "account": "acct_rocket_5035",
-        "loan": "loan_rocket_1000000001", "property": "prop_tinsley_huntley",
-    },
-    "0700000002": {
-        "vendor": "PNC Mortgage", "account": "acct_pnc_0708",
-        "loan": "loan_pnc_1000000002", "property": "prop_cimmaron_pingree",
-    },
-    "0700000003": {
-        "vendor": "CrossCountry Mortgage", "account": "acct_ccm_9359",
-        "loan": "loan_ccm_1000000003", "property": "prop_burkey_algonquin",
-    },
-}
+#: The label a statement prints in front of its loan or account number.
+_IDENTIFIER_LABEL = re.compile(r"(?:loan|account)\s*(?:number|no\.?|#)\s*[:#]?\s*", re.IGNORECASE)
+
+#: A printed number: at least four digits, grouped with spaces or dashes.
+_PRINTED_NUMBER = re.compile(r"(\d[\d\s\-]{2,}\d)")
+
+#: An explicit servicer label, when the statement carries one.
+_SERVICER_LABEL = re.compile(
+    r"(?:loan\s+servicer|servicer|mortgagee|lender)\s*[:#]\s*([^\n]{2,60})", re.IGNORECASE
+)
+
+#: Points in the document that only a servicer's statement carries.
+_ISSUE_DATE_LABELS = ("statement date", "date of statement", "payment due date", "payment due")
+
+#: The payment vocabulary a monthly mortgage statement is built from.
+_PAYMENT_LABELS = ("principal", "escrow", "interest rate", "amount due", "monthly payment")
+
+#: Form 1098 (mortgage interest statement) names itself, as does an annual
+#: escrow account disclosure. Both are recognised servicer formats that are not
+#: monthly billing statements.
+_INTEREST_STATEMENT = re.compile(r"form\s*1098|mortgage\s+interest\s+statement", re.IGNORECASE)
+_ESCROW_ANALYSIS = re.compile(r"escrow\s+analysis|escrow\s+account\s+disclosure|annual\s+escrow\s+account", re.IGNORECASE)
+
+
+def _digits(value: str | None) -> str:
+    """Digits only; statements group printed numbers with spaces and dashes."""
+    return re.sub(r"\D", "", value or "")
+
+
+def _observed_identity(text: str) -> tuple[str | None, str | None]:
+    """The loan number this document prints, and the name printed before the label.
+
+    Both are read off the document. Neither is checked against any list of known
+    portfolios: an unknown loan number is still a recognised statement.
+    """
+    for match in _IDENTIFIER_LABEL.finditer(text):
+        tail = text[match.end():match.end() + 40].lstrip(" :#")
+        number = _PRINTED_NUMBER.match(tail)
+        if number is None:
+            continue
+        digits = _digits(number.group(1))
+        if len(digits) < 4:
+            continue
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        printed_before_label = text[line_start:match.start()].strip(" \t,;:-")
+        return digits, printed_before_label or None
+    return None, None
+
+
+def _servicer_name(text: str, fallback: str | None) -> str | None:
+    """The institution that issued the statement, as the document names it."""
+    match = _SERVICER_LABEL.search(text)
+    if match:
+        name = " ".join(match.group(1).split()).strip(" ,.;:-")
+        if name:
+            return name[:60]
+    return fallback
+
+
+def _statement_type(text: str) -> str:
+    """Which kind of servicer document this is, from its own headings."""
+    if _INTEREST_STATEMENT.search(text):
+        return "FORM_1098"
+    if _ESCROW_ANALYSIS.search(text):
+        return "ESCROW_ANALYSIS"
+    return "MORTGAGE"
+
+
+def _looks_like_mortgage_statement(text: str, statement_type: str) -> bool:
+    """Whether the document is shaped like a servicer statement at all.
+
+    Requires an issue or due date plus the payment vocabulary, so a bare account
+    number quoted in some other document is not mistaken for a statement. The
+    auxiliary formats are recognised by their own headings.
+    """
+    lowered = text.lower()
+    if statement_type != "MORTGAGE":
+        return True
+    if not any(label in lowered for label in _ISSUE_DATE_LABELS):
+        return False
+    return sum(1 for label in _PAYMENT_LABELS if label in lowered) >= 2
 
 
 def _date_after_label(text: str, labels: tuple[str, ...]) -> date | None:
@@ -117,41 +203,20 @@ def _rate_after_label(text: str) -> int | None:
         return None
 
 
-def _identify(text: str, path: Path | None = None) -> tuple[str, dict] | None:
-    lines = text.splitlines()
-    identifier_label = re.compile(r"(?:loan|account)\s*(?:number|no\.?|#)", re.IGNORECASE)
-    for loan_number, details in LOANS.items():
-        exact_identifier = re.compile(
-            r"(?<!\d)" + r"[\s-]*".join(loan_number) + r"(?!\d)"
-        )
-        for index, line in enumerate(lines):
-            if exact_identifier.search(line) and identifier_label.search("\n".join(lines[max(index - 2, 0):index + 1])):
-                return loan_number, details
-    folder_vendor = {
-        "rocket mortgage": "0700000001",
-        "pnc mortgage": "0700000002",
-        "cc mortgage": "0700000003",
-        "crosscountry mortgage": "0700000003",
-    }.get(path.parent.name.lower()) if path else None
-    if folder_vendor:
-        details = LOANS[folder_vendor]
-        if details["vendor"].split()[0].lower() in text.lower() or "crosscountry" in text.lower():
-            return folder_vendor, details
-    return None
+def parse_mortgage_pdf(path: Path | None, text: str) -> MortgageExtraction | None:
+    """Parses a recognised mortgage statement, reporting only what it observes.
 
-
-def parse_mortgage_pdf(path: Path, text: str) -> MortgageExtraction | None:
-    identified = _identify(text, path)
-    if not identified:
+    ``path`` is accepted because every caller already holds it; identification
+    reads the text only. The entity ids are left empty on purpose: the ingestion
+    service resolves them against the portfolio that is asking.
+    """
+    loan_number, printed_before_label = _observed_identity(text)
+    if loan_number is None:
         return None
-    _, details = identified
-    lowered = text.lower()
-    if "form 1098" in lowered or "mortgage interest statement" in lowered:
-        statement_type = "FORM_1098"
-    elif "escrow analysis" in lowered or "escrow account disclosure" in lowered or "annual escrow account" in lowered:
-        statement_type = "ESCROW_ANALYSIS"
-    else:
-        statement_type = "MORTGAGE"
+    statement_type = _statement_type(text)
+    if not _looks_like_mortgage_statement(text, statement_type):
+        return None
+    servicer_name = _servicer_name(text, printed_before_label)
 
     explanation_section = _extract_explanation_section(text)
     payment_scope = explanation_section if explanation_section is not None else text
@@ -191,10 +256,11 @@ def parse_mortgage_pdf(path: Path, text: str) -> MortgageExtraction | None:
             escrow_cents = tax_vals[0] + ins_vals[0] + (short_vals[0] if short_vals else 0)
 
     extraction = MortgageExtraction(
-        parser_name=f"{details['vendor'].replace(' ', '')}Parser",
+        parser_name="MortgageStatementParser",
         statement_type=statement_type,
-        financial_account_id=details["account"], loan_account_id=details["loan"],
-        property_id=details["property"],
+        servicer_name=servicer_name,
+        loan_number=loan_number,
+        account_last4=loan_number[-4:],
         statement_date=_date_after_label(text, (r"Statement\s+Date", r"Date\s+of\s+Statement")),
         payment_due_date=_date_after_label(text, (r"Payment\s+Due\s+Date", r"Due\s+date", r"Payment\s+Due")),
         principal_cents=principal_cents,
@@ -242,7 +308,7 @@ def validate_mortgage_extraction(extraction: MortgageExtraction) -> MortgageExtr
             fees = extraction.fees_cents or 0
             if extraction.principal_cents + extraction.interest_cents + extraction.escrow_cents + fees != extraction.total_due_cents:
                 extraction.review_reasons.append("Principal + interest + escrow + fees does not equal total due.")
-    extraction.status = "NEEDS_REVIEW" if extraction.review_reasons else "VALIDATED"
+    extraction.status = "NEEDS_REVIEW" if (extraction.review_reasons or extraction.resolution_reasons) else "VALIDATED"
     return extraction
 
 

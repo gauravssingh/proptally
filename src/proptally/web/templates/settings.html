@@ -1,0 +1,669 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Portfolio Setup — PropTally{% endblock %}
+
+{% block content %}
+{% set header_actions %}
+    {% if not properties %}
+    <form method="post" action="/settings/sample-portfolio" class="pt-inline-flex">
+        {{ csrf_field() }}
+        {{ ui.btn("Load a sample portfolio", variant="secondary", size="sm", type="submit", icon_name="sparkline") }}
+    </form>
+    {% endif %}
+    {% if can_mutate %}
+    {{ ui.btn("Add property", variant="primary", size="sm", icon_name="plus", attrs='data-modal-open="create-property-modal"') }}
+    {% endif %}
+{% endset %}
+{% set header_meta %}
+    {{ ui.badge("Owners and editors may change this" if can_mutate else "Read-only role",
+                variant=("success" if can_mutate else "neutral"), upper=true) }}
+{% endset %}
+
+{% call ui.page_header(
+    "Portfolio Setup",
+    "Properties, deposit and card accounts, mortgage loans, opening balances and vendor rules for this portfolio — created and edited here, with no command line and no code changes.",
+    meta=header_meta
+) %}{{ header_actions }}{% endcall %}
+
+{% if message %}{{ ui.alert(variant="success", title="Saved", text=message) }}{% endif %}
+{% if error %}{{ ui.alert(variant="error", title="Not saved", text=error) }}{% endif %}
+
+{# ---------------------------------------------------------------------------
+   Empty portfolio: the one action that matters is the first door.
+   --------------------------------------------------------------------------- #}
+{% if not properties %}
+{{ ui.section_open("Start here", "A portfolio reports over the doors and accounts you declare.") }}
+<div class="pt-stack">
+    {{ ui.alert(
+        variant="info",
+        title="This portfolio has no doors yet",
+        text="Add your first property below, then its deposit or card accounts, then any mortgage on it. If you would rather look around first, load the synthetic sample portfolio — it is written into this portfolio only, and can be replaced with your own data at any time."
+    ) }}
+    {{ ui.empty_state(
+        "No properties declared",
+        "The dashboard reports on nothing until a door exists. Add one, or load the sample portfolio to see a fully worked example.",
+        action_label=("Add your first property" if can_mutate else none),
+        action_href="#",
+        action_attrs='data-modal-open="create-property-modal"',
+        icon_name="home"
+    ) }}
+</div>
+{{ ui.section_close() }}
+{% endif %}
+
+{# ---------------------------------------------------------------------------
+   1. Properties
+   --------------------------------------------------------------------------- #}
+{% set property_actions %}
+    {% if can_mutate %}
+    {{ ui.btn("Add property", variant="secondary", size="sm", icon_name="plus", attrs='data-modal-open="create-property-modal"') }}
+    {% endif %}
+{% endset %}
+{{ ui.section_open(
+    "Properties (" ~ (properties | length) ~ ")",
+    "Each door owns its own fixed-asset ledger account; the code is allocated automatically when the property is created.",
+    actions=property_actions,
+    flush=true
+) }}
+{% if properties %}
+{{ ui.table_open(label="Properties in this portfolio") }}
+    <thead>
+        <tr>
+            {{ ui.th("Property") }}
+            {{ ui.th("Type") }}
+            {{ ui.th("Acquired") }}
+            {{ ui.th("Purchase price", num=true) }}
+            {{ ui.th("Current value", num=true) }}
+            {{ ui.th("Ledger account", num=true) }}
+            {{ ui.th("", num=true) }}
+        </tr>
+    </thead>
+    <tbody>
+        {% for p in properties %}
+        {% set valuation = property_valuations.get(p.id) %}
+        <tr>
+            <td>
+                <div class="pt-cell-stack pt-cell-stack--start">
+                    <span class="pt-table__primary">{{ p.name }}</span>
+                    <span class="pt-table__sub">
+                        {{ p.address_line1 }}{% if p.address_line2 %}, {{ p.address_line2 }}{% endif %},
+                        {{ p.city }}, {{ p.state }} {{ p.zip_code }}
+                    </span>
+                </div>
+            </td>
+            <td>
+                {% if p.property_type == 'RENTAL_INVESTMENT' %}
+                {{ ui.badge("RENTAL DOOR", variant="accent", upper=true) }}
+                {% else %}
+                {{ ui.badge("PRIMARY RESIDENCE", variant="rule", upper=true) }}
+                {% endif %}
+            </td>
+            <td>{{ p.acquisition_date | format_date }}</td>
+            <td class="pt-table__num">{{ ui.amount(p.purchase_price_cents, mode="plain") }}</td>
+            <td class="pt-table__num">{{ ui.amount(valuation.estimated_value_cents, mode="plain") if valuation else "—" }}</td>
+            <td class="pt-table__num pt-num">{{ p.asset_ledger_code if p.asset_ledger_code is not none else "—" }}</td>
+            <td class="pt-table__actions">
+                {{ ui.icon_btn("Edit " ~ p.name, "edit", variant="ghost", size="sm",
+                               attrs='data-modal-open="edit-property-' ~ p.id ~ '"', title="Edit property") }}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+{{ ui.table_close() }}
+{% else %}
+<div class="pt-section__body">
+    {{ ui.empty_state(
+        "No properties declared",
+        "Add a rental door or your primary residence to start reporting on it.",
+        action_label=("Add property" if can_mutate else none),
+        action_href="#",
+        action_attrs='data-modal-open="create-property-modal"',
+        icon_name="home"
+    ) }}
+</div>
+{% endif %}
+{{ ui.section_close() }}
+
+{# ---------------------------------------------------------------------------
+   2. Accounts
+   --------------------------------------------------------------------------- #}
+{% set account_actions %}
+    {% if can_mutate %}
+    {{ ui.btn("Add account", variant="secondary", size="sm", icon_name="plus", attrs='data-modal-open="create-account-modal"') }}
+    {% endif %}
+{% endset %}
+{{ ui.section_open(
+    "Deposit & card accounts (" ~ (accounts | length) ~ ")",
+    "Checking, savings and credit cards. Each deposit account and card owns its own ledger account, allocated on creation.",
+    actions=account_actions,
+    flush=true
+) }}
+{% if accounts %}
+{{ ui.table_open(label="Financial accounts in this portfolio") }}
+    <thead>
+        <tr>
+            {{ ui.th("Account") }}
+            {{ ui.th("Institution") }}
+            {{ ui.th("Type") }}
+            {{ ui.th("Number") }}
+            {{ ui.th("Usage") }}
+            {{ ui.th("Ledger account", num=true) }}
+            {{ ui.th("", num=true) }}
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in accounts %}
+        {% set a = row.account %}
+        <tr>
+            <td class="pt-table__primary">{{ a.account_name }}</td>
+            <td>{{ row.institution_name }}</td>
+            <td>{{ ui.badge(a.account_type, variant="neutral", upper=true) }}</td>
+            <td class="pt-num">{{ a.account_number_masked or "—" }}</td>
+            <td>{{ ui.badge(a.mixed_use_status, variant=("warning" if a.mixed_use_status == 'MIXED_USE' else "neutral"), upper=true) }}</td>
+            <td class="pt-table__num pt-num">
+                {% if a.account_type == 'MORTGAGE' %}
+                <span class="pt-text-muted" title="The loan carries the debt, clearing and escrow accounts.">on the loan</span>
+                {% else %}
+                {{ a.ledger_account_code if a.ledger_account_code is not none else "—" }}
+                {% endif %}
+            </td>
+            <td class="pt-table__actions">
+                {{ ui.icon_btn("Edit " ~ a.account_name, "edit", variant="ghost", size="sm",
+                               attrs='data-modal-open="edit-account-' ~ a.id ~ '"', title="Edit account") }}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+{{ ui.table_close() }}
+{% else %}
+<div class="pt-section__body">
+    {{ ui.empty_state(
+        "No accounts declared",
+        "Add the bank account rent lands in and the card you spend on the doors from.",
+        action_label=("Add account" if can_mutate else none),
+        action_href="#",
+        action_attrs='data-modal-open="create-account-modal"',
+        icon_name="bank"
+    ) }}
+</div>
+{% endif %}
+{{ ui.section_close() }}
+
+{# ---------------------------------------------------------------------------
+   3. Mortgage loans
+   --------------------------------------------------------------------------- #}
+{% set loan_actions %}
+    {% if can_mutate %}
+    {{ ui.btn("Add mortgage", variant="secondary", size="sm", icon_name="plus", attrs='data-modal-open="create-mortgage-modal"') }}
+    {% endif %}
+{% endset %}
+{{ ui.section_open(
+    "Mortgage loans (" ~ (loans | length) ~ ")",
+    "A loan gets a principal, clearing and escrow ledger account as a set. Declaring an opening principal posts it to the ledger and plugs the difference through owner equity.",
+    actions=loan_actions,
+    flush=true
+) }}
+{% if loans %}
+{{ ui.table_open(label="Mortgage loans in this portfolio") }}
+    <thead>
+        <tr>
+            {{ ui.th("Property") }}
+            {{ ui.th("Servicer") }}
+            {{ ui.th("Loan number") }}
+            {{ ui.th("Term") }}
+            {{ ui.th("Rate", num=true) }}
+            {{ ui.th("Original principal", num=true) }}
+            {{ ui.th("Escrow opening", num=true) }}
+            {{ ui.th("Ledger accounts") }}
+            {{ ui.th("", num=true) }}
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in loans %}
+        {% set loan = row.loan %}
+        <tr>
+            <td class="pt-table__primary">{{ row.property.name if row.property else loan.property_id }}</td>
+            <td>{{ row.institution_name or "—" }}</td>
+            <td class="pt-num">{{ loan.loan_number }}</td>
+            <td>{{ loan.term_months }} months</td>
+            <td class="pt-table__num pt-num">{{ loan.current_interest_rate_bps | format_bps }}</td>
+            <td class="pt-table__num">{{ ui.amount(loan.original_principal_cents, mode="plain") }}</td>
+            <td class="pt-table__num">{{ ui.amount(row.escrow.opening_balance_cents, mode="plain") if row.escrow else "—" }}</td>
+            <td class="pt-num pt-fs-caption">
+                {{ loan.principal_ledger_code if loan.principal_ledger_code is not none else "—" }} ·
+                {{ loan.clearing_ledger_code if loan.clearing_ledger_code is not none else "—" }} ·
+                {{ loan.escrow_ledger_code if loan.escrow_ledger_code is not none else "—" }}
+            </td>
+            <td class="pt-table__actions">
+                {{ ui.icon_btn("Edit loan " ~ loan.loan_number, "edit", variant="ghost", size="sm",
+                               attrs='data-modal-open="edit-mortgage-' ~ loan.id ~ '"', title="Edit loan") }}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+{{ ui.table_close() }}
+{% else %}
+<div class="pt-section__body">
+    {{ ui.empty_state(
+        "No mortgage loans declared",
+        "Add the loan on a door so its principal and escrow reserve are carried in the ledger.",
+        action_label=("Add mortgage" if can_mutate else none),
+        action_href="#",
+        action_attrs='data-modal-open="create-mortgage-modal"',
+        icon_name="bank"
+    ) }}
+</div>
+{% endif %}
+{{ ui.section_close() }}
+
+{# ---------------------------------------------------------------------------
+   4. Opening balances
+   --------------------------------------------------------------------------- #}
+{{ ui.section_open(
+    "Opening balances",
+    "One dated baseline entry for the whole portfolio. It may be recorded once per date: the ledger refuses a second entry for the same day, and this screen says so rather than failing."
+) }}
+{% if opening_entry %}
+<div class="pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-2 pt-mb-4">
+    <span class="pt-fs-caption pt-text-secondary">
+        Most recent opening balance entry:
+        <strong class="pt-num">{{ opening_entry.entry_date | format_date }}</strong>
+        · {{ opening_entry.description }}
+    </span>
+    {{ ui.badge(opening_entry.status, variant="success" if opening_entry.status == 'POSTED' else "neutral", upper=true) }}
+</div>
+{% endif %}
+
+{% if opening_targets %}
+<form method="post" action="/opening-balances" class="pt-stack">
+    {{ csrf_field() }}
+    <div class="pt-form-grid pt-form-grid--2">
+        {{ ui.date_field("as_of", "Balance date", required=true,
+                         help="The baseline date these balances are stated at. One entry per date.") }}
+    </div>
+    <div class="pt-form-grid pt-form-grid--2">
+        {% for target in opening_targets %}
+        {{ ui.number_field(
+            target.field,
+            target.label ~ (" — debit" if target.side == 'DEBIT' else " — credit"),
+            step="0.01",
+            placeholder="0.00",
+            help="Leave blank to omit this account. Enter a positive amount; the ledger side is set by the account type."
+        ) }}
+        {% endfor %}
+    </div>
+    {% if can_mutate %}
+    <div>
+        {{ ui.btn("Record opening balances", variant="primary", type="submit", icon_name="ledger") }}
+    </div>
+    {% else %}
+    {{ ui.alert(variant="neutral", title="Read-only role", text="Your role may read these balances but not record new ones.") }}
+    {% endif %}
+</form>
+{% else %}
+{{ ui.empty_state(
+    "No ledger accounts to set a balance on yet",
+    "Add a property, a checking or card account, or a mortgage loan first: opening balances are recorded against their ledger accounts.",
+    action_label="Add property",
+    action_href="#",
+    action_attrs='data-modal-open="create-property-modal"',
+    icon_name="ledger"
+) }}
+{% endif %}
+{{ ui.section_close() }}
+
+{# ---------------------------------------------------------------------------
+   5. Vendor rules
+   --------------------------------------------------------------------------- #}
+{% set rule_actions %}
+    {% if can_mutate %}
+    {{ ui.btn("Add rule", variant="secondary", size="sm", icon_name="plus", attrs='data-modal-open="create-vendor-rule-modal"') }}
+    {% endif %}
+{% endset %}
+{{ ui.section_open(
+    "Vendor classification rules (" ~ (vendor_rules | length) ~ ")",
+    "Your portfolio's own merchant rules. A rule classifies repeat vendors in the review queue; it never posts anything by itself.",
+    actions=rule_actions,
+    flush=true
+) }}
+{% if vendor_rules %}
+{{ ui.table_open(label="Vendor classification rules") }}
+    <thead>
+        <tr>
+            {{ ui.th("Pattern") }}
+            {{ ui.th("Vendor") }}
+            {{ ui.th("Service") }}
+            {{ ui.th("Category") }}
+            {{ ui.th("Door") }}
+            {{ ui.th("Gates") }}
+            {{ ui.th("State") }}
+            {{ ui.th("", num=true) }}
+        </tr>
+    </thead>
+    <tbody>
+        {% for rule in vendor_rules %}
+        <tr>
+            <td class="pt-table__primary pt-num">{{ rule.pattern }}</td>
+            <td>{{ rule.vendor_name }}</td>
+            <td class="pt-text-secondary">{{ rule.service_type }}</td>
+            <td>{{ ui.badge(rule.default_category, variant="neutral", upper=true) }}</td>
+            <td class="pt-text-muted">
+                {% if rule.default_property_id %}
+                    {% for p in properties %}{% if p.id == rule.default_property_id %}{{ p.name }}{% endif %}{% endfor %}
+                {% else %}
+                    Personal / unassigned
+                {% endif %}
+            </td>
+            <td class="pt-fs-caption">
+                {% if rule.requires_client_confirmation %}Client confirmation{% endif %}
+                {% if rule.requires_client_confirmation and rule.requires_cpa_review %} · {% endif %}
+                {% if rule.requires_cpa_review %}CPA review{% endif %}
+                {% if not rule.requires_client_confirmation and not rule.requires_cpa_review %}None{% endif %}
+            </td>
+            <td>
+                {{ ui.badge("ACTIVE" if rule.is_active else "PAUSED",
+                            variant=("success" if rule.is_active else "neutral"), upper=true) }}
+            </td>
+            <td class="pt-table__actions">
+                {% if can_mutate %}
+                <form method="post" action="/vendor-rules/{{ rule.id }}/toggle" class="pt-inline-flex">
+                    {{ csrf_field() }}
+                    <button type="submit" class="pt-btn pt-btn--ghost pt-btn--sm">
+                        {{ "Pause" if rule.is_active else "Activate" }}
+                    </button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+{{ ui.table_close() }}
+{% else %}
+<div class="pt-section__body">
+    {{ ui.empty_state(
+        "No vendor rules yet",
+        "Add a rule for a merchant you see every month and the review queue will classify it for you.",
+        action_label=("Add rule" if can_mutate else none),
+        action_href="#",
+        action_attrs='data-modal-open="create-vendor-rule-modal"',
+        icon_name="sliders"
+    ) }}
+</div>
+{% endif %}
+{{ ui.section_close() }}
+
+{# ---------------------------------------------------------------------------
+   Modals
+   --------------------------------------------------------------------------- #}
+{% set property_select_options = [{"value": "", "label": "Personal / unassigned"}] %}
+{% for p in properties %}
+    {% set _ = property_select_options.append({"value": p.id, "label": p.name}) %}
+{% endfor %}
+
+{# 1. Create property #}
+{% if can_mutate %}
+{{ ui.modal_open("create-property-modal", "Add a property", "A rental door or your primary residence.", size="lg") }}
+<form action="/properties/create" method="POST" class="pt-modal__form">
+    {{ csrf_field() }}
+    <div class="pt-modal__body pt-stack">
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.text_field("name", "Property name", required=true, placeholder="e.g. 12307 Larkspur St") }}
+            {{ ui.select_field("property_type", "Property type", property_type_options, selected="RENTAL_INVESTMENT") }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.text_field("address_line1", "Street address", required=true, placeholder="12307 Larkspur St") }}
+            {{ ui.text_field("address_line2", "Address line 2", placeholder="Unit, building, etc.") }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--3">
+            {{ ui.text_field("city", "City", required=true, placeholder="Westbrook") }}
+            {{ ui.text_field("state", "State", value="IL", placeholder="IL") }}
+            {{ ui.text_field("zip_code", "ZIP code", placeholder="60196") }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.date_field("acquisition_date", "Acquisition date") }}
+            {{ ui.text_field("short_label", "Short label", placeholder="Larkspur",
+                             help="Optional compact name for the navigation rail.") }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--3">
+            {{ ui.number_field("purchase_price", "Purchase price ($)", placeholder="425000.00") }}
+            {{ ui.number_field("land_basis", "Land basis ($)", placeholder="85000.00",
+                               help="Non-depreciable portion.") }}
+            {{ ui.number_field("building_basis", "Building basis ($)", placeholder="340000.00",
+                               help="Depreciable portion.") }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.number_field("current_valuation", "Current value ($)", placeholder="465000.00",
+                               help="Recorded as a manual valuation, flagged as an estimate.") }}
+            {{ ui.date_field("valuation_date", "Valuation date",
+                             help="Defaults to today when a value is given.") }}
+        </div>
+    </div>
+    <div class="pt-modal__footer">
+        <button type="button" class="pt-btn pt-btn--secondary" data-modal-close>Cancel</button>
+        <button type="submit" class="pt-btn pt-btn--primary">Create property</button>
+    </div>
+</form>
+{{ ui.modal_close() }}
+
+{# 2. Edit property, one per door #}
+{% for p in properties %}
+{% set valuation = property_valuations.get(p.id) %}
+{{ ui.modal_open("edit-property-" ~ p.id, "Edit " ~ p.name, p.property_type | replace("_", " ") | title, size="lg") }}
+<form action="/properties/{{ p.id }}/edit" method="POST" class="pt-modal__form">
+    {{ csrf_field() }}
+    <div class="pt-modal__body pt-stack">
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.text_field("name", "Property name", value=p.name, required=true) }}
+            {{ ui.select_field("property_type", "Property type", property_type_options, selected=p.property_type) }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.text_field("address_line1", "Street address", value=p.address_line1, required=true) }}
+            {{ ui.text_field("address_line2", "Address line 2", value=(p.address_line2 or "")) }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--3">
+            {{ ui.text_field("city", "City", value=p.city, required=true) }}
+            {{ ui.text_field("state", "State", value=p.state) }}
+            {{ ui.text_field("zip_code", "ZIP code", value=p.zip_code) }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.date_field("acquisition_date", "Acquisition date",
+                             value=(p.acquisition_date.isoformat() if p.acquisition_date else "")) }}
+            {{ ui.text_field("short_label", "Short label", value=(p.short_label or ""),
+                             help="Optional compact name for the navigation rail.") }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--3">
+            {{ ui.number_field("purchase_price", "Purchase price ($)",
+                               value=("%.2f" | format(p.purchase_price_cents / 100) if p.purchase_price_cents else "")) }}
+            {{ ui.number_field("land_basis", "Land basis ($)",
+                               value=("%.2f" | format(p.land_basis_cents / 100) if p.land_basis_cents else "")) }}
+            {{ ui.number_field("building_basis", "Building basis ($)",
+                               value=("%.2f" | format(p.building_basis_cents / 100) if p.building_basis_cents else "")) }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.number_field("current_valuation", "Current value ($)",
+                               value=("%.2f" | format(valuation.estimated_value_cents / 100) if valuation else "")) }}
+            {{ ui.date_field("valuation_date", "Valuation date",
+                             value=(valuation.valuation_date.isoformat() if valuation else "")) }}
+        </div>
+    </div>
+    <div class="pt-modal__footer">
+        <button type="button" class="pt-btn pt-btn--secondary" data-modal-close>Cancel</button>
+        <button type="submit" class="pt-btn pt-btn--primary">Save property</button>
+    </div>
+</form>
+{{ ui.modal_close() }}
+{% endfor %}
+
+{# 3. Create account #}
+{{ ui.modal_open("create-account-modal", "Add an account", "Checking, savings or a credit card.", size="md") }}
+<form action="/accounts/create" method="POST" class="pt-modal__form">
+    {{ csrf_field() }}
+    <div class="pt-modal__body pt-stack">
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.text_field("institution_name", "Institution", required=true, placeholder="Bank of America",
+                             help="An institution that does not exist yet is created for you.",
+                             extra='list="institution-names"') }}
+            {{ ui.text_field("account_name", "Account name", required=true, placeholder="BoA Core Checking") }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.select_field("account_type", "Account type", account_type_options, selected="CHECKING") }}
+            {{ ui.text_field("account_number_masked", "Masked number", placeholder="...9456",
+                             help="Only the last digits you are comfortable storing.") }}
+        </div>
+        {{ ui.select_field("mixed_use_status", "Usage", mixed_use_options, selected="UNCLASSIFIED",
+                           help="A card used only for rental costs needs no external review; a mixed-use card does.") }}
+    </div>
+    <div class="pt-modal__footer">
+        <button type="button" class="pt-btn pt-btn--secondary" data-modal-close>Cancel</button>
+        <button type="submit" class="pt-btn pt-btn--primary">Create account</button>
+    </div>
+</form>
+{{ ui.modal_close() }}
+
+{# 4. Edit account, one per account #}
+{% for row in accounts %}
+{% set a = row.account %}
+{{ ui.modal_open("edit-account-" ~ a.id, "Edit " ~ a.account_name, row.institution_name, size="md") }}
+<form action="/accounts/{{ a.id }}/edit" method="POST" class="pt-modal__form">
+    {{ csrf_field() }}
+    <div class="pt-modal__body pt-stack">
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.text_field("institution_name", "Institution", value=row.institution_name, required=true,
+                             extra='list="institution-names"') }}
+            {{ ui.text_field("account_name", "Account name", value=a.account_name, required=true) }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.select_field("account_type", "Account type", account_type_options, selected=a.account_type,
+                               help="Changing the class reallocates the ledger account in the right class.") }}
+            {{ ui.text_field("account_number_masked", "Masked number", value=a.account_number_masked) }}
+        </div>
+        {{ ui.select_field("mixed_use_status", "Usage", mixed_use_options, selected=a.mixed_use_status) }}
+    </div>
+    <div class="pt-modal__footer">
+        <button type="button" class="pt-btn pt-btn--secondary" data-modal-close>Cancel</button>
+        <button type="submit" class="pt-btn pt-btn--primary">Save account</button>
+    </div>
+</form>
+{{ ui.modal_close() }}
+{% endfor %}
+
+{# 5. Create mortgage #}
+{{ ui.modal_open("create-mortgage-modal", "Add a mortgage loan", "The loan's principal, clearing and escrow ledger accounts are allocated as a set.", size="lg") }}
+<form action="/mortgages/create" method="POST" class="pt-modal__form">
+    {{ csrf_field() }}
+    <div class="pt-modal__body pt-stack">
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.select_field("property_id", "Property", property_select_options, required=true) }}
+            {{ ui.text_field("institution_name", "Servicer / lender", required=true, placeholder="Rocket Mortgage",
+                             extra='list="institution-names"') }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.text_field("account_name", "Servicing account name", required=true,
+                             placeholder="Rocket Mortgage Loan") }}
+            {{ ui.text_field("loan_number", "Loan number", required=true, placeholder="0700000001") }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--3">
+            {{ ui.text_field("account_number_masked", "Masked number", placeholder="...5035") }}
+            {{ ui.date_field("origination_date", "Origination date") }}
+            {{ ui.number_field("term_months", "Term (months)", value="360", step="1") }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--3">
+            {{ ui.number_field("interest_rate", "Interest rate (%)", placeholder="3.125", step="0.001") }}
+            {{ ui.number_field("original_principal", "Original principal ($)", placeholder="340000.00") }}
+            {{ ui.number_field("escrow_opening_balance", "Escrow opening reserve ($)", placeholder="2840.00") }}
+        </div>
+        {{ ui.number_field("opening_principal", "Opening principal owed ($)", placeholder="310450.00",
+                           help="Declared once, as at origination: it is posted to the ledger as the loan's opening balance and plugged through owner equity. Leave blank if the loan's history is already posted.") }}
+    </div>
+    <div class="pt-modal__footer">
+        <button type="button" class="pt-btn pt-btn--secondary" data-modal-close>Cancel</button>
+        <button type="submit" class="pt-btn pt-btn--primary">Create loan</button>
+    </div>
+</form>
+{{ ui.modal_close() }}
+
+{# 6. Edit mortgage, one per loan #}
+{% for row in loans %}
+{% set loan = row.loan %}
+{{ ui.modal_open("edit-mortgage-" ~ loan.id, "Edit loan " ~ loan.loan_number,
+                 (row.property.name if row.property else loan.property_id), size="lg") }}
+<form action="/mortgages/{{ loan.id }}/edit" method="POST" class="pt-modal__form">
+    {{ csrf_field() }}
+    <div class="pt-modal__body pt-stack">
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.select_field("property_id", "Property", property_select_options,
+                               selected=loan.property_id, required=true) }}
+            {{ ui.text_field("institution_name", "Servicer / lender", required=true,
+                             value=row.institution_name,
+                             extra='list="institution-names"') }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.text_field("account_name", "Servicing account name", required=true,
+                             value=(row.account.account_name if row.account else "")) }}
+            {{ ui.text_field("loan_number", "Loan number", required=true, value=loan.loan_number) }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--3">
+            {{ ui.text_field("account_number_masked", "Masked number",
+                             value=(row.account.account_number_masked if row.account else "")) }}
+            {{ ui.date_field("origination_date", "Origination date",
+                             value=(loan.origination_date.isoformat() if loan.origination_date else "")) }}
+            {{ ui.number_field("term_months", "Term (months)", value=loan.term_months, step="1") }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--3">
+            {{ ui.number_field("interest_rate", "Interest rate (%)", step="0.001",
+                               value=("%.3f" | format(loan.current_interest_rate_bps / 1000) if loan.current_interest_rate_bps is not none else "")) }}
+            {{ ui.number_field("original_principal", "Original principal ($)",
+                               value=("%.2f" | format(loan.original_principal_cents / 100) if loan.original_principal_cents else "")) }}
+            {{ ui.number_field("escrow_opening_balance", "Escrow opening reserve ($)",
+                               value=("%.2f" | format(row.escrow.opening_balance_cents / 100) if row.escrow else "")) }}
+        </div>
+        {{ ui.alert(
+            variant="info",
+            title="Opening principal is ledger history",
+            text="A declared opening principal is posted to the ledger, so it is changed by posting a correction rather than by editing this form."
+        ) }}
+    </div>
+    <div class="pt-modal__footer">
+        <button type="button" class="pt-btn pt-btn--secondary" data-modal-close>Cancel</button>
+        <button type="submit" class="pt-btn pt-btn--primary">Save loan</button>
+    </div>
+</form>
+{{ ui.modal_close() }}
+{% endfor %}
+
+{# 7. Create vendor rule #}
+{{ ui.modal_open("create-vendor-rule-modal", "Add a vendor rule", "Classify a repeat merchant for this portfolio.", size="md") }}
+<form action="/vendor-rules/create" method="POST" class="pt-modal__form">
+    {{ csrf_field() }}
+    <div class="pt-modal__body pt-stack">
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.text_field("pattern", "Match pattern", required=true, placeholder="e.g. JNL CLIMATE",
+                             help="Matched anywhere in the bank description, case-insensitively.") }}
+            {{ ui.text_field("vendor_name", "Vendor name", placeholder="e.g. JNL Climate Control") }}
+        </div>
+        {{ ui.text_field("service_type", "Service", placeholder="e.g. HVAC servicing and maintenance") }}
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.select_field("default_category", "Default category", category_options, selected="PERSONAL") }}
+            {{ ui.select_field("default_property_id", "Target property", property_select_options) }}
+        </div>
+        <div class="pt-stack-2">
+            {{ ui.checkbox_field("requires_client_confirmation", "Requires your confirmation before posting",
+                                 help="The review queue will ask you to confirm before this is posted.") }}
+            {{ ui.checkbox_field("requires_cpa_review", "Requires CPA review before posting",
+                                 help="Recorded as an external-review gate; it is not an approval.") }}
+        </div>
+    </div>
+    <div class="pt-modal__footer">
+        <button type="button" class="pt-btn pt-btn--secondary" data-modal-close>Cancel</button>
+        <button type="submit" class="pt-btn pt-btn--primary">Create rule</button>
+    </div>
+</form>
+{{ ui.modal_close() }}
+{% endif %}
+
+{# Institutions already known to this portfolio, offered to the account forms. #}
+<datalist id="institution-names">
+    {% for name in institution_names %}<option value="{{ name }}"></option>{% endfor %}
+</datalist>
+{% endblock %}

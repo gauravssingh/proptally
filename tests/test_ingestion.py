@@ -51,9 +51,42 @@ def _write_pdf(path: Path, text: str = VALID_TEXT) -> None:
     pdf.close()
 
 
-def _engine(tmp_path):
+def _register_pnc_loan(engine) -> None:
+    """Registers the loan these fixture statements are about.
+
+    A statement is only ever booked against an account the portfolio already
+    holds, so a test that expects an import registers the loan first -- the same
+    thing an operator does before pointing the ingester at a new portfolio.
+    """
+    with Session(engine) as session:
+        session.add(Property(
+            id="prop_cimmaron_pingree", name="582 Foxglove Ct", address_line1="582 Foxglove Ct",
+            city="Oakhaven", state="IL", zip_code="60199", property_type="RENTAL_INVESTMENT",
+        ))
+        session.add(FinancialInstitution(id="inst_pnc", name="PNC Bank"))
+        session.flush()
+        session.add(FinancialAccount(
+            id="acct_pnc_0708", institution_id="inst_pnc", account_name="PNC Mortgage Loan",
+            account_type="MORTGAGE", account_number_masked="...0708",
+        ))
+        session.flush()
+        session.add(LoanAccount(
+            id="loan_pnc_1000000002", financial_account_id="acct_pnc_0708",
+            property_id="prop_cimmaron_pingree", loan_number="0700000002",
+        ))
+        session.commit()
+
+
+def _bare_engine(tmp_path):
+    """A portfolio database with nothing registered in it yet."""
     engine = get_engine(f"sqlite:///{tmp_path / 'proptally.db'}")
     initialize_database(engine)
+    return engine
+
+
+def _engine(tmp_path):
+    engine = _bare_engine(tmp_path)
+    _register_pnc_loan(engine)
     return engine
 
 
@@ -161,7 +194,8 @@ def test_unapproved_extraction_cannot_import_or_update_authoritative_terms(tmp_p
         assert report["items"][0]["status"] == "VALIDATED"
         assert session.exec(select(MortgagePeriod)).all() == []
         assert session.exec(select(Statement)).all() == []
-        assert session.get(LoanAccount, "loan_pnc_1000000002") is None
+        # The registered loan's terms are untouched until a statement is imported.
+        assert session.get(LoanAccount, "loan_pnc_1000000002").current_interest_rate_bps is None
         with pytest.raises(ValueError, match="explicitly approved"):
             import_approved_extraction(session, extraction_id)
 
@@ -169,8 +203,9 @@ def test_unapproved_extraction_cannot_import_or_update_authoritative_terms(tmp_p
         assert record.approval_status == "PENDING"
         approved = approve_extraction(session, extraction_id, commit=True)
         assert approved.approval_status == "APPROVED"
+        # Approval alone books nothing and still leaves the terms alone.
         assert session.exec(select(MortgagePeriod)).all() == []
-        assert session.get(LoanAccount, "loan_pnc_1000000002") is None
+        assert session.get(LoanAccount, "loan_pnc_1000000002").current_interest_rate_bps is None
 
         statement = import_approved_extraction(session, extraction_id, commit=True)
         repeated = import_approved_extraction(session, extraction_id, commit=True)
@@ -207,7 +242,7 @@ def test_import_preserves_existing_client_entity_attributes(tmp_path):
     folder = tmp_path / "source"
     folder.mkdir()
     _write_pdf(folder / "pnc.pdf")
-    engine = _engine(tmp_path)
+    engine = _bare_engine(tmp_path)
 
     with Session(engine) as session:
         session.add(Property(
@@ -359,17 +394,13 @@ def test_failed_persistence_cleans_up_or_reports_vault_file(tmp_path):
     assert "orphaned_vault_file" not in item
 
 
-def test_real_data_app_mode_skips_synthetic_demo_seed(tmp_path, monkeypatch):
-    from fastapi.testclient import TestClient
-
-    from proptally.web.app import create_app
-
+def test_real_data_app_mode_skips_synthetic_demo_seed(tmp_path, monkeypatch, owner):
     database_url = f"sqlite:///{tmp_path / 'real-data.db'}"
     monkeypatch.setenv("PROPTALLY_DEMO_SEED", "false")
-    with TestClient(create_app(database_url)) as client:
-        assert client.get("/mortgages").status_code == 200
+    signed_in = owner(db_url=database_url)
+    assert signed_in.client.get("/mortgages").status_code == 200
 
-    with Session(get_engine(database_url)) as session:
+    with Session(signed_in.engine) as session:
         assert session.exec(select(Property)).all() == []
 
 

@@ -16,6 +16,7 @@ from proptally.db.models import (
     TransactionSplit,
 )
 from proptally.core.exceptions import InvalidSplitSumError
+from proptally.db.system_models import ROLE_CPA_REVIEWER
 from proptally.domain.accounting.coa import (
     CARD_ACCOUNT_TYPE,
     COMMISSIONS_CODE,
@@ -180,6 +181,9 @@ def _record_posting_authorization(
     splits: list[TransactionSplit],
     client_confirmed: bool,
     user_attested_cpa_review: bool,
+    actor_id: str = "system",
+    actor_role: Optional[str] = None,
+    actor_verified_cpa_reviewer: bool = False,
 ) -> None:
     """Appends the immutable authorization record for a posting.
 
@@ -187,8 +191,20 @@ def _record_posting_authorization(
     what the policy required and the allocation it applied to. The parents are
     already flushed (the transaction was loaded and ``create_journal_entry``
     flushes the header), so the foreign keys are satisfied on insert.
+
+    When an external-review attestation is supplied, it is attributed to the
+    acting identity: ``authorized_by_user_id``/``authorized_by_role`` name who
+    asserted it and in what capacity. ``verified_cpa_reviewer`` is set only for a
+    sign-off by an identity the caller established as a ``CPA_REVIEWER`` member;
+    an owner self-attestation can never be promoted to a verified authorization.
     """
     authorized_at = datetime.now(timezone.utc)
+    attested = bool(user_attested_cpa_review)
+    verified_reviewer = (
+        attested
+        and actor_role == ROLE_CPA_REVIEWER
+        and bool(actor_verified_cpa_reviewer)
+    )
     session.add(
         PostingAuthorization(
             id=str(uuid4()),
@@ -200,6 +216,9 @@ def _record_posting_authorization(
             client_confirmed_at=authorized_at if client_confirmed else None,
             user_attested_cpa_review=user_attested_cpa_review,
             user_attested_cpa_review_at=authorized_at if user_attested_cpa_review else None,
+            authorized_by_user_id=actor_id if attested else None,
+            authorized_by_role=actor_role if attested else None,
+            verified_cpa_reviewer=verified_reviewer,
             split_count=len(splits),
             split_total_cents=sum(s.amount_cents for s in splits),
             policy_reasons="; ".join(policy.reasons) or None,
@@ -310,6 +329,8 @@ def post_transaction_to_ledger(
     idempotency_suffix: str = "",
     commit: bool = True,
     actor_id: str = "system",
+    actor_role: Optional[str] = None,
+    actor_verified_cpa_reviewer: bool = False,
 ) -> JournalEntry:
     """Atomically posts an approved and fully allocated transaction into double-entry journal entries.
 
@@ -402,6 +423,9 @@ def post_transaction_to_ledger(
         splits=splits,
         client_confirmed=client_confirmed,
         user_attested_cpa_review=user_attested_cpa_review,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        actor_verified_cpa_reviewer=actor_verified_cpa_reviewer,
     )
 
     if is_settlement:
@@ -472,6 +496,8 @@ def reclassify_and_repost_transaction(
     user_attested_cpa_review: bool = False,
     reversal_reason: str = "Reclassification of transaction splits",
     actor_id: str = "system",
+    actor_role: Optional[str] = None,
+    actor_verified_cpa_reviewer: bool = False,
 ) -> JournalEntry:
     """Safely updates a transaction's splits by reversing the prior posted entry and posting a new replacement.
 
@@ -521,6 +547,8 @@ def reclassify_and_repost_transaction(
             idempotency_suffix=f"v_{uuid4().hex[:6]}",
             commit=False,
             actor_id=actor_id,
+            actor_role=actor_role,
+            actor_verified_cpa_reviewer=actor_verified_cpa_reviewer,
         )
         session.commit()
     except Exception:

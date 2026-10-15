@@ -1,8 +1,7 @@
 """Tests for Review Queue, multi-splitting, auto-suggestions, and governance gates."""
 
 from datetime import date
-from uuid import uuid4
-from fastapi.testclient import TestClient
+
 from sqlmodel import Session, select
 
 from proptally.db.connection import get_engine
@@ -23,7 +22,6 @@ from proptally.domain.transactions.suggest import (
     seed_vendor_rules,
     suggest_split_for_transaction,
 )
-from proptally.web.app import create_app
 
 
 def test_auto_suggestion_rules(engine):
@@ -61,7 +59,7 @@ def test_auto_suggestion_rules(engine):
         assert s4.category == "PERSONAL"
 
 
-def test_review_queue_routes_and_multi_split(tmp_path):
+def test_review_queue_routes_and_multi_split(tmp_path, owner):
     db_file = tmp_path / "test_review.db"
     db_uri = f"sqlite:///{db_file}"
     engine = get_engine(db_uri)
@@ -148,8 +146,8 @@ def test_review_queue_routes_and_multi_split(tmp_path):
         session.add(state_atm)
         session.commit()
 
-    app = create_app(db_uri)
-    client = TestClient(app)
+    signed_in = owner(db_url=db_uri)
+    client = signed_in.client
 
     # 1. Test viewing reconciliation queue
     resp = client.get("/reconciliation")
@@ -158,7 +156,7 @@ def test_review_queue_routes_and_multi_split(tmp_path):
     assert "Rule Suggestion" in resp.text
 
     # 2. Test CBD-1 gate rejection if confirmation missing
-    resp_reject = client.post("/reconciliation/assign", data={
+    resp_reject = signed_in.post("/reconciliation/assign", data={
         "transaction_id": "tx_atm_1",
         "property_id": "prop_cimmaron_pingree",
         "category": "RENT_INCOME",
@@ -167,7 +165,7 @@ def test_review_queue_routes_and_multi_split(tmp_path):
     assert resp_reject.status_code == 403
 
     # 3. Test multi-splitting $500 Menards: $300 Alder repairs + $200 Rowan personal
-    resp_split = client.post("/reconciliation/split", data={
+    resp_split = signed_in.post("/reconciliation/split", data={
         "transaction_id": "tx_menards_1",
         "split_property_id": ["prop_tinsley_huntley", "prop_burkey_algonquin"],
         "split_category": ["REPAIRS", "PERSONAL"],

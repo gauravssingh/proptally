@@ -79,21 +79,91 @@ Open **`http://127.0.0.1:8080`** in your browser.
 
 ---
 
+## Multi-Portfolio Deployment
+
+PropTally serves several independent owners from one self-hosted instance. Each
+owner has their own login and their own portfolio, and no portfolio's data is
+reachable from another's.
+
+### First run
+The server refuses to bind every interface by default. It listens on
+`127.0.0.1:8080`; to serve a LAN or Tailscale address, set one explicitly:
+
+```bash
+PROPTALLY_HOST=100.64.0.5 python main.py     # a specific address
+# or, deliberately:
+PROPTALLY_HOST=0.0.0.0 PROPTALLY_ALLOW_WIDE_BIND=true python main.py
+```
+
+Open the app and create the first account at `/auth/register`. While the instance
+has no accounts, registration is open and the first account becomes the instance
+administrator; afterwards, registration closes unless you set
+`PROPTALLY_ALLOW_REGISTRATION=true`. Other people join an existing portfolio only
+through an invitation created on the **Account** screen.
+
+### Where data lives
+
+```text
+storage/
+├── system.db                        # accounts, portfolios, memberships, sessions
+└── tenants/
+    └── <tenant_id>/
+        ├── proptally.db             # this portfolio's ledger (WAL mode)
+        ├── vault/                   # statement PDFs, addressed by SHA-256
+        ├── photos/                  # property photos
+        ├── inbox/                   # optional hot folder for unattended intake
+        ├── processed/
+        └── quarantine/
+```
+
+Isolation is physical: a request resolves its session to exactly one of those
+databases, and the session handed to a route can only reach that file. See
+[ADR-009](docs/architecture/v2/adr/ADR-009-database-per-portfolio-isolation.md).
+
+### Operating notes
+* **Serve it over TLS.** Behind a reverse proxy (Caddy, Nginx) that sets
+  `X-Forwarded-Proto`, session cookies are marked `Secure` automatically. Over plain
+  HTTP they are not, because a `Secure` cookie that never comes back would lock you
+  out. `PROPTALLY_SECURE_COOKIES=true|false` overrides the detection.
+* **No mail transport.** Password reset creates a single-use token and shows it to
+  the operator, who hands it to the account holder. See
+  [ADR-010](docs/architecture/v2/adr/ADR-010-local-zero-egress-authentication.md).
+* **Backups cover every portfolio.** `scripts/backup.sh` snapshots `system.db` and
+  each tenant database with `VACUUM INTO`, verifies each with
+  `PRAGMA integrity_check`, and archives the vaults; `--tenant <id>` exports one.
+* **Existing single-portfolio data** moves with
+  `python scripts/migrate_to_multitenant.py --db storage/client-portfolio.db` (dry
+  run by default; add `--apply` to write).
+
+### Roles
+| Role | Can |
+| :--- | :--- |
+| `OWNER` | Everything in the portfolio: setup, import, post, invite, back up. |
+| `CPA_REVIEWER` | Read, and record the external review a Schedule E deduction requires. |
+| `READ_ONLY` | Read and export only; every state-changing request is refused. |
+
+---
+
 ## Project Structure
 
 ```text
 proptally/
 ├── src/proptally/
 │   ├── core/                  # Domain exceptions, configuration, SQLite retry handler
-│   ├── db/                    # SQLModel entities, WAL connection pragmas, DDL triggers
+│   ├── db/                    # Ledger models, WAL pragmas, DDL triggers, schema migrations
+│   │   ├── system_models.py   # Control plane: users, tenants, memberships, sessions
+│   │   └── tenant_manager.py  # Per-portfolio engine, paths and provisioning
 │   ├── domain/
-│   │   ├── accounting/        # Chart of Accounts, ledger service, opening balances, metrics
+│   │   ├── accounting/        # Chart of accounts + allocation, ledger, opening balances, metrics
 │   │   ├── fixtures/          # Synthetic demo portfolio data seeder
-│   │   └── transactions/      # Transaction splitting and validation engine
-│   └── web/                   # FastAPI application factory, Jinja2 templates, routers
-├── tests/                     # 40 integration & unit tests on live SQLite
+│   │   ├── tax/               # Schedule E workpapers and depreciation
+│   │   └── transactions/      # Splitting, validation and posting-authorization policy
+│   ├── ingestion/             # Statement parsers, ingestion service, hot-folder watcher, CLI
+│   └── web/                   # FastAPI factory, sessions/CSRF, Jinja2 templates, routers
+├── scripts/                   # Backup, restore and single→multi-tenant migration
+├── tests/                     # Unit & integration suite on live SQLite
 ├── docs/                      # Architectural specifications & decision records (V2 Suite)
-└── main.py                    # Server launcher
+└── main.py                    # Server launcher (loopback by default)
 ```
 
 ---
@@ -110,7 +180,10 @@ proptally/
   * [06. Security, Privacy & Deployment](docs/architecture/v2/06_SECURITY_AND_DEPLOYMENT.md)
   * [07. Product & UI/UX Specification](docs/architecture/v2/07_PRODUCT_AND_UI_SPECIFICATION.md)
   * [08. Phased Implementation Roadmap](docs/architecture/v2/08_IMPLEMENTATION_ROADMAP.md)
-  * [Architecture Decision Records (ADR 001–008)](docs/architecture/v2/adr/)
+  * [09. Multi-Tenant Self-Hosted Execution Plan](docs/architecture/v2/09_MULTI_TENANT_EXECUTION_PLAN.md)
+  * [Architecture Decision Records (ADR 001–010)](docs/architecture/v2/adr/)
+    * [ADR-009: Database-per-Portfolio Isolation](docs/architecture/v2/adr/ADR-009-database-per-portfolio-isolation.md)
+    * [ADR-010: Local, Zero-Egress Authentication](docs/architecture/v2/adr/ADR-010-local-zero-egress-authentication.md)
 
 ## Local Document Ingestion
 

@@ -11,11 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlmodel import Session, select
 
-from proptally.db.models import TransactionProcessingState
+from proptally.db.models import Property, TransactionProcessingState
 from proptally.domain.accounting.metrics import (
     calculate_portfolio_equity,
     calculate_property_financials,
 )
+from proptally.web.auth import current_context
 from proptally.web.helpers import period_label
 
 
@@ -75,6 +76,14 @@ def get_dashboard_router(templates, get_session_dep):
         ).all()
         review_count = len(unallocated_states)
 
+        # A portfolio with no doors has nothing to report on. The screen says so and
+        # offers the two ways to start instead of rendering empty figures, and the
+        # populated rendering below is untouched.
+        context = current_context()
+        has_properties = session.exec(
+            select(Property).where(Property.is_active == True)  # noqa: E712
+        ).first() is not None
+
         return templates.TemplateResponse(
             request=request,
             name="dashboard.html",
@@ -83,6 +92,8 @@ def get_dashboard_router(templates, get_session_dep):
                 "equity": equity,
                 "financials": financials,
                 "review_count": review_count,
+                "has_properties": has_properties,
+                "can_mutate": bool(context and context.can_mutate),
                 "debt_basis_label": _debt_basis_label(equity),
                 "period_label": period_label(financials),
                 "period_is_filtered": bool(start_date or end_date),

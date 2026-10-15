@@ -3,17 +3,21 @@
 import json
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
+
 import pytest
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from proptally.db.connection import get_engine
-from proptally.db.models import Document, DocumentExtraction, Statement, Transaction
+from proptally.db.models import (
+    Document,
+    FinancialAccount,
+    FinancialInstitution,
+    Statement,
+)
 from proptally.db.schema import init_schema
-from proptally.ingestion.watcher import process_inbox_file, process_inbox_once
-
+from proptally.ingestion.watcher import process_inbox_once
 
 # The statement PDFs these tests exercise live outside the repository. Point
 # PROPTALLY_TEST_DOCS_DIR at the folder holding them when running locally; with
@@ -37,6 +41,21 @@ def test_env(tmp_path):
 
     engine = get_engine(f"sqlite:///{db_file}")
     init_schema(engine)
+
+    # The statements these tests drop in the inbox belong to a checking account
+    # the portfolio holds: a statement is only booked against a registered
+    # account, so the account is registered here first.
+    with Session(engine) as session:
+        session.add(FinancialInstitution(id="inst_bofa", name="Bank of America"))
+        session.flush()
+        session.add(FinancialAccount(
+            id="acct_bofa_chk_9456",
+            institution_id="inst_bofa",
+            account_name="Bank of America Advantage Plus Checking",
+            account_type="CHECKING",
+            account_number_masked="...9456",
+        ))
+        session.commit()
 
     return {
         "inbox_dir": inbox_dir,

@@ -101,6 +101,13 @@ def primary_sections() -> list[NavSection]:
                     icon="home",
                     page="dashboard",
                 ),
+                NavItem(
+                    label="Portfolio Setup",
+                    short="Setup",
+                    href="/settings",
+                    icon="sliders",
+                    page="settings",
+                ),
             ],
         ),
     ]

@@ -6,21 +6,20 @@ these tests tie each claim on the page to the data underneath it.
 
 import pytest
 from sqlalchemy import text
-from starlette.testclient import TestClient
 
 from proptally.db.connection import get_engine
 from proptally.domain.accounting.metrics import calculate_portfolio_equity
-from proptally.web.app import create_app
 from proptally.web.helpers import format_cents
 
 
 @pytest.fixture(name="client")
-def client_fixture(tmp_path):
+def client_fixture(owner, tmp_path):
+    """A signed-in owner's client, with ``db_url`` for direct database reads."""
     db_path = tmp_path / "labels.db"
-    app = create_app(db_url=f"sqlite:///{db_path}")
-    with TestClient(app) as test_client:
-        test_client.db_url = f"sqlite:///{db_path}"
-        yield test_client
+    db_url = f"sqlite:///{db_path}"
+    signed_in = owner(db_url=db_url, demo_seed=True)
+    signed_in.client.db_url = db_url
+    return signed_in.client
 
 
 def _engine(client):

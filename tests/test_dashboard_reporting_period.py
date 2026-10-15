@@ -9,7 +9,6 @@ from datetime import date
 
 import pytest
 from sqlmodel import Session
-from starlette.testclient import TestClient
 
 from proptally.db.connection import get_engine
 from proptally.domain.accounting.ledger import (
@@ -17,18 +16,21 @@ from proptally.domain.accounting.ledger import (
     create_journal_entry,
     post_journal_entry,
 )
-from proptally.web.app import create_app
 
 LARKSPUR = "prop_tinsley_huntley"
 
 
 @pytest.fixture(name="client")
-def client_fixture(tmp_path):
+def client_fixture(owner, tmp_path):
+    """A signed-in owner's client, pointed at a known portfolio database file.
+
+    ``db_url`` is attached so the direct-posting helpers below open the same file.
+    """
     db_path = tmp_path / "period.db"
-    app = create_app(db_url=f"sqlite:///{db_path}")
-    with TestClient(app) as test_client:
-        test_client.db_url = f"sqlite:///{db_path}"
-        yield test_client
+    db_url = f"sqlite:///{db_path}"
+    signed_in = owner(db_url=db_url, demo_seed=True)
+    signed_in.client.db_url = db_url
+    return signed_in.client
 
 
 def _add_repair(client, day: date, amount_cents: int, key: str):

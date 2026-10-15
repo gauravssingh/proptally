@@ -2,17 +2,24 @@
 
 import pytest
 from starlette.testclient import TestClient
-from proptally.web.app import create_app
+
+
+@pytest.fixture(name="signed_in")
+def signed_in_fixture(owner):
+    """A signed-in owner whose portfolio holds the synthetic demo data."""
+    return owner(demo_seed=True)
 
 
 @pytest.fixture(name="client")
-def client_fixture(tmp_path):
-    """Provides a TestClient connected to an isolated temporary SQLite database."""
-    db_file = tmp_path / "test_demo.db"
-    db_url = f"sqlite:///{db_file}"
-    app = create_app(db_url=db_url)
-    with TestClient(app) as test_client:
-        yield test_client
+def client_fixture(signed_in):
+    """The signed-in owner's client, so page GETs reach the portfolio."""
+    return signed_in.client
+
+
+@pytest.fixture(name="csrf")
+def csrf_fixture(signed_in):
+    """The session's CSRF token, required on every state-changing request."""
+    return signed_in.csrf()
 
 
 def test_dashboard_overview_renders_successfully(client: TestClient):
@@ -81,7 +88,7 @@ def test_mortgages_and_escrow_ledger(client: TestClient):
     assert "Reported Balance" in html
 
 
-def test_transactions_register_and_manual_entry(client: TestClient):
+def test_transactions_register_and_manual_entry(client: TestClient, csrf: str):
     """GET /transactions lists register; POST /transactions/manual creates a new transaction."""
     # Register view
     resp_list = client.get("/transactions")
@@ -97,6 +104,7 @@ def test_transactions_register_and_manual_entry(client: TestClient):
             "description": "Ace Hardware Paint & Caulk",
             "amount_dollars": "45.50",
             "direction": "OUTFLOW",
+            "csrf_token": csrf,
         },
         follow_redirects=True,
     )
@@ -105,7 +113,7 @@ def test_transactions_register_and_manual_entry(client: TestClient):
     assert "$45.50" in resp_create.text
 
 
-def test_transaction_split_flow(client: TestClient):
+def test_transaction_split_flow(client: TestClient, csrf: str):
     """POST /transactions/split updates split allocations for a transaction."""
     # Create an unallocated transaction
     client.post(
@@ -116,6 +124,7 @@ def test_transaction_split_flow(client: TestClient):
             "description": "Lowe's Multi-Property Repair",
             "amount_dollars": "100.00",
             "direction": "OUTFLOW",
+            "csrf_token": csrf,
         },
         follow_redirects=True,
     )
@@ -128,6 +137,7 @@ def test_transaction_split_flow(client: TestClient):
             "property_id[]": ["prop_tinsley_huntley", "prop_cimmaron_pingree"],
             "category[]": ["REPAIRS", "SUPPLIES"],
             "amount_dollars[]": ["140.00", "80.00"],
+            "csrf_token": csrf,
         },
         follow_redirects=True,
     )
@@ -135,7 +145,7 @@ def test_transaction_split_flow(client: TestClient):
     assert "Allocated" in resp_split.text
 
 
-def test_reconciliation_review_queue_and_assignment(client: TestClient):
+def test_reconciliation_review_queue_and_assignment(client: TestClient, csrf: str):
     """GET /reconciliation displays CBD-1 and CBD-2 items; POST /reconciliation/assign resolves an item."""
     # 1. Review queue contains CBD-1 and CBD-2
     resp_queue = client.get("/reconciliation")
@@ -156,6 +166,7 @@ def test_reconciliation_review_queue_and_assignment(client: TestClient):
             "transaction_id": "txn_atm_deposit_cbd1_20260320",
             "property_id": "prop_cimmaron_pingree",
             "category": "RENT_INCOME",
+            "csrf_token": csrf,
         },
     )
     assert resp_unconfirmed.status_code == 403
@@ -168,6 +179,7 @@ def test_reconciliation_review_queue_and_assignment(client: TestClient):
             "property_id": "prop_cimmaron_pingree",
             "category": "RENT_INCOME",
             "client_confirmed": "true",
+            "csrf_token": csrf,
         },
         follow_redirects=True,
     )

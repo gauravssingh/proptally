@@ -11,12 +11,11 @@ from typing import Callable, List, Optional
 from sqlmodel import Session, select
 
 from proptally.db.models import Document
-from proptally.ingestion.bank_parsers import BankStatementExtraction, extract_bank_or_card_pdf
-from proptally.ingestion.parsers import MortgageExtraction, extract_pdf
 from proptally.ingestion.service import (
     _persist_document,
     _sha256,
     approve_extraction,
+    extract_and_resolve,
     import_approved_extraction,
 )
 
@@ -60,10 +59,8 @@ def process_inbox_file(
                 details="File already exists in vault with matching SHA-256 digest.",
             )
 
-        # 1. Classify and extract (Mortgage or Banking)
-        extraction = extract_pdf(file_path)
-        if extraction is None:
-            extraction = extract_bank_or_card_pdf(file_path)
+        # 1. Classify, extract and match against this portfolio's own accounts
+        extraction = extract_and_resolve(file_path, session)
 
         if extraction is None:
             if quarantine_dir:

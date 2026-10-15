@@ -166,6 +166,21 @@ class TenantContext:
         """Who to record as the author of an audited change."""
         return self.user.id
 
+    def posting_actor(self) -> dict:
+        """Keyword arguments naming this request as the actor of a posting.
+
+        ``actor_verified_cpa_reviewer`` is True only for a member whose role is
+        ``CPA_REVIEWER``. That role came from the control-plane membership the
+        session resolved, which is what makes the sign-off verifiable: the domain
+        service can then record a verified external review rather than an owner
+        self-attestation, without ever trusting a value from the request body.
+        """
+        return {
+            "actor_id": self.user.id,
+            "actor_role": self.role,
+            "actor_verified_cpa_reviewer": self.role == ROLE_CPA_REVIEWER,
+        }
+
 
 #: The context of the request being handled. Set by the dependency and read by
 #: templates, so the shell can render the signed-in user without every route
@@ -180,6 +195,18 @@ def current_context() -> Optional[TenantContext]:
 
 def set_current_context(context: Optional[TenantContext]) -> None:
     _current_context.set(context)
+
+
+def posting_actor_kwargs() -> dict:
+    """The actor keyword arguments for the active request's posting services.
+
+    Falls back to the unauthenticated ``system`` actor outside a request (CLI,
+    scripts, background jobs), so domain services keep their existing default.
+    """
+    context = current_context()
+    if context is None:
+        return {"actor_id": "system", "actor_role": None, "actor_verified_cpa_reviewer": False}
+    return context.posting_actor()
 
 
 # --- Login throttling ------------------------------------------------------

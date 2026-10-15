@@ -1,10 +1,24 @@
 #!/usr/bin/env bash
-# scripts/restore.sh - Verifies integrity and restores PropTally SQLite database and vault from backup.
+# scripts/restore.sh - Verifies and restores a PropTally backup archive.
+#
+# Understands both archive layouts produced by scripts/backup.sh:
+#
+#   multi-tenant  system/database.sqlite plus tenants/<id>/proptally.db and
+#                 tenants/<id>/vault for every portfolio. Restored under
+#                 --target-storage (default storage/). --tenant <id> restores one.
+#   legacy        database.sqlite at the archive root, restored to --target-db
+#                 with its vault at --target-vault.
+#
+# Every staged database is checked with `PRAGMA integrity_check` before anything
+# is written, and an existing target is copied aside to a timestamped .bak file
+# first (unless --force).
 set -euo pipefail
 
 ARCHIVE_PATH=""
 TARGET_DB=""
 TARGET_VAULT=""
+TARGET_STORAGE=""
+TENANT_ID=""
 SKIP_CHECKSUM=false
 FORCE=false
 
@@ -22,6 +36,14 @@ while [[ $# -gt 0 ]]; do
             TARGET_VAULT="$2"
             shift 2
             ;;
+        --target-storage)
+            TARGET_STORAGE="$2"
+            shift 2
+            ;;
+        --tenant)
+            TENANT_ID="$2"
+            shift 2
+            ;;
         --skip-checksum)
             SKIP_CHECKSUM=true
             shift
@@ -31,7 +53,9 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            echo "Usage: $0 [--archive ARCHIVE_PATH] [--target-db TARGET_DB] [--target-vault TARGET_VAULT] [--skip-checksum] [--force]"
+            echo "Usage: $0 [--archive ARCHIVE_PATH] [--target-storage ROOT] [--tenant ID]"
+            echo "       $0 --archive ARCHIVE_PATH [--target-db DB_PATH] [--target-vault VAULT_DIR]"
+            echo "           [--skip-checksum] [--force]"
             exit 0
             ;;
         *)
@@ -65,18 +89,12 @@ if [ -z "$ARCHIVE_PATH" ] || [ ! -f "$ARCHIVE_PATH" ]; then
     exit 1
 fi
 
-# Resolve targets
-if [ -z "$TARGET_DB" ]; then
-    TARGET_DB="${PROPTALLY_DB_PATH:-$REPO_ROOT/storage/proptally.db}"
-fi
-if [ -z "$TARGET_VAULT" ]; then
-    TARGET_VAULT="${PROPTALLY_VAULT_DIR:-$REPO_ROOT/storage/vault}"
+if [ -z "$TARGET_STORAGE" ]; then
+    TARGET_STORAGE="${PROPTALLY_STORAGE_ROOT:-$REPO_ROOT/storage}"
 fi
 
 echo "=== PropTally Automated Disaster Recovery & Restore ==="
 echo "Backup Archive: $ARCHIVE_PATH"
-echo "Target DB:      $TARGET_DB"
-echo "Target Vault:   $TARGET_VAULT"
 
 # 1. SHA-256 Checksum Verification
 CHECKSUM_FILE="${ARCHIVE_PATH}.sha256"
@@ -109,10 +127,128 @@ trap 'rm -rf "$TEMP_STAGE"' EXIT
 echo "Unpacking archive..."
 tar -xzf "$ARCHIVE_PATH" -C "$TEMP_STAGE"
 
+# verify_integrity LABEL DB_PATH
+# Fails the whole restore (writing nothing) if any database is corrupt.
+verify_integrity() {
+    local label="$1"
+    local database="$2"
+
+    set +e
+    local integrity
+    integrity="$(sqlite3 "$database" "PRAGMA integrity_check;" 2>&1)"
+    local status=$?
+    set -e
+
+    if [ $status -ne 0 ] || [ "$integrity" != "ok" ]; then
+        echo "ERROR: SQLite integrity check failed for '$label': $integrity" >&2
+        exit 5
+    fi
+    echo "✓ Database integrity verified ($label): $integrity"
+}
+
+# backup_existing PATH
+backup_existing() {
+    local target="$1"
+    if [ "$FORCE" = true ] || [ ! -f "$target" ]; then
+        return 0
+    fi
+    local bak="${target}.bak.$(date +"%Y%m%d_%H%M%S")"
+    echo "Backing up existing database to '$bak'..."
+    cp "$target" "$bak"
+}
+
+MULTI=false
+if [ -d "$TEMP_STAGE/tenants" ] || [ -f "$TEMP_STAGE/system/database.sqlite" ]; then
+    MULTI=true
+fi
+
+if [ "$MULTI" = true ]; then
+    # --- Multi-tenant restore ---------------------------------------------
+    echo "Layout:      multi-tenant"
+    echo "Target root: $TARGET_STORAGE"
+
+    if [ ! -d "$TEMP_STAGE/tenants" ] && [ -z "$TENANT_ID" ]; then
+        echo "Warning: archive contains no tenants directory." >&2
+    fi
+
+    # Verify every staged database before touching the target.
+    if [ -f "$TEMP_STAGE/system/database.sqlite" ]; then
+        verify_integrity "system" "$TEMP_STAGE/system/database.sqlite"
+    fi
+    TENANT_LIST=""
+    if [ -d "$TEMP_STAGE/tenants" ]; then
+        if [ -n "$TENANT_ID" ]; then
+            if [ ! -d "$TEMP_STAGE/tenants/$TENANT_ID" ]; then
+                echo "ERROR: Archive contains no tenant '$TENANT_ID'." >&2
+                exit 1
+            fi
+            TENANT_LIST="$TEMP_STAGE/tenants/$TENANT_ID"
+        else
+            shopt -s nullglob
+            for candidate in "$TEMP_STAGE"/tenants/*/; do
+                TENANT_LIST="${TENANT_LIST}${candidate}
+"
+            done
+            shopt -u nullglob
+        fi
+    fi
+
+    while IFS= read -r tenant_dir; do
+        [ -n "$tenant_dir" ] || continue
+        tenant_id="$(basename "${tenant_dir%/}")"
+        if [ ! -f "$tenant_dir/proptally.db" ]; then
+            echo "ERROR: Archive tenant '$tenant_id' has no proptally.db." >&2
+            exit 4
+        fi
+        verify_integrity "tenant:$tenant_id" "$tenant_dir/proptally.db"
+    done <<< "$TENANT_LIST"
+
+    # Nothing failed verification; now write.
+    if [ -f "$TEMP_STAGE/system/database.sqlite" ]; then
+        mkdir -p "$TARGET_STORAGE"
+        backup_existing "$TARGET_STORAGE/system.db"
+        echo "Restoring control plane to '$TARGET_STORAGE/system.db'..."
+        cp "$TEMP_STAGE/system/database.sqlite" "$TARGET_STORAGE/system.db"
+    fi
+
+    while IFS= read -r tenant_dir; do
+        [ -n "$tenant_dir" ] || continue
+        tenant_id="$(basename "${tenant_dir%/}")"
+        target_tenant="$TARGET_STORAGE/tenants/$tenant_id"
+        mkdir -p "$target_tenant"
+        backup_existing "$target_tenant/proptally.db"
+        echo "Restoring portfolio '$tenant_id' to '$target_tenant/proptally.db'..."
+        cp "$tenant_dir/proptally.db" "$target_tenant/proptally.db"
+        if [ -d "$tenant_dir/vault" ]; then
+            mkdir -p "$target_tenant/vault"
+            cp -R "$tenant_dir/vault/." "$target_tenant/vault/" 2>/dev/null || true
+        fi
+    done <<< "$TENANT_LIST"
+
+    if [ -f "$TARGET_STORAGE/system.db" ]; then
+        echo "✓ Post-restore integrity (system): $(sqlite3 "$TARGET_STORAGE/system.db" "PRAGMA integrity_check;")"
+    fi
+    echo "=== Restore completed successfully ==="
+    exit 0
+fi
+
+# --- Legacy single-database restore ----------------------------------------
 if [ ! -f "$TEMP_STAGE/database.sqlite" ]; then
     echo "ERROR: Corrupt archive - missing 'database.sqlite'" >&2
     exit 4
 fi
+
+# Resolve legacy targets
+if [ -z "$TARGET_DB" ]; then
+    TARGET_DB="${PROPTALLY_DB_PATH:-$REPO_ROOT/storage/proptally.db}"
+fi
+if [ -z "$TARGET_VAULT" ]; then
+    TARGET_VAULT="${PROPTALLY_VAULT_DIR:-$REPO_ROOT/storage/vault}"
+fi
+
+echo "Layout:      legacy single-database"
+echo "Target DB:   $TARGET_DB"
+echo "Target Vault: $TARGET_VAULT"
 
 # 3. Database Integrity Check
 echo "Running SQLite integrity check on restored database..."
@@ -130,12 +266,7 @@ echo "✓ Database integrity verified: $RESTORED_INTEGRITY"
 # 4. Backup existing target DB if present
 mkdir -p "$(dirname "$TARGET_DB")"
 mkdir -p "$TARGET_VAULT"
-
-if [ -f "$TARGET_DB" ]; then
-    BAK_PATH="${TARGET_DB}.bak.$(date +"%Y%m%d_%H%M%S")"
-    echo "Backing up existing database to '$BAK_PATH'..."
-    cp "$TARGET_DB" "$BAK_PATH"
-fi
+backup_existing "$TARGET_DB"
 
 # 5. Restore Database & Vault
 echo "Restoring database to '$TARGET_DB'..."
