@@ -278,24 +278,23 @@
         {% for a in accounts %}
             {% set account_options = account_options + [{"value": a.id, "label": a.account_name}] %}
         {% endfor %}
+        {% set card_options = [] %}
+        {% for a in accounts %}
+            {% if a.account_type == 'CREDIT_CARD' %}
+                {% set card_options = card_options + [{"value": a.id, "label": a.account_name}] %}
+            {% endif %}
+        {% endfor %}
         {{ ui.select_field(
             "account_id",
             "Financial Account",
-            options=account_options if account_options else [
-                {"value": "acct_bofa_chk_9456", "label": "BoA Checking (...9456)"},
-                {"value": "acct_bofa_cc_9306", "label": "BoA Visa (...9306)"},
-                {"value": "acct_apple_card", "label": "Apple Card (...AppleCard)"}
-            ],
+            options=account_options,
             required=true
         ) }}
 
         {{ ui.select_field(
             "counter_account_id",
             "Transfer To / Settles (optional)",
-            options=[
-                {"value": "acct_bofa_cc_9306", "label": "BoA Visa (...9306)"},
-                {"value": "acct_apple_card", "label": "Apple Card (...AppleCard)"}
-            ],
+            options=card_options,
             placeholder="— Not a transfer —",
             help="Paying a credit card from a deposit account: the payment is posted as a transfer (debit card liability, credit checking) and never re-expenses the original purchases. Classification comes from the accounts, not the wording."
         ) }}
@@ -332,15 +331,9 @@
 {% macro split_row() %}
 <div class="split-row pt-form-grid pt-form-grid--3">
     <select name="property_id[]" aria-label="Property or personal for this split">
-        {% if properties %}
-            {% for p in properties %}
-            <option value="{{ p.id }}">{{ p.name }}</option>
-            {% endfor %}
-        {% else %}
-            <option value="prop_tinsley_huntley">12307 Larkspur St</option>
-            <option value="prop_cimmaron_pingree">582 Foxglove Ct</option>
-            <option value="prop_burkey_algonquin">3345 Elderberry (Primary)</option>
-        {% endif %}
+        {% for p in properties %}
+        <option value="{{ p.id }}">{{ p.name }}</option>
+        {% endfor %}
         <option value="">Personal / Unassigned</option>
     </select>
     <select name="category[]" aria-label="Schedule E category for this split">

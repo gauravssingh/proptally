@@ -32,6 +32,12 @@ class Property(SQLModel, table=True):
     description: Optional[str] = Field(default=None)
     google_maps_url: Optional[str] = Field(default=None)
     cover_photo_id: Optional[str] = Field(default=None)
+    # The property's fixed-asset ledger account. Allocated on creation by
+    # domain.accounting.coa; readers use it instead of assuming a code per door.
+    asset_ledger_code: Optional[int] = Field(default=None, foreign_key="ledger_accounts.code")
+    # Optional compact label for navigation; when absent the shell derives one
+    # from the street address rather than matching on the property's id.
+    short_label: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -100,6 +106,10 @@ class FinancialAccount(SQLModel, table=True):
     account_name: str
     account_type: str  # 'CHECKING', 'CREDIT_CARD', 'MORTGAGE'
     account_number_masked: str  # e.g. "...9456"
+    # The ledger account this deposit/card account settles in, allocated on
+    # creation (see domain.accounting.coa). NULL for MORTGAGE accounts, whose
+    # debt, clearing and escrow accounts belong to the LoanAccount instead.
+    ledger_account_code: Optional[int] = Field(default=None, foreign_key="ledger_accounts.code")
     # Whether a credit card is used only for rental costs or shared with personal
     # spending. Only MIXED_USE cards need external review of rental deductions;
     # a dedicated rental card does not. UNCLASSIFIED is the safe default: an
@@ -123,6 +133,13 @@ class LoanAccount(SQLModel, table=True):
     # Legacy field name; stored in thousandths of a percent (2500 = 2.500%).
     current_interest_rate_bps: Optional[int] = None
     is_active: bool = Field(default=True)
+    # The loan's ledger accounts, allocated as a set on creation
+    # (see domain.accounting.coa). Principal carries the debt balance, clearing
+    # carries funds the bank has settled but the servicer has not yet applied, and
+    # escrow carries the servicer-held reserve for taxes and insurance.
+    principal_ledger_code: Optional[int] = Field(default=None, foreign_key="ledger_accounts.code")
+    clearing_ledger_code: Optional[int] = Field(default=None, foreign_key="ledger_accounts.code")
+    escrow_ledger_code: Optional[int] = Field(default=None, foreign_key="ledger_accounts.code")
     created_at: datetime = Field(default_factory=utc_now)
 
 

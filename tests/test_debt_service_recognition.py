@@ -19,6 +19,11 @@ from proptally.db.models import (
     Property,
     Statement,
 )
+from proptally.domain.accounting.coa import (
+    INFLOW_SUSPENSE_CODE,
+    MORTGAGE_INTEREST_CODE,
+    ensure_entity_ledger_accounts,
+)
 from proptally.domain.accounting.ledger import (
     add_journal_line,
     create_journal_entry,
@@ -28,12 +33,16 @@ from proptally.domain.accounting.ledger import (
 from proptally.domain.accounting.metrics import calculate_property_financials
 
 LARKSPUR = "prop_tinsley_huntley"
-CHECKING = 1010
-CLEARING_ROCKET = 2115
-PRINCIPAL_ROCKET = 2110
-INTEREST = 5010
-ESCROW_ROCKET = 1110
-SUSPENSE = 2999  # Unassigned Inflow Suspense, used to credit the unfunded remainder
+# Entity-owned ledger codes. The allocator gives each property, deposit account
+# and loan its own code, so these are bound to the rows ``ds_env`` creates rather
+# than pinned to fixed numbers (see the fixture below).
+CHECKING = None
+CLEARING_ROCKET = None
+PRINCIPAL_ROCKET = None
+ESCROW_ROCKET = None
+# Portfolio-invariant standard accounts.
+INTEREST = MORTGAGE_INTEREST_CODE
+SUSPENSE = INFLOW_SUSPENSE_CODE  # Unassigned Inflow Suspense, credits the unfunded remainder
 
 PRINCIPAL_CENTS = 62000
 INTEREST_CENTS = 66012
@@ -65,6 +74,20 @@ def ds_env_fixture(session: Session):
         id="loan_ds", financial_account_id="acct_ds_loan", property_id=LARKSPUR,
         loan_number="DS-1", original_principal_cents=34000000, term_months=360,
     ))
+    session.flush()
+
+    # The property, deposit account and loan above now exist, so the allocator can
+    # give them their ledger accounts. The module-level codes are rebound to the
+    # rows this fixture just created: they are per-entity and must not be assumed.
+    ensure_entity_ledger_accounts(session)
+    global CHECKING, CLEARING_ROCKET, PRINCIPAL_ROCKET, ESCROW_ROCKET
+    checking_account = session.get(FinancialAccount, "acct_ds_chk")
+    rocket_loan = session.get(LoanAccount, "loan_ds")
+    CHECKING = checking_account.ledger_account_code
+    CLEARING_ROCKET = rocket_loan.clearing_ledger_code
+    PRINCIPAL_ROCKET = rocket_loan.principal_ledger_code
+    ESCROW_ROCKET = rocket_loan.escrow_ledger_code
+
     doc = Document(id="doc_ds", file_sha256="sha_ds", original_filename="f.pdf",
                    storage_path="/p", file_size_bytes=1)
     session.add(doc)

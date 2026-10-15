@@ -18,6 +18,14 @@ from proptally.db.models import (
     JournalEntry,
     JournalEntryLine,
 )
+from proptally.domain.accounting.coa import (
+    MORTGAGE_INTEREST_CODE,
+    PERSONAL_DRAW_CODE,
+    PROPERTY_TAX_CODE,
+    REPAIRS_CODE,
+    SUPPLIES_CODE,
+    ensure_entity_ledger_accounts,
+)
 from proptally.domain.accounting.ledger import (
     create_journal_entry,
     add_journal_line,
@@ -25,6 +33,16 @@ from proptally.domain.accounting.ledger import (
     reverse_journal_entry,
 )
 from proptally.domain.transactions.splits import apply_transaction_splits, SplitItem
+
+# Ledger codes owned by this portfolio's entities. The fixture allocates them
+# from the entity rows themselves (checking, the Visa liability, and the PNC
+# loan's principal, clearing and escrow accounts) and rebinds these names, so the
+# scenarios post to the account an entity owns rather than a pinned number.
+CHECKING = None
+CARD_LIABILITY = None
+PNC_PRINCIPAL = None
+PNC_CLEARING = None
+PNC_ESCROW = None
 
 
 @pytest.fixture(name="portfolio_fixture")
@@ -98,7 +116,18 @@ def portfolio_fixture(session: Session):
         opening_balance_cents=252396,  # $2,523.96
     )
     session.add(escrow_pnc)
-    session.commit()
+    session.flush()
+
+    # Give every declared entity the ledger account it owns and read the codes
+    # straight off the rows: this portfolio's account numbers are its own.
+    ensure_entity_ledger_accounts(session)
+
+    global CHECKING, CARD_LIABILITY, PNC_PRINCIPAL, PNC_CLEARING, PNC_ESCROW
+    CHECKING = acct_chk.ledger_account_code
+    CARD_LIABILITY = acct_visa.ledger_account_code
+    PNC_PRINCIPAL = loan_pnc.principal_ledger_code
+    PNC_CLEARING = loan_pnc.clearing_ledger_code
+    PNC_ESCROW = loan_pnc.escrow_ledger_code
 
     return {
         "prop_alder": prop_alder,
@@ -125,8 +154,8 @@ def test_scenario_1_standard_mortgage_payment_lifecycle(session: Session, portfo
         description="PNC Mortgage ACH draft - checking settlement",
         idempotency_key="SCENARIO_1:BANK_SETTLEMENT",
     )
-    add_journal_line(session, settlement_entry.id, ledger_account_code=2125, debit_cents=180148)  # Debit PNC Clearing
-    add_journal_line(session, settlement_entry.id, ledger_account_code=1010, credit_cents=180148)  # Credit Checking
+    add_journal_line(session, settlement_entry.id, ledger_account_code=PNC_CLEARING, debit_cents=180148)  # Debit PNC Clearing
+    add_journal_line(session, settlement_entry.id, ledger_account_code=CHECKING, credit_cents=180148)  # Credit Checking
     post_journal_entry(session, settlement_entry.id)
 
     # Step 3: Servicer confirms application (Debit Principal, Interest, Escrow; Credit Clearing)
@@ -137,10 +166,10 @@ def test_scenario_1_standard_mortgage_payment_lifecycle(session: Session, portfo
         description="PNC Mortgage confirmed servicer application",
         idempotency_key="SCENARIO_1:SERVICER_APP",
     )
-    add_journal_line(session, app_entry.id, ledger_account_code=2120, debit_cents=52179, property_id="prop_maple")  # Debt reduction
-    add_journal_line(session, app_entry.id, ledger_account_code=5010, debit_cents=43837, property_id="prop_maple")  # Interest
-    add_journal_line(session, app_entry.id, ledger_account_code=1120, debit_cents=84132, property_id="prop_maple")  # Escrow Reserve
-    add_journal_line(session, app_entry.id, ledger_account_code=2125, credit_cents=180148)                             # Clearing offset
+    add_journal_line(session, app_entry.id, ledger_account_code=PNC_PRINCIPAL, debit_cents=52179, property_id="prop_maple")  # Debt reduction
+    add_journal_line(session, app_entry.id, ledger_account_code=MORTGAGE_INTEREST_CODE, debit_cents=43837, property_id="prop_maple")  # Interest
+    add_journal_line(session, app_entry.id, ledger_account_code=PNC_ESCROW, debit_cents=84132, property_id="prop_maple")  # Escrow Reserve
+    add_journal_line(session, app_entry.id, ledger_account_code=PNC_CLEARING, credit_cents=180148)                             # Clearing offset
     post_journal_entry(session, app_entry.id)
 
     # Step 4: Record confirmed Escrow Movement
@@ -159,7 +188,7 @@ def test_scenario_1_standard_mortgage_payment_lifecycle(session: Session, portfo
 
     # Step 5: Verify Clearing balance is exactly $0.00
     clearing_lines = session.exec(
-        select(JournalEntryLine).where(JournalEntryLine.ledger_account_code == 2125)
+        select(JournalEntryLine).where(JournalEntryLine.ledger_account_code == PNC_CLEARING)
     ).all()
     net_clearing = sum(l.debit_cents for l in clearing_lines) - sum(l.credit_cents for l in clearing_lines)
     assert net_clearing == 0  # Perfectly reconciled clearing account!
@@ -176,8 +205,8 @@ def test_scenario_a_mortgage_payment_rejected_no_premature_recognition(session: 
         description="PNC ACH Draft (subsequently reversed)",
         idempotency_key="SCENARIO_A:ACH_DRAFT",
     )
-    add_journal_line(session, entry.id, ledger_account_code=2125, debit_cents=180148)
-    add_journal_line(session, entry.id, ledger_account_code=1010, credit_cents=180148)
+    add_journal_line(session, entry.id, ledger_account_code=PNC_CLEARING, debit_cents=180148)
+    add_journal_line(session, entry.id, ledger_account_code=CHECKING, credit_cents=180148)
     post_journal_entry(session, entry.id)
 
     # Step 2: Bank reverses ACH payment on March 30
@@ -190,15 +219,16 @@ def test_scenario_a_mortgage_payment_rejected_no_premature_recognition(session: 
     assert rev_entry.status == "POSTED"
 
     # Step 3: Verify invariants
-    # 1. Clearing Account 2125 net balance is 0
+    # 1. Clearing Account net balance is 0
     clearing_lines = session.exec(
-        select(JournalEntryLine).where(JournalEntryLine.ledger_account_code == 2125)
+        select(JournalEntryLine).where(JournalEntryLine.ledger_account_code == PNC_CLEARING)
     ).all()
     assert sum(l.debit_cents for l in clearing_lines) == sum(l.credit_cents for l in clearing_lines)
 
-    # 2. Mortgage Debt (2120) and Escrow Asset (1120) have ZERO entries
-    debt_lines = session.exec(select(JournalEntryLine).where(JournalEntryLine.ledger_account_code == 2120)).all()
-    escrow_lines = session.exec(select(JournalEntryLine).where(JournalEntryLine.ledger_account_code == 1120)).all()
+    # 2. Mortgage Debt (the loan's principal account) and Escrow Asset (its escrow
+    # reserve) have ZERO entries
+    debt_lines = session.exec(select(JournalEntryLine).where(JournalEntryLine.ledger_account_code == PNC_PRINCIPAL)).all()
+    escrow_lines = session.exec(select(JournalEntryLine).where(JournalEntryLine.ledger_account_code == PNC_ESCROW)).all()
     assert len(debt_lines) == 0
     assert len(escrow_lines) == 0
 
@@ -214,10 +244,10 @@ def test_scenario_b_credit_card_property_expense_and_settlement(session: Session
         description="Home Depot multi-property purchase",
         idempotency_key="SCENARIO_B:CARD_INCURRED",
     )
-    add_journal_line(session, card_entry.id, ledger_account_code=5040, debit_cents=25000, property_id="prop_alder")   # $250 Alder Repairs
-    add_journal_line(session, card_entry.id, ledger_account_code=5050, debit_cents=15000, property_id="prop_maple")  # $150 Maple Supplies
-    add_journal_line(session, card_entry.id, ledger_account_code=5090, debit_cents=10000)                              # $100 Personal Draw
-    add_journal_line(session, card_entry.id, ledger_account_code=2010, credit_cents=50000)                             # $500 Card Liability
+    add_journal_line(session, card_entry.id, ledger_account_code=REPAIRS_CODE, debit_cents=25000, property_id="prop_alder")   # $250 Alder Repairs
+    add_journal_line(session, card_entry.id, ledger_account_code=SUPPLIES_CODE, debit_cents=15000, property_id="prop_maple")  # $150 Maple Supplies
+    add_journal_line(session, card_entry.id, ledger_account_code=PERSONAL_DRAW_CODE, debit_cents=10000)                        # $100 Personal Draw
+    add_journal_line(session, card_entry.id, ledger_account_code=CARD_LIABILITY, credit_cents=50000)                           # $500 Card Liability
     post_journal_entry(session, card_entry.id)
 
     # Event 2: Checking drafts $500.00 to pay BoA Visa on May 22
@@ -228,18 +258,18 @@ def test_scenario_b_credit_card_property_expense_and_settlement(session: Session
         description="BoA Visa statement payment from checking",
         idempotency_key="SCENARIO_B:CARD_PAYMENT",
     )
-    add_journal_line(session, pay_entry.id, ledger_account_code=2010, debit_cents=50000)   # Extinguish card liability
-    add_journal_line(session, pay_entry.id, ledger_account_code=1010, credit_cents=50000)  # Cash out from checking
+    add_journal_line(session, pay_entry.id, ledger_account_code=CARD_LIABILITY, debit_cents=50000)   # Extinguish card liability
+    add_journal_line(session, pay_entry.id, ledger_account_code=CHECKING, credit_cents=50000)  # Cash out from checking
     post_journal_entry(session, pay_entry.id)
 
     # Invariants Verification:
-    # 1. Card Liability (2010) is net $0.00
-    card_lines = session.exec(select(JournalEntryLine).where(JournalEntryLine.ledger_account_code == 2010)).all()
+    # 1. Card Liability is net $0.00
+    card_lines = session.exec(select(JournalEntryLine).where(JournalEntryLine.ledger_account_code == CARD_LIABILITY)).all()
     assert sum(l.debit_cents for l in card_lines) == sum(l.credit_cents for l in card_lines) == 50000
 
     # 2. Operating expenses were recognized on May 05 and not duplicated on May 22
-    repair_lines = session.exec(select(JournalEntryLine).where(JournalEntryLine.ledger_account_code == 5040)).all()
-    supplies_lines = session.exec(select(JournalEntryLine).where(JournalEntryLine.ledger_account_code == 5050)).all()
+    repair_lines = session.exec(select(JournalEntryLine).where(JournalEntryLine.ledger_account_code == REPAIRS_CODE)).all()
+    supplies_lines = session.exec(select(JournalEntryLine).where(JournalEntryLine.ledger_account_code == SUPPLIES_CODE)).all()
     assert sum(l.debit_cents for l in repair_lines) == 25000
     assert sum(l.debit_cents for l in supplies_lines) == 15000
 
@@ -256,8 +286,8 @@ def test_scenario_4_property_tax_disbursement_from_escrow(session: Session, port
         description="McHenry County 2025 payable 2026 property taxes - installment 1",
         idempotency_key="SCENARIO_4:TAX_DISBURSE",
     )
-    add_journal_line(session, disburse_entry.id, ledger_account_code=5020, debit_cents=428920, property_id="prop_maple")  # Property Tax Expense
-    add_journal_line(session, disburse_entry.id, ledger_account_code=1120, credit_cents=428920)                             # Escrow Reserve credit
+    add_journal_line(session, disburse_entry.id, ledger_account_code=PROPERTY_TAX_CODE, debit_cents=428920, property_id="prop_maple")  # Property Tax Expense
+    add_journal_line(session, disburse_entry.id, ledger_account_code=PNC_ESCROW, credit_cents=428920)                                 # Escrow Reserve credit
     post_journal_entry(session, disburse_entry.id)
 
     # Record Escrow Movement
@@ -273,10 +303,10 @@ def test_scenario_4_property_tax_disbursement_from_escrow(session: Session, port
     session.add(movement)
     session.commit()
 
-    # Checking account (1010) was NOT touched
+    # Checking account was NOT touched
     checking_lines = session.exec(
         select(JournalEntryLine)
         .where(JournalEntryLine.journal_entry_id == disburse_entry.id)
-        .where(JournalEntryLine.ledger_account_code == 1010)
+        .where(JournalEntryLine.ledger_account_code == CHECKING)
     ).all()
     assert len(checking_lines) == 0

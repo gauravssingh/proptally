@@ -24,7 +24,7 @@ from proptally.db.models import (
     TransactionProcessingState,
     utc_now,
 )
-from proptally.domain.accounting.coa import seed_chart_of_accounts
+from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
 from proptally.domain.transactions.policy import evaluate_posting_policy
 from proptally.domain.transactions.splits import (
     SplitItem,
@@ -43,7 +43,7 @@ def run_activation(db_path: str = "storage/client-portfolio.db") -> dict:
     with Session(engine) as session:
         # 1. Seed Chart of Accounts (ensures 5072, 5075, 5078 are present)
         print("1. Seeding Chart of Accounts...")
-        seed_chart_of_accounts(session)
+        ensure_entity_ledger_accounts(session)
 
         # 2. Seed Financial Institutions & Accounts
         print("2. Ensuring financial institutions and accounts...")

@@ -9,12 +9,31 @@ from proptally.db.models import (
     AuditLog,
     FinancialAccount,
     JournalEntry,
+    LoanAccount,
     PostingAuthorization,
     Transaction,
     TransactionProcessingState,
     TransactionSplit,
 )
 from proptally.core.exceptions import InvalidSplitSumError
+from proptally.domain.accounting.coa import (
+    CARD_ACCOUNT_TYPE,
+    COMMISSIONS_CODE,
+    HAZARD_INSURANCE_CODE,
+    HOA_CODE,
+    LEGAL_AND_LATE_FEE_CODE,
+    MANAGEMENT_CODE,
+    MORTGAGE_ACCOUNT_TYPE,
+    PERSONAL_DRAW_CODE,
+    PROPERTY_TAX_CODE,
+    RENTAL_INCOME_CODE,
+    REPAIRS_CODE,
+    SNOW_LANDSCAPING_CODE,
+    SUPPLIES_CODE,
+    BANK_FEES_CODE,
+    FEE_INCOME_CODE,
+    allocate_account_ledger_account,
+)
 from proptally.domain.transactions.policy import (
     PostingPolicy,
     assert_posting_authorized,
@@ -28,31 +47,21 @@ from proptally.domain.accounting.ledger import (
     reverse_journal_entry,
 )
 
-CHECKING_CODE = 1010
-CARD_LIABILITY_CODE = 2010
-
-ACCOUNT_TO_LEDGER_CODE = {
-    "acct_bofa_chk_9456": 1010,
-    "acct_bofa_visa_9306": 2010,
-    "acct_bofa_cc_9306": 2010,
-    "acct_apple_card": 2020,
-    "acct_rocket_mortgage": 2115,
-    "acct_pnc_mortgage": 2125,
-    "acct_ccm_mortgage": 2135,
-}
-
+#: Split category -> operating-expense ledger account. Categories are
+#: portfolio-agnostic and the codes are the fixed standard accounts, so this map
+#: is identical in every portfolio.
 CATEGORY_TO_OPEX_CODE = {
-    "TAXES": 5020,
-    "INSURANCE": 5030,
-    "REPAIRS": 5040,
-    "SUPPLIES": 5050,
-    "SNOW_LANDSCAPING": 5060,
-    "BANK_FEES": 5070,
-    "MANAGEMENT": 5072,
-    "COMMISSIONS": 5075,
-    "HOA": 5078,
-    "LEGAL": 5080,
-    "PERSONAL": 5090,
+    "TAXES": PROPERTY_TAX_CODE,
+    "INSURANCE": HAZARD_INSURANCE_CODE,
+    "REPAIRS": REPAIRS_CODE,
+    "SUPPLIES": SUPPLIES_CODE,
+    "SNOW_LANDSCAPING": SNOW_LANDSCAPING_CODE,
+    "BANK_FEES": BANK_FEES_CODE,
+    "MANAGEMENT": MANAGEMENT_CODE,
+    "COMMISSIONS": COMMISSIONS_CODE,
+    "HOA": HOA_CODE,
+    "LEGAL": LEGAL_AND_LATE_FEE_CODE,
+    "PERSONAL": PERSONAL_DRAW_CODE,
 }
 
 
@@ -198,36 +207,74 @@ def _record_posting_authorization(
     session.flush()
 
 
-def _ledger_code_for_account(account) -> int:
-    """The ledger account a bank/card account settles in.
+def _ledger_code_for_account(session: Session, account) -> int:
+    """The ledger account a bank, card or mortgage account settles in.
 
-    Chart-of-accounts knowledge: mapped accounts keep their assigned code, and
-    unmapped accounts fall back to the code for their account type.
+    The code lives on the account row (``FinancialAccount.ledger_account_code``),
+    or on its loan for a mortgage account, which has no ledger account of its own.
+    A row created before per-entity allocation existed is coded on demand rather
+    than guessed, so two accounts can never share one ledger account by accident.
     """
     if account is None:
-        return CHECKING_CODE
-    code = ACCOUNT_TO_LEDGER_CODE.get(account.id)
-    if code:
-        return code
-    if getattr(account, "account_type", None) == "CREDIT_CARD":
-        return CARD_LIABILITY_CODE
-    return CHECKING_CODE
+        raise ValueError("Cannot resolve a ledger account for a missing financial account.")
+
+    if getattr(account, "account_type", None) == MORTGAGE_ACCOUNT_TYPE:
+        loan = session.exec(
+            select(LoanAccount).where(LoanAccount.financial_account_id == account.id)
+        ).first()
+        if loan is None or loan.clearing_ledger_code is None:
+            raise ValueError(
+                f"Mortgage account {account.id} has no loan, so it has no ledger accounts. "
+                "Create the loan (LoanAccount) before posting against its settlement account."
+            )
+        return loan.clearing_ledger_code
+
+    if account.ledger_account_code is not None:
+        return account.ledger_account_code
+
+    code = allocate_account_ledger_account(session, account)
+    if code is None:
+        raise ValueError(
+            f"Account {account.id} of type {account.account_type!r} has no ledger allocation "
+            "class, so no ledger account can be resolved for it."
+        )
+    return code
 
 
-def _resolve_split_account_code(category: str, property_id: Optional[str]) -> int:
-    """Maps split category and property to double-entry ledger account code."""
+def _resolve_split_account_code(session: Session, category: str, property_id: Optional[str]) -> int:
+    """Maps a split's category (and door, for mortgage payments) to a ledger account.
+
+    Rental income is a single generic account for every door: which property earned
+    it is recorded by the journal line's ``property_id`` attribution, not by giving
+    each door its own income code.
+    """
     cat_upper = category.upper()
     if cat_upper in ("RENT_INCOME", "RENT"):
-        if property_id == "prop_cimmaron_pingree":
-            return 4020
-        return 4010
+        return RENTAL_INCOME_CODE
     if cat_upper in ("LATE_FEE", "FEE"):
-        return 4015
+        return FEE_INCOME_CODE
     if cat_upper in CATEGORY_TO_OPEX_CODE:
         return CATEGORY_TO_OPEX_CODE[cat_upper]
     if cat_upper == "MORTGAGE":
-        return 2125
-    return 5090  # Default to personal draw for unmapped
+        return _mortgage_clearing_code(session, property_id)
+    return PERSONAL_DRAW_CODE  # Default to personal draw for unmapped
+
+
+def _mortgage_clearing_code(session: Session, property_id: Optional[str]) -> int:
+    """The clearing account of the door's active loan, for a mortgage allocation."""
+    if property_id:
+        loan = session.exec(
+            select(LoanAccount).where(
+                LoanAccount.property_id == property_id,
+                LoanAccount.is_active == True,  # noqa: E712
+            )
+        ).first()
+        if loan is not None and loan.clearing_ledger_code is not None:
+            return loan.clearing_ledger_code
+    raise ValueError(
+        "A MORTGAGE allocation needs the door's active loan to resolve its clearing "
+        f"account, and property {property_id!r} has none. Create the loan first."
+    )
 
 
 def check_governance_authorization(
@@ -315,7 +362,7 @@ def post_transaction_to_ledger(
     counter_acct = (
         session.get(FinancialAccount, txn.counter_account_id) if txn.counter_account_id else None
     )
-    balancing_code = _ledger_code_for_account(fin_acct)
+    balancing_code = _ledger_code_for_account(session, fin_acct)
 
     total_amount = abs(txn.amount_cents)
     is_settlement = is_card_settlement(
@@ -359,7 +406,7 @@ def post_transaction_to_ledger(
         # Transfer: reduce the card liability and pay it from the deposit account.
         # The purchase already recognised the expense, and the allocation carried
         # on the splits is reporting attribution only, so nothing is expensed here.
-        card_code = _ledger_code_for_account(counter_acct)
+        card_code = _ledger_code_for_account(session, counter_acct)
         add_journal_line(
             session,
             je.id,
@@ -378,7 +425,7 @@ def post_transaction_to_ledger(
         # Debit cash/checking, credit revenue/splits
         add_journal_line(session, je.id, ledger_account_code=balancing_code, debit_cents=total_amount)
         for s in splits:
-            code = _resolve_split_account_code(s.category, s.property_id)
+            code = _resolve_split_account_code(session, s.category, s.property_id)
             add_journal_line(
                 session,
                 je.id,
@@ -390,7 +437,7 @@ def post_transaction_to_ledger(
     else:
         # Debit expenses/splits, credit cash/card liability
         for s in splits:
-            code = _resolve_split_account_code(s.category, s.property_id)
+            code = _resolve_split_account_code(session, s.category, s.property_id)
             add_journal_line(
                 session,
                 je.id,

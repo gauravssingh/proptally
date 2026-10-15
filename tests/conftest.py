@@ -5,7 +5,7 @@ from sqlalchemy import create_engine, event
 from sqlmodel import Session, SQLModel
 from proptally.db.connection import configure_sqlite_connection
 from proptally.db.schema import init_schema
-from proptally.domain.accounting.coa import seed_chart_of_accounts
+from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
 
 
 @pytest.fixture(name="engine")
@@ -21,5 +21,5 @@ def engine_fixture():
 def session_fixture(engine):
     """Provides a transactional database session seeded with standard Chart of Accounts."""
     with Session(engine) as session:
-        seed_chart_of_accounts(session)
+        ensure_entity_ledger_accounts(session)
         yield session

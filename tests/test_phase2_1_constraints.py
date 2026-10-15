@@ -18,7 +18,9 @@ from proptally.db.connection import get_engine
 from proptally.db.schema import SQL_TRIGGERS, _tables_missing_constraints, init_schema
 
 LEDGER_ACCOUNTS = (
-    "INSERT INTO ledger_accounts (code, name, account_type, normal_balance) "
+    # OR IGNORE: the standard seed already creates 5040 (and the rest of the fixed
+    # chart), so probing at the DDL level must not assume these codes are free.
+    "INSERT OR IGNORE INTO ledger_accounts (code, name, account_type, normal_balance) "
     "VALUES (1010, 'Checking', 'ASSET', 'DEBIT'), (5040, 'Repairs', 'EXPENSE', 'DEBIT')"
 )
 

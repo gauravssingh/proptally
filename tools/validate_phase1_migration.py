@@ -25,11 +25,11 @@ with the Phase 1 commit in a worktree:
 from proptally.db.connection import get_engine
 from proptally.db.schema import init_schema
 from sqlmodel import Session
-from proptally.domain.accounting.coa import seed_chart_of_accounts
+from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
 from proptally.domain.fixtures.demo_seed import seed_demo_data
 e = get_engine(); init_schema(e)
 with Session(e) as s:
-    seed_chart_of_accounts(s); seed_demo_data(s)"
+    ensure_entity_ledger_accounts(s); seed_demo_data(s)"
 """
 
 import argparse

@@ -16,7 +16,7 @@ from proptally.db.models import (
     TransactionProcessingState,
 )
 from proptally.db.schema import init_schema
-from proptally.domain.accounting.coa import STANDARD_ACCOUNTS, seed_chart_of_accounts
+from proptally.domain.accounting.coa import STANDARD_ACCOUNTS, ensure_entity_ledger_accounts
 from proptally.domain.tax.schedule_e import generate_schedule_e_workpaper
 from proptally.domain.transactions.splits import (
     CATEGORY_TO_OPEX_CODE,
@@ -71,7 +71,7 @@ def test_schedule_e_realtor_fees_and_single_property_repair(tmp_path):
     init_schema(engine)
 
     with Session(engine) as session:
-        seed_chart_of_accounts(session)
+        ensure_entity_ledger_accounts(session)
 
         # Rental property: Alder
         larkspur = Property(

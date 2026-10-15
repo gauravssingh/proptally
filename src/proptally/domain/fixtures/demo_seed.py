@@ -21,16 +21,91 @@ from proptally.db.models import (
     Transaction,
     TransactionProcessingState,
 )
-from proptally.domain.accounting.coa import seed_chart_of_accounts
+from proptally.domain.accounting.coa import (
+    MORTGAGE_INTEREST_CODE,
+    PERSONAL_DRAW_CODE,
+    RENTAL_INCOME_CODE,
+    REPAIRS_CODE,
+    SUPPLIES_CODE,
+    ensure_entity_ledger_accounts,
+)
 from proptally.domain.accounting.opening_balances import record_opening_balances, OpeningAccountBalance
 from proptally.domain.accounting.ledger import create_journal_entry, add_journal_line, post_journal_entry
 from proptally.domain.transactions.splits import apply_transaction_splits, SplitItem
+from proptally.domain.transactions.suggest import seed_vendor_rules
+
+
+#: Vendor rules that belong to THIS portfolio rather than to the platform: they
+#: name one owner's tenant, and attribute a municipal utility or county tax bill to
+#: one specific door. A new portfolio is seeded with the generic merchant rules only
+#: (``suggest.DEFAULT_VENDOR_RULES``); these live with the rest of the demo fixture,
+#: and a real owner configures their equivalents through the vendor-rule editor.
+DEMO_VENDOR_RULES = [
+    {
+        "id": "vrule_tenant_saxsma",
+        "pattern": "SAXSMA",
+        "vendor_name": "Tyler Saxsma (Tenant)",
+        "service_type": "Residential Tenant Rent Payment -> 12307 Larkspur St",
+        "default_category": "RENT_INCOME",
+        "default_property_id": "prop_tinsley_huntley",
+        "confidence": 0.99,
+        "requires_client_confirmation": False,
+        "requires_cpa_review": False,
+    },
+    {
+        "id": "vrule_carpentersville_atm",
+        "pattern": "DEPOSIT CARPENTERSVILLE",
+        "vendor_name": "Bank of America Millbrook ATM",
+        "service_type": "Branch ATM Deposit (CBD-1 Candidate for 582 Foxglove Ct)",
+        "default_category": "RENT_INCOME",
+        "default_property_id": "prop_cimmaron_pingree",
+        "confidence": 0.75,
+        "requires_client_confirmation": True,
+        "requires_cpa_review": False,
+    },
+    {
+        "id": "vrule_fairview_util",
+        "pattern": "FAIRVIEW*UTILITY",
+        "vendor_name": "Village of Westbrook Municipal Utility",
+        "service_type": "Municipal Water & Sewer Utility -> 12307 Larkspur St",
+        "default_category": "UTILITIES",
+        "default_property_id": "prop_tinsley_huntley",
+        "confidence": 0.95,
+        "requires_client_confirmation": False,
+        "requires_cpa_review": False,
+    },
+    {
+        "id": "vrule_riverton_util",
+        "pattern": "VILLAGE OF RIVERTON",
+        "vendor_name": "Village of Cedar Grove Water & Sewer",
+        "service_type": "Municipal Water & Sewer Utility (Primary Residence)",
+        "default_category": "PERSONAL",
+        "default_property_id": "prop_burkey_algonquin",
+        "confidence": 0.95,
+        "requires_client_confirmation": False,
+        "requires_cpa_review": False,
+    },
+    {
+        "id": "vrule_mchenry_tax",
+        "pattern": "MC HENRY COUN",
+        "vendor_name": "McHenry County Treasurer",
+        "service_type": "County Real Estate Property Taxes (Schedule E Line 16)",
+        "default_category": "TAXES",
+        "default_property_id": "prop_tinsley_huntley",
+        "confidence": 0.95,
+        "requires_client_confirmation": False,
+        "requires_cpa_review": False,
+    },
+]
 
 
 def seed_demo_data(session: Session) -> None:
     """Populates complete synthetic demo environment."""
-    # 1. Seed Chart of Accounts
-    seed_chart_of_accounts(session)
+    # 1. Seed the fixed standard Chart of Accounts and this portfolio's own
+    #    vendor rules (the generic merchant rules are seeded separately, by the
+    #    schema migration that creates the table).
+    ensure_entity_ledger_accounts(session)
+    seed_vendor_rules(session, DEMO_VENDOR_RULES)
 
     # Check if already seeded
     existing_prop = session.get(Property, "prop_tinsley_huntley")
@@ -257,24 +332,30 @@ def seed_demo_data(session: Session) -> None:
     session.add(escrow_pnc)
     session.flush()
 
-    # 5. Opening Balance Baseline (Jan 01, 2026)
+    # 5. Per-entity ledger accounts.
+    # Each property, deposit account, card and loan owns its own ledger account;
+    # the codes are allocated here, before any journal line references them, so the
+    # seeder never needs to know a portfolio's account numbers.
+    ensure_entity_ledger_accounts(session)
+
+    # 6. Opening Balance Baseline (Jan 01, 2026)
     opening_balances = [
         # Checking Cash
-        OpeningAccountBalance(account_code=1010, amount_cents=1850000, side="DEBIT", description="BoA Checking Jan 1 balance"),
+        OpeningAccountBalance(account_code=chk_bofa.ledger_account_code, amount_cents=1850000, side="DEBIT", description="BoA Checking Jan 1 balance"),
         # Escrow Reserves
-        OpeningAccountBalance(account_code=1110, amount_cents=284000, side="DEBIT", description="Rocket Escrow opening"),
-        OpeningAccountBalance(account_code=1120, amount_cents=252396, side="DEBIT", description="PNC Escrow opening"),
+        OpeningAccountBalance(account_code=loan_rocket.escrow_ledger_code, amount_cents=284000, side="DEBIT", description="Rocket Escrow opening"),
+        OpeningAccountBalance(account_code=loan_pnc.escrow_ledger_code, amount_cents=252396, side="DEBIT", description="PNC Escrow opening"),
         # Properties
-        OpeningAccountBalance(account_code=1510, amount_cents=42500000, side="DEBIT", description="Alder Cost Basis"),
-        OpeningAccountBalance(account_code=1520, amount_cents=36000000, side="DEBIT", description="Maple Cost Basis"),
-        OpeningAccountBalance(account_code=1530, amount_cents=65000000, side="DEBIT", description="Rowan Cost Basis"),
+        OpeningAccountBalance(account_code=larkspur.asset_ledger_code, amount_cents=42500000, side="DEBIT", description="Alder Cost Basis"),
+        OpeningAccountBalance(account_code=foxglove.asset_ledger_code, amount_cents=36000000, side="DEBIT", description="Maple Cost Basis"),
+        OpeningAccountBalance(account_code=elderberry.asset_ledger_code, amount_cents=65000000, side="DEBIT", description="Rowan Cost Basis"),
         # Mortgage Liabilities
-        OpeningAccountBalance(account_code=2110, amount_cents=31045000, side="CREDIT", description="Rocket principal balance"),
-        OpeningAccountBalance(account_code=2120, amount_cents=23892000, side="CREDIT", description="PNC principal balance"),
-        OpeningAccountBalance(account_code=2130, amount_cents=48000000, side="CREDIT", description="CrossCountry principal balance"),
+        OpeningAccountBalance(account_code=loan_rocket.principal_ledger_code, amount_cents=31045000, side="CREDIT", description="Rocket principal balance"),
+        OpeningAccountBalance(account_code=loan_pnc.principal_ledger_code, amount_cents=23892000, side="CREDIT", description="PNC principal balance"),
+        OpeningAccountBalance(account_code=loan_ccm.principal_ledger_code, amount_cents=48000000, side="CREDIT", description="CrossCountry principal balance"),
         # Cards
-        OpeningAccountBalance(account_code=2010, amount_cents=124000, side="CREDIT", description="BoA Visa opening balance"),
-        OpeningAccountBalance(account_code=2020, amount_cents=86000, side="CREDIT", description="Apple Card opening balance"),
+        OpeningAccountBalance(account_code=visa_bofa.ledger_account_code, amount_cents=124000, side="CREDIT", description="BoA Visa opening balance"),
+        OpeningAccountBalance(account_code=apple_card.ledger_account_code, amount_cents=86000, side="CREDIT", description="Apple Card opening balance"),
     ]
     record_opening_balances(
         session=session,
@@ -328,8 +409,8 @@ def seed_demo_data(session: Session) -> None:
         session, date(2026, 3, 1), "EXPENSE_POST", "Rent received: 12307 Larkspur St",
         "TXN:RENT:LARKSPUR:202603", source_transaction_id=txn_rent.id,
     )
-    add_journal_line(session, rent_je.id, 1010, debit_cents=260000)
-    add_journal_line(session, rent_je.id, 4010, credit_cents=260000, property_id=larkspur.id)
+    add_journal_line(session, rent_je.id, chk_bofa.ledger_account_code, debit_cents=260000)
+    add_journal_line(session, rent_je.id, RENTAL_INCOME_CODE, credit_cents=260000, property_id=larkspur.id)
     post_journal_entry(session, rent_je.id)
 
     # Txn 2: BofA Checking PNC Mortgage ACH Payment (-$1,801.48)
@@ -353,17 +434,17 @@ def seed_demo_data(session: Session) -> None:
         session, date(2026, 3, 28), "CASH_SETTLEMENT", "PNC Mortgage Bank ACH draft",
         "TXN:PNC:CASH:20260328", source_transaction_id=txn_pnc.id,
     )
-    add_journal_line(session, je_pnc_cash.id, 2125, debit_cents=180148)
-    add_journal_line(session, je_pnc_cash.id, 1010, credit_cents=180148)
+    add_journal_line(session, je_pnc_cash.id, loan_pnc.clearing_ledger_code, debit_cents=180148)
+    add_journal_line(session, je_pnc_cash.id, chk_bofa.ledger_account_code, credit_cents=180148)
     post_journal_entry(session, je_pnc_cash.id)
 
     je_pnc_app = create_journal_entry(
         session, date(2026, 3, 28), "CASH_SETTLEMENT", "PNC Servicer confirmed application", "TXN:PNC:APP:20260328"
     )
-    add_journal_line(session, je_pnc_app.id, 2120, debit_cents=52179, property_id=foxglove.id)
-    add_journal_line(session, je_pnc_app.id, 5010, debit_cents=43837, property_id=foxglove.id)
-    add_journal_line(session, je_pnc_app.id, 1120, debit_cents=84132, property_id=foxglove.id)
-    add_journal_line(session, je_pnc_app.id, 2125, credit_cents=180148)
+    add_journal_line(session, je_pnc_app.id, loan_pnc.principal_ledger_code, debit_cents=52179, property_id=foxglove.id)
+    add_journal_line(session, je_pnc_app.id, MORTGAGE_INTEREST_CODE, debit_cents=43837, property_id=foxglove.id)
+    add_journal_line(session, je_pnc_app.id, loan_pnc.escrow_ledger_code, debit_cents=84132, property_id=foxglove.id)
+    add_journal_line(session, je_pnc_app.id, loan_pnc.clearing_ledger_code, credit_cents=180148)
     post_journal_entry(session, je_pnc_app.id)
 
     # Escrow Movement for PNC
@@ -398,17 +479,17 @@ def seed_demo_data(session: Session) -> None:
         session, date(2026, 3, 25), "CASH_SETTLEMENT", "Rocket Mortgage Bank ACH draft",
         "TXN:ROCKET:CASH:20260325", source_transaction_id=txn_rocket.id,
     )
-    add_journal_line(session, je_rock_cash.id, 2115, debit_cents=161812)
-    add_journal_line(session, je_rock_cash.id, 1010, credit_cents=161812)
+    add_journal_line(session, je_rock_cash.id, loan_rocket.clearing_ledger_code, debit_cents=161812)
+    add_journal_line(session, je_rock_cash.id, chk_bofa.ledger_account_code, credit_cents=161812)
     post_journal_entry(session, je_rock_cash.id)
 
     je_rock_app = create_journal_entry(
         session, date(2026, 3, 25), "CASH_SETTLEMENT", "Rocket Servicer confirmed application", "TXN:ROCKET:APP:20260325"
     )
-    add_journal_line(session, je_rock_app.id, 2110, debit_cents=62000, property_id=larkspur.id)
-    add_journal_line(session, je_rock_app.id, 5010, debit_cents=66012, property_id=larkspur.id)
-    add_journal_line(session, je_rock_app.id, 1110, debit_cents=33800, property_id=larkspur.id)
-    add_journal_line(session, je_rock_app.id, 2115, credit_cents=161812)
+    add_journal_line(session, je_rock_app.id, loan_rocket.principal_ledger_code, debit_cents=62000, property_id=larkspur.id)
+    add_journal_line(session, je_rock_app.id, MORTGAGE_INTEREST_CODE, debit_cents=66012, property_id=larkspur.id)
+    add_journal_line(session, je_rock_app.id, loan_rocket.escrow_ledger_code, debit_cents=33800, property_id=larkspur.id)
+    add_journal_line(session, je_rock_app.id, loan_rocket.clearing_ledger_code, credit_cents=161812)
     post_journal_entry(session, je_rock_app.id)
 
     mov_rocket = EscrowMovement(
@@ -444,10 +525,10 @@ def seed_demo_data(session: Session) -> None:
         session, date(2026, 3, 12), "EXPENSE_POST", "Home Depot split purchase",
         "TXN:HD:SPLIT:20260312", source_transaction_id=txn_hd.id,
     )
-    add_journal_line(session, je_hd.id, 5040, debit_cents=25000, property_id=larkspur.id)
-    add_journal_line(session, je_hd.id, 5050, debit_cents=15000, property_id=foxglove.id)
-    add_journal_line(session, je_hd.id, 5090, debit_cents=10000)
-    add_journal_line(session, je_hd.id, 2010, credit_cents=50000)
+    add_journal_line(session, je_hd.id, REPAIRS_CODE, debit_cents=25000, property_id=larkspur.id)
+    add_journal_line(session, je_hd.id, SUPPLIES_CODE, debit_cents=15000, property_id=foxglove.id)
+    add_journal_line(session, je_hd.id, PERSONAL_DRAW_CODE, debit_cents=10000)
+    add_journal_line(session, je_hd.id, visa_bofa.ledger_account_code, credit_cents=50000)
     post_journal_entry(session, je_hd.id)
 
     # Txn 5: Menards Purchase (-$220.00) PARTIALLY ALLOCATED ($140 allocated, $80 residual)

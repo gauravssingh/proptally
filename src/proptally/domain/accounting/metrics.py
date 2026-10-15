@@ -31,11 +31,13 @@ Accounting invariants:
 """
 
 from datetime import date
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from sqlmodel import Session, select
 
 from proptally.db.models import (
+    FinancialAccount,
     JournalEntry,
     JournalEntryLine,
     LoanAccount,
@@ -44,22 +46,123 @@ from proptally.db.models import (
     PropertyValuation,
     TransactionSplit,
 )
+from proptally.domain.accounting.coa import (
+    CARD_ACCOUNT_TYPE,
+    FEE_REVENUE_CODES,
+    MORTGAGE_INTEREST_CODE,
+    MORTGAGE_LATE_FEE_CODE,
+    OPEX_CODES,
+    PERSONAL_DRAW_CODE,
+    RENTAL_REVENUE_CODES,
+)
 
 RENTAL_INVESTMENT = "RENTAL_INVESTMENT"
 PRIMARY_RESIDENCE = "PRIMARY_RESIDENCE"
 
-# Chart of accounts (see domain/accounting/coa.py).
-CHECKING_CODES = (1010, 1020)
-ESCROW_CODES = (1110, 1120, 1130)
-CARD_LIABILITY_CODES = (2010, 2020)
-MORTGAGE_DEBT_CODES = (2110, 2120, 2130)
-MORTGAGE_CLEARING_CODES = (2115, 2125, 2135)
-RENTAL_REVENUE_CODES = (4010, 4020)
-FEE_REVENUE_CODES = (4015,)
-MORTGAGE_INTEREST_CODE = 5010
-MORTGAGE_LATE_FEE_CODE = 5080  # lender fee; part of a mortgage payment, not of debt service
-PERSONAL_DRAW_CODE = 5090
-OPEX_CODES = (5020, 5030, 5040, 5050, 5060, 5070, 5072, 5075, 5078, 5080)
+#: Account types whose ledger accounts hold cash the portfolio can spend.
+DEPOSIT_ACCOUNT_TYPES = ("CHECKING", "SAVINGS")
+
+
+@dataclass(frozen=True)
+class LedgerCodeMap:
+    """The ledger accounts of one portfolio, read from its own entity rows.
+
+    Every metric resolves its account codes through this map instead of naming a
+    portfolio's account numbers, which is what makes the same mathematics apply to
+    any portfolio. The fixed standard accounts (rental and fee income, operating
+    expense, personal draws, mortgage interest and late fees) are portfolio-invariant
+    and come from ``domain.accounting.coa``; only the entity-owned accounts vary.
+    """
+
+    deposit: frozenset
+    escrow: frozenset
+    card: frozenset
+    mortgage_principal: frozenset
+    mortgage_clearing: frozenset
+    mortgage_interest: frozenset
+    mortgage_late_fee: frozenset
+    opex: frozenset
+    rental_revenue: frozenset
+    fee_revenue: frozenset
+    personal_draw: frozenset
+
+    @property
+    def mortgage_payment(self) -> frozenset:
+        """Accounts belonging to a mortgage payment or its servicing application.
+
+        Used to reject entries that mix a mortgage posting with unrelated activity:
+        an unrelated outflow in the same entry must not stand in for a payment.
+        """
+        return (
+            self.mortgage_principal
+            | self.mortgage_clearing
+            | self.escrow
+            | self.mortgage_interest
+            | self.mortgage_late_fee
+        )
+
+
+def load_ledger_code_map(session: Session) -> LedgerCodeMap:
+    """Reads the portfolio's ledger account codes from its financial entities.
+
+    An entity with no allocated code contributes nothing: a portfolio that has not
+    declared an account cannot have its activity attributed to one, and silently
+    assuming a code would attribute it to some other account.
+    """
+    deposit = frozenset(
+        row
+        for row in session.exec(
+            select(FinancialAccount.ledger_account_code)
+            .where(FinancialAccount.account_type.in_(DEPOSIT_ACCOUNT_TYPES))
+            .where(FinancialAccount.ledger_account_code.is_not(None))
+        ).all()
+        if row is not None
+    )
+    card = frozenset(
+        row
+        for row in session.exec(
+            select(FinancialAccount.ledger_account_code)
+            .where(FinancialAccount.account_type == CARD_ACCOUNT_TYPE)
+            .where(FinancialAccount.ledger_account_code.is_not(None))
+        ).all()
+        if row is not None
+    )
+    escrow = frozenset(
+        row
+        for row in session.exec(
+            select(LoanAccount.escrow_ledger_code).where(LoanAccount.escrow_ledger_code.is_not(None))
+        ).all()
+        if row is not None
+    )
+    principal = frozenset(
+        row
+        for row in session.exec(
+            select(LoanAccount.principal_ledger_code).where(LoanAccount.principal_ledger_code.is_not(None))
+        ).all()
+        if row is not None
+    )
+    clearing = frozenset(
+        row
+        for row in session.exec(
+            select(LoanAccount.clearing_ledger_code).where(LoanAccount.clearing_ledger_code.is_not(None))
+        ).all()
+        if row is not None
+    )
+
+    return LedgerCodeMap(
+        deposit=deposit,
+        escrow=escrow,
+        card=card,
+        mortgage_principal=principal,
+        mortgage_clearing=clearing,
+        mortgage_interest=frozenset({MORTGAGE_INTEREST_CODE}),
+        mortgage_late_fee=frozenset({MORTGAGE_LATE_FEE_CODE}),
+        opex=frozenset(OPEX_CODES),
+        rental_revenue=frozenset(RENTAL_REVENUE_CODES),
+        fee_revenue=frozenset(FEE_REVENUE_CODES),
+        personal_draw=frozenset({PERSONAL_DRAW_CODE}),
+    )
+
 
 # Split categories that represent a rental *operating expense* when a card
 # payment settles them. Property attribution alone does not make an allocation an
@@ -76,14 +179,6 @@ CARD_SETTLED_OPEX_CATEGORIES = frozenset({
     "HOA",
     "LEGAL",
 })
-
-# Principal ledger account per loan, for debt that predates line-level attribution
-# (opening balances carry no property tag).
-LOAN_PRINCIPAL_CODE = {
-    "loan_rocket_1000000001": 2110,
-    "loan_pnc_1000000002": 2120,
-    "loan_ccm_1000000003": 2130,
-}
 
 # Evidence backing a reported principal balance.
 SOURCE_SERVICER = "SERVICER_REPORTED"
@@ -156,21 +251,7 @@ def _reversed_entry_ids(session: Session) -> set:
     return {row for row in rows if row}
 
 
-def _mortgage_payment_codes() -> frozenset:
-    """Ledger accounts that belong to a mortgage payment or its servicing application.
-
-    Used to reject entries that mix a mortgage posting with unrelated activity: an
-    unrelated checking outflow in the same entry must not stand in for a payment.
-    """
-    return frozenset(
-        set(MORTGAGE_DEBT_CODES)
-        | {MORTGAGE_INTEREST_CODE, MORTGAGE_LATE_FEE_CODE}
-        | set(ESCROW_CODES)
-        | set(MORTGAGE_CLEARING_CODES)
-    )
-
-
-def _validated_clearing_funding(lines) -> dict | None:
+def _validated_clearing_funding(lines, code_map: LedgerCodeMap) -> dict | None:
     """Funding released by a standalone bank-to-clearing settlement.
 
     Strict allowlist rather than a broad exclusion list: the entry may contain
@@ -188,11 +269,11 @@ def _validated_clearing_funding(lines) -> dict | None:
     bank_credited_cents = 0
     for line in lines:
         code = line.ledger_account_code
-        if code in MORTGAGE_CLEARING_CODES:
+        if code in code_map.mortgage_clearing:
             if line.credit_cents:
                 return None  # clearing credited: an application, not funding
             funding[code] = funding.get(code, 0) + line.debit_cents
-        elif code in CHECKING_CODES:
+        elif code in code_map.deposit:
             if line.debit_cents:
                 return None  # the bank account must be the payer
             bank_credited_cents += line.credit_cents
@@ -247,9 +328,10 @@ def _confirmed_debt_service_entry_ids(session: Session) -> set:
     if not entries:
         return set()
 
-    mortgage_codes = _mortgage_payment_codes()
+    code_map = load_ledger_code_map(session)
+    mortgage_codes = code_map.mortgage_payment
     reversed_ids = _reversed_entry_ids(session)
-    funded: dict[int, int] = {code: 0 for code in MORTGAGE_CLEARING_CODES}
+    funded: dict[int, int] = {code: 0 for code in code_map.mortgage_clearing}
     confirmed = set()
 
     for entry in sorted(entries, key=lambda e: (e.entry_date, e.created_at)):
@@ -259,16 +341,16 @@ def _confirmed_debt_service_entry_ids(session: Session) -> set:
         if not lines:
             continue
 
-        applied_cents = _net(lines, MORTGAGE_DEBT_CODES) + _net(lines, (MORTGAGE_INTEREST_CODE,))
+        applied_cents = _net(lines, code_map.mortgage_principal) + _net(lines, code_map.mortgage_interest)
         # Escrow is measured GROSS and never netted. A credit to escrow is a
         # refund, release or adjustment, not funding, so it must not reduce the
         # amount of principal and interest that has to be covered — netting was
         # what let a credit manufacture evidence that principal was paid.
         escrow_contribution_cents = sum(
-            l.debit_cents for l in lines if l.ledger_account_code in ESCROW_CODES
+            l.debit_cents for l in lines if l.ledger_account_code in code_map.escrow
         )
         escrow_credit_cents = sum(
-            l.credit_cents for l in lines if l.ledger_account_code in ESCROW_CODES
+            l.credit_cents for l in lines if l.ledger_account_code in code_map.escrow
         )
         # A payment entry that also releases escrow cannot be related to the
         # payment with confidence. Fail closed rather than infer that the credit
@@ -276,7 +358,7 @@ def _confirmed_debt_service_entry_ids(session: Session) -> set:
         # of this payment.
         coherent_payment = escrow_credit_cents == 0
         payment_cents = applied_cents + escrow_contribution_cents
-        cash_out_cents = -_net(lines, CHECKING_CODES)
+        cash_out_cents = -_net(lines, code_map.deposit)
         unrelated_debits = sum(
             l.debit_cents for l in lines if l.ledger_account_code not in mortgage_codes
         )
@@ -297,14 +379,14 @@ def _confirmed_debt_service_entry_ids(session: Session) -> set:
         # settlement. An entry that also applies principal or interest, touches
         # escrow, or involves any other account is ambiguous and fails closed, so
         # it cannot create funding a later application could consume.
-        funding_by_code = _validated_clearing_funding(lines)
+        funding_by_code = _validated_clearing_funding(lines, code_map)
         if funding_by_code is not None:
             for code, amount_cents in funding_by_code.items():
                 funded[code] += amount_cents
             continue
 
         # Two-stage: apply from a clearing account funded by such a settlement.
-        for code in MORTGAGE_CLEARING_CODES:
+        for code in code_map.mortgage_clearing:
             clearing_net = _net(lines, (code,))
             if clearing_net < 0:
                 credited_cents = -clearing_net
@@ -359,6 +441,7 @@ def calculate_property_financials(
     """
     start_date, end_date = _resolve_period(year, start_date, end_date)
     in_scope, scope_property_type = _rental_scope(session, property_id)
+    code_map = load_ledger_code_map(session)
 
     result = _empty_financials_dict()
     result["scope_property_type"] = scope_property_type
@@ -381,19 +464,19 @@ def calculate_property_financials(
             continue
         included_dates.append(entry.entry_date)
 
-        checking_net = _net(entry_lines, CHECKING_CODES)
+        checking_net = _net(entry_lines, code_map.deposit)
         scoped = [l for l in entry_lines if l.property_id in in_scope]
         untagged = [l for l in entry_lines if l.property_id is None]
 
         revenue_net = sum(
             l.credit_cents - l.debit_cents
             for l in scoped
-            if l.ledger_account_code in RENTAL_REVENUE_CODES
+            if l.ledger_account_code in code_map.rental_revenue
         )
         fee_net = sum(
             l.credit_cents - l.debit_cents
             for l in scoped
-            if l.ledger_account_code in FEE_REVENUE_CODES
+            if l.ledger_account_code in code_map.fee_revenue
         )
 
         result["gross_rental_income_cents"] += revenue_net
@@ -424,11 +507,11 @@ def calculate_property_financials(
                 result["snow_landscaping_cents"] += net
             elif code in (5070, 5080):
                 result["other_operating_expense_cents"] += net
-            elif code == PERSONAL_DRAW_CODE:
+            elif code in code_map.personal_draw:
                 result["personal_draws_cents"] += net
 
         opex_net = sum(
-            l.debit_cents - l.credit_cents for l in scoped if l.ledger_account_code in OPEX_CODES
+            l.debit_cents - l.credit_cents for l in scoped if l.ledger_account_code in code_map.opex
         )
         # Direct checking OpEx: the same entry pays it from checking.
         if opex_net != 0 and checking_net != 0 and (checking_net < 0) == (opex_net > 0):
@@ -437,10 +520,10 @@ def calculate_property_financials(
         # Debt service counts only when an actual payment supports the
         # application; a bill, an unfunded application or a clearing-only posting
         # must not reduce CADS.
-        applied_cents = _net(scoped, MORTGAGE_DEBT_CODES) + _net(scoped, (MORTGAGE_INTEREST_CODE,))
+        applied_cents = _net(scoped, code_map.mortgage_principal) + _net(scoped, code_map.mortgage_interest)
         if entry.id in debt_service_entry_ids:
-            result["principal_paid_cents"] += _net(scoped, MORTGAGE_DEBT_CODES)
-            result["mortgage_interest_cents"] += _net(scoped, (MORTGAGE_INTEREST_CODE,))
+            result["principal_paid_cents"] += _net(scoped, code_map.mortgage_principal)
+            result["mortgage_interest_cents"] += _net(scoped, code_map.mortgage_interest)
         elif (
             applied_cents > 0
             and entry.id not in reversed_ids
@@ -451,21 +534,21 @@ def calculate_property_financials(
             # they represent nothing at all, not an unsupported payment.
             result["unfunded_applied_debt_service_cents"] += applied_cents
         # Escrow funding is a cash movement reported on its own; it is NOT debt service.
-        result["escrow_funded_cents"] += _net(scoped, ESCROW_CODES)
+        result["escrow_funded_cents"] += _net(scoped, code_map.escrow)
         # Untagged operating activity is reported, never folded into rental metrics.
         result["untagged_operating_expense_cents"] += sum(
             l.debit_cents - l.credit_cents
             for l in untagged
-            if l.ledger_account_code in OPEX_CODES
+            if l.ledger_account_code in code_map.opex
         )
         result["untagged_personal_draw_cents"] += sum(
             l.debit_cents - l.credit_cents
             for l in untagged
-            if l.ledger_account_code == PERSONAL_DRAW_CODE
+            if l.ledger_account_code in code_map.personal_draw
         )
 
     _accumulate_card_settlements(
-        session, in_scope, reversed_ids, start_date, end_date, lines_by_entry, result
+        session, in_scope, reversed_ids, start_date, end_date, lines_by_entry, result, code_map
     )
 
     # The window the figures actually cover, so a label can never claim a period
@@ -511,6 +594,7 @@ def _accumulate_card_settlements(
     end_date,
     lines_by_entry: Dict[str, list],
     result: Dict[str, Any],
+    code_map: LedgerCodeMap,
 ) -> None:
     """Attributes the rental share of settled credit-card payments.
 
@@ -536,8 +620,8 @@ def _accumulate_card_settlements(
         lines = lines_by_entry.get(entry.id)
         if not lines:
             continue
-        checking_net = _net(lines, CHECKING_CODES)
-        card_net = _net(lines, CARD_LIABILITY_CODES)
+        checking_net = _net(lines, code_map.deposit)
+        card_net = _net(lines, code_map.card)
         # Cash leaves checking to pay down a card liability.
         if checking_net < 0 and card_net > 0:
             settlement_entries[entry.source_transaction_id] = entry
@@ -571,7 +655,7 @@ def _accumulate_card_settlements(
     # A settlement whose allocation does not cover the settled amount is only
     # partly attributable; surface the remainder rather than assuming it.
     for txn_id, entry in settlement_entries.items():
-        settled = _net(lines_by_entry.get(entry.id, []), CARD_LIABILITY_CODES)
+        settled = _net(lines_by_entry.get(entry.id, []), code_map.card)
         result["card_settlement_unattributed_cents"] += max(
             0, settled - attributed.get(txn_id, 0)
         )
@@ -593,6 +677,7 @@ def calculate_portfolio_equity(
       substituted for a current balance.
     """
     properties = session.exec(select(Property).where(Property.is_active == True)).all()
+    code_map = load_ledger_code_map(session)
 
     debt_query = (
         select(JournalEntryLine)
@@ -606,7 +691,7 @@ def calculate_portfolio_equity(
     debt_by_property: Dict[str, int] = {}
     for line in session.exec(debt_query).all():
         code = line.ledger_account_code
-        if code not in MORTGAGE_DEBT_CODES:
+        if code not in code_map.mortgage_principal:
             continue
         net_cents = line.credit_cents - line.debit_cents
         debt_by_code[code] = debt_by_code.get(code, 0) + net_cents
@@ -635,9 +720,11 @@ def calculate_portfolio_equity(
         total_valuation_cents += val_cents
 
         loan = session.exec(
-            select(LoanAccount).where(
-                LoanAccount.property_id == prop.id, LoanAccount.is_active == True
+            select(LoanAccount)
+            .where(
+                LoanAccount.property_id == prop.id, LoanAccount.is_active == True  # noqa: E712
             )
+            .order_by(LoanAccount.created_at, LoanAccount.id)
         ).first()
 
         ledger_principal_cents = _ledger_principal_cents(
@@ -693,7 +780,7 @@ def _ledger_principal_cents(prop_id, loan, debt_by_code, debt_by_property):
     property tag) plus every tagged movement, so the account is preferred over
     line-level tags whenever the loan is known.
     """
-    code = LOAN_PRINCIPAL_CODE.get(loan.id) if loan else None
+    code = loan.principal_ledger_code if loan else None
     if code is not None and code in debt_by_code:
         return max(0, debt_by_code[code])
     if prop_id in debt_by_property:

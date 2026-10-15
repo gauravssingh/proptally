@@ -177,6 +177,38 @@ COLUMN_MIGRATIONS = [
         "document_id",
         _sql("ALTER TABLE leases ADD COLUMN document_id VARCHAR REFERENCES documents (id)"),
     ),
+    # Per-entity ledger accounts: a portfolio's properties, accounts and loans each
+    # own a ledger account, so no module needs to know its account numbers.
+    (
+        "properties",
+        "asset_ledger_code",
+        _sql("ALTER TABLE properties ADD COLUMN asset_ledger_code INTEGER REFERENCES ledger_accounts (code)"),
+    ),
+    (
+        "properties",
+        "short_label",
+        _sql("ALTER TABLE properties ADD COLUMN short_label VARCHAR"),
+    ),
+    (
+        "financial_accounts",
+        "ledger_account_code",
+        _sql("ALTER TABLE financial_accounts ADD COLUMN ledger_account_code INTEGER REFERENCES ledger_accounts (code)"),
+    ),
+    (
+        "loan_accounts",
+        "principal_ledger_code",
+        _sql("ALTER TABLE loan_accounts ADD COLUMN principal_ledger_code INTEGER REFERENCES ledger_accounts (code)"),
+    ),
+    (
+        "loan_accounts",
+        "clearing_ledger_code",
+        _sql("ALTER TABLE loan_accounts ADD COLUMN clearing_ledger_code INTEGER REFERENCES ledger_accounts (code)"),
+    ),
+    (
+        "loan_accounts",
+        "escrow_ledger_code",
+        _sql("ALTER TABLE loan_accounts ADD COLUMN escrow_ledger_code INTEGER REFERENCES ledger_accounts (code)"),
+    ),
 ]
 
 
@@ -345,12 +377,30 @@ def _migrate_vendor_rules(engine) -> int:
     return 1
 
 
+def _allocate_entity_ledger_accounts(engine) -> int:
+    """Gives every pre-existing entity the ledger accounts it needs.
+
+    Delegates to the domain allocator so a database created before multi-tenancy
+    keeps its original account numbers: allocation runs in ``(created_at, id)``
+    order, which reproduces the single-portfolio chart of accounts exactly
+    (1010 checking, 1110/1120 escrow, 1510-1530 property assets, 2010/2020 cards,
+    2110/2120/2130 principal with 2115/2125/2135 clearing).
+    """
+    from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
+
+    with Session(engine) as session:
+        allocated = ensure_entity_ledger_accounts(session)
+    return sum(allocated.values())
+
+
 SCHEMA_MIGRATIONS = (
     (1, "add post-initial-schema columns", lambda engine: _apply(engine, _migrate_columns)),
     (2, "install missing CHECK constraints", _migrate_constraints),
     (3, "create missing indexes", lambda engine: _apply(engine, _migrate_indexes)),
     (4, "add property description, maps url, and photo columns", lambda engine: _apply(engine, _migrate_columns)),
     (5, "create vendor_rules table and seed standard rules", _migrate_vendor_rules),
+    (6, "add per-entity ledger account code columns", lambda engine: _apply(engine, _migrate_columns)),
+    (7, "allocate per-entity ledger accounts", _allocate_entity_ledger_accounts),
 )
 
 

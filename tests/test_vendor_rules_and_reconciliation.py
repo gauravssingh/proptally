@@ -19,7 +19,8 @@ from proptally.db.models import (
     VendorRule,
 )
 from proptally.db.schema import init_schema
-from proptally.domain.accounting.coa import seed_chart_of_accounts
+from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
+from proptally.domain.fixtures.demo_seed import DEMO_VENDOR_RULES
 from proptally.domain.transactions.suggest import (
     DEFAULT_VENDOR_RULES,
     seed_vendor_rules,
@@ -88,8 +89,8 @@ def queue_env(tmp_path, monkeypatch):
     init_schema(engine)
 
     with Session(engine) as session:
-        seed_chart_of_accounts(session)
-        seed_vendor_rules(session)
+        ensure_entity_ledger_accounts(session)
+        seed_vendor_rules(session, DEMO_VENDOR_RULES)
 
         # Base document & institution
         doc = Document(id="doc_1", file_sha256="sha_abc", original_filename="test.pdf", storage_path="/tmp/test.pdf", file_size_bytes=100)

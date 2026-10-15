@@ -18,7 +18,14 @@ from proptally.db.models import (
     JournalEntry,
     JournalEntryLine,
 )
-from proptally.domain.accounting.coa import seed_chart_of_accounts
+from proptally.domain.accounting.coa import (
+    MORTGAGE_INTEREST_CODE,
+    PERSONAL_DRAW_CODE,
+    RENTAL_INCOME_CODE,
+    RENTAL_REVENUE_CODES,
+    REPAIRS_CODE,
+    ensure_entity_ledger_accounts,
+)
 from proptally.domain.accounting.ledger import (
     create_journal_entry,
     add_journal_line,
@@ -37,12 +44,21 @@ from proptally.domain.transactions.splits import (
 )
 from proptally.domain.fixtures.demo_seed import seed_demo_data
 
+# Ledger codes owned by the entities this fixture declares. They are allocated
+# from the entity rows on every run (checking, the Visa liability, and each
+# door's mortgage principal / escrow accounts) and rebound here, so the
+# invariants below never depend on a hard-coded portfolio account number.
+CHECKING = None
+CARD_LIABILITY = None
+ALDER_ASSET = None
+ALDER_MORTGAGE = None
+ALDER_ESCROW = None
+ROWAN_MORTGAGE = None
+
 
 @pytest.fixture(name="hardened_env")
 def hardened_env_fixture(session: Session):
     """Sets up fresh Chart of Accounts and basic properties/accounts."""
-    seed_chart_of_accounts(session)
-
     bofa = FinancialInstitution(id="inst_bofa_test", name="Bank of America")
     session.add(bofa)
     # Parent must be durable before children: SQLAlchemy orders INSERTs by mapper
@@ -66,6 +82,25 @@ def hardened_env_fixture(session: Session):
     )
     session.add(chk)
     session.add(visa)
+
+    # Mortgage accounts: a mortgage FinancialAccount has no ledger account of its
+    # own; the loan it belongs to owns the principal, clearing and escrow codes.
+    alder_mortgage_acct = FinancialAccount(
+        id="acct_rocket_mortgage",
+        institution_id=bofa.id,
+        account_name="Rocket Mortgage Loan",
+        account_type="MORTGAGE",
+        account_number_masked="...5035",
+    )
+    rowan_mortgage_acct = FinancialAccount(
+        id="acct_ccm_mortgage",
+        institution_id=bofa.id,
+        account_name="CrossCountry Mortgage Loan",
+        account_type="MORTGAGE",
+        account_number_masked="...9359",
+    )
+    session.add(alder_mortgage_acct)
+    session.add(rowan_mortgage_acct)
 
     larkspur = Property(
         id="prop_tinsley_huntley",
@@ -97,6 +132,26 @@ def hardened_env_fixture(session: Session):
     session.add(larkspur)
     session.add(foxglove)
     session.add(elderberry)
+    session.flush()
+
+    # Each door's mortgage loan owns the principal, clearing and escrow accounts
+    # the debt-service invariants below post against.
+    alder_loan = LoanAccount(
+        id="loan_alder_test",
+        financial_account_id=alder_mortgage_acct.id,
+        property_id=larkspur.id,
+        loan_number="0700000001",
+        term_months=360,
+    )
+    rowan_loan = LoanAccount(
+        id="loan_rowan_test",
+        financial_account_id=rowan_mortgage_acct.id,
+        property_id=elderberry.id,
+        loan_number="0700000003",
+        term_months=360,
+    )
+    session.add(alder_loan)
+    session.add(rowan_loan)
 
     doc = Document(
         id=str(uuid4()),
@@ -118,7 +173,20 @@ def hardened_env_fixture(session: Session):
         statement_date=date(2026, 3, 31),
     )
     session.add(stmt)
-    session.commit()
+    session.flush()
+
+    # Give every declared entity the ledger account it owns, then read the codes
+    # off the rows: this portfolio's account numbers are its own.
+    ensure_entity_ledger_accounts(session)
+
+    global CHECKING, CARD_LIABILITY, ALDER_ASSET
+    global ALDER_MORTGAGE, ALDER_ESCROW, ROWAN_MORTGAGE
+    CHECKING = chk.ledger_account_code
+    CARD_LIABILITY = visa.ledger_account_code
+    ALDER_ASSET = larkspur.asset_ledger_code
+    ALDER_MORTGAGE = alder_loan.principal_ledger_code
+    ALDER_ESCROW = alder_loan.escrow_ledger_code
+    ROWAN_MORTGAGE = rowan_loan.principal_ledger_code
 
     return {
         "chk": chk,
@@ -139,22 +207,22 @@ def test_1_ocf_and_cads_with_direct_checking_expenses(session: Session, hardened
 
     # Rent collection
     je_rent = create_journal_entry(session, date(2026, 3, 1), "REVENUE_POST", "Rent collection", "TEST1:RENT")
-    add_journal_line(session, je_rent.id, 1010, debit_cents=250000)
-    add_journal_line(session, je_rent.id, 4010, credit_cents=250000, property_id=larkspur.id)
+    add_journal_line(session, je_rent.id, CHECKING, debit_cents=250000)
+    add_journal_line(session, je_rent.id, RENTAL_INCOME_CODE, credit_cents=250000, property_id=larkspur.id)
     post_journal_entry(session, je_rent.id)
 
     # Direct checking repair expense
     je_rep = create_journal_entry(session, date(2026, 3, 10), "EXPENSE_POST", "Direct repair check", "TEST1:REPAIR")
-    add_journal_line(session, je_rep.id, 5040, debit_cents=30000, property_id=larkspur.id)
-    add_journal_line(session, je_rep.id, 1010, credit_cents=30000)
+    add_journal_line(session, je_rep.id, REPAIRS_CODE, debit_cents=30000, property_id=larkspur.id)
+    add_journal_line(session, je_rep.id, CHECKING, credit_cents=30000)
     post_journal_entry(session, je_rep.id)
 
     # Debt service settlement & application
     je_debt = create_journal_entry(session, date(2026, 3, 28), "CASH_SETTLEMENT", "Mortgage settlement", "TEST1:DEBT")
-    add_journal_line(session, je_debt.id, 2110, debit_cents=50000, property_id=larkspur.id)  # Principal
-    add_journal_line(session, je_debt.id, 5010, debit_cents=40000, property_id=larkspur.id)  # Interest
-    add_journal_line(session, je_debt.id, 1110, debit_cents=30000, property_id=larkspur.id)  # Escrow
-    add_journal_line(session, je_debt.id, 1010, credit_cents=120000)
+    add_journal_line(session, je_debt.id, ALDER_MORTGAGE, debit_cents=50000, property_id=larkspur.id)  # Principal
+    add_journal_line(session, je_debt.id, MORTGAGE_INTEREST_CODE, debit_cents=40000, property_id=larkspur.id)  # Interest
+    add_journal_line(session, je_debt.id, ALDER_ESCROW, debit_cents=30000, property_id=larkspur.id)  # Escrow
+    add_journal_line(session, je_debt.id, CHECKING, credit_cents=120000)
     post_journal_entry(session, je_debt.id)
 
     f = calculate_property_financials(session, property_id=larkspur.id)
@@ -184,15 +252,15 @@ def test_2_ocf_and_cads_with_mixed_use_credit_card_purchases_and_settlements(ses
 
     # Rent collection: $3,000
     je_rent = create_journal_entry(session, date(2026, 5, 1), "REVENUE_POST", "Rent collection", "TEST2:RENT")
-    add_journal_line(session, je_rent.id, 1010, debit_cents=300000)
-    add_journal_line(session, je_rent.id, 4010, credit_cents=300000, property_id=larkspur.id)
+    add_journal_line(session, je_rent.id, CHECKING, debit_cents=300000)
+    add_journal_line(session, je_rent.id, RENTAL_INCOME_CODE, credit_cents=300000, property_id=larkspur.id)
     post_journal_entry(session, je_rent.id)
 
     # Event 1 (May 05): Card purchase swipe ($400 rental, $200 personal)
     je_card = create_journal_entry(session, date(2026, 5, 5), "EXPENSE_POST", "Home Depot on Visa", "TEST2:CARD_SWIPE")
-    add_journal_line(session, je_card.id, 5040, debit_cents=40000, property_id=larkspur.id)
-    add_journal_line(session, je_card.id, 5090, debit_cents=20000)  # Personal
-    add_journal_line(session, je_card.id, 2010, credit_cents=60000)
+    add_journal_line(session, je_card.id, REPAIRS_CODE, debit_cents=40000, property_id=larkspur.id)
+    add_journal_line(session, je_card.id, PERSONAL_DRAW_CODE, debit_cents=20000)  # Personal
+    add_journal_line(session, je_card.id, CARD_LIABILITY, credit_cents=60000)
     post_journal_entry(session, je_card.id)
 
     # Metrics on May 05 before settlement:
@@ -228,8 +296,8 @@ def test_2_ocf_and_cads_with_mixed_use_credit_card_purchases_and_settlements(ses
         session, date(2026, 5, 22), "CASH_SETTLEMENT", "Visa payoff from checking",
         "TEST2:CARD_PAY", source_transaction_id=settle_txn.id,
     )
-    add_journal_line(session, je_pay.id, 2010, debit_cents=60000)
-    add_journal_line(session, je_pay.id, 1010, credit_cents=60000)
+    add_journal_line(session, je_pay.id, CARD_LIABILITY, debit_cents=60000)
+    add_journal_line(session, je_pay.id, CHECKING, credit_cents=60000)
     post_journal_entry(session, je_pay.id)
 
     # Metrics for full month of May:
@@ -252,21 +320,21 @@ def test_3_primary_residence_exclusion_from_rental_cash_flow(session: Session, h
 
     # Alder rent: $2,600
     je_alder = create_journal_entry(session, date(2026, 3, 1), "REVENUE_POST", "Alder rent", "TEST3:LARKSPUR")
-    add_journal_line(session, je_alder.id, 1010, debit_cents=260000)
-    add_journal_line(session, je_alder.id, 4010, credit_cents=260000, property_id=larkspur.id)
+    add_journal_line(session, je_alder.id, CHECKING, debit_cents=260000)
+    add_journal_line(session, je_alder.id, RENTAL_INCOME_CODE, credit_cents=260000, property_id=larkspur.id)
     post_journal_entry(session, je_alder.id)
 
     # Rowan repairs: $450
     je_rowan_rep = create_journal_entry(session, date(2026, 3, 5), "EXPENSE_POST", "Rowan home repairs", "TEST3:ROWAN_REP")
-    add_journal_line(session, je_rowan_rep.id, 5040, debit_cents=45000, property_id=elderberry.id)
-    add_journal_line(session, je_rowan_rep.id, 1010, credit_cents=45000)
+    add_journal_line(session, je_rowan_rep.id, REPAIRS_CODE, debit_cents=45000, property_id=elderberry.id)
+    add_journal_line(session, je_rowan_rep.id, CHECKING, credit_cents=45000)
     post_journal_entry(session, je_rowan_rep.id)
 
-    # Rowan mortgage payment: $2,500 (CCM loan 2130)
+    # Rowan mortgage payment: $2,500 (the Rowan door's own mortgage principal)
     je_rowan_debt = create_journal_entry(session, date(2026, 3, 15), "CASH_SETTLEMENT", "Rowan mortgage payment", "TEST3:ROWAN_DEBT")
-    add_journal_line(session, je_rowan_debt.id, 2130, debit_cents=100000, property_id=elderberry.id)
-    add_journal_line(session, je_rowan_debt.id, 5010, debit_cents=150000, property_id=elderberry.id)
-    add_journal_line(session, je_rowan_debt.id, 1010, credit_cents=250000)
+    add_journal_line(session, je_rowan_debt.id, ROWAN_MORTGAGE, debit_cents=100000, property_id=elderberry.id)
+    add_journal_line(session, je_rowan_debt.id, MORTGAGE_INTEREST_CODE, debit_cents=150000, property_id=elderberry.id)
+    add_journal_line(session, je_rowan_debt.id, CHECKING, credit_cents=250000)
     post_journal_entry(session, je_rowan_debt.id)
 
     # Portfolio-wide rental financials (property_id=None)
@@ -286,14 +354,14 @@ def test_4_reporting_period_and_year_filtering(session: Session, hardened_env: d
 
     # 2025 entry
     je_2025 = create_journal_entry(session, date(2025, 6, 1), "REVENUE_POST", "2025 rent", "TEST4:2025")
-    add_journal_line(session, je_2025.id, 1010, debit_cents=200000)
-    add_journal_line(session, je_2025.id, 4010, credit_cents=200000, property_id=larkspur.id)
+    add_journal_line(session, je_2025.id, CHECKING, debit_cents=200000)
+    add_journal_line(session, je_2025.id, RENTAL_INCOME_CODE, credit_cents=200000, property_id=larkspur.id)
     post_journal_entry(session, je_2025.id)
 
     # 2026 entry
     je_2026 = create_journal_entry(session, date(2026, 6, 1), "REVENUE_POST", "2026 rent", "TEST4:2026")
-    add_journal_line(session, je_2026.id, 1010, debit_cents=300000)
-    add_journal_line(session, je_2026.id, 4010, credit_cents=300000, property_id=larkspur.id)
+    add_journal_line(session, je_2026.id, CHECKING, debit_cents=300000)
+    add_journal_line(session, je_2026.id, RENTAL_INCOME_CODE, credit_cents=300000, property_id=larkspur.id)
     post_journal_entry(session, je_2026.id)
 
     f_2025 = calculate_property_financials(session, property_id=larkspur.id, year=2025)
@@ -306,10 +374,10 @@ def test_4_reporting_period_and_year_filtering(session: Session, hardened_env: d
 def test_5_draft_journal_entries_excluded_from_debt_reporting(session: Session, hardened_env: dict):
     """5. Draft journal entries excluded from debt reporting:
     DRAFT entries must have zero effect on calculated debt and portfolio equity."""
-    # Create opening debt balance: $300,000
+    # Create opening debt balance: $300,000 on the Alder door's own accounts
     je_open = create_journal_entry(session, date(2026, 1, 1), "OPENING_BALANCE", "Opening debt", "TEST5:OPEN")
-    add_journal_line(session, je_open.id, 1510, debit_cents=30000000)
-    add_journal_line(session, je_open.id, 2110, credit_cents=30000000)
+    add_journal_line(session, je_open.id, ALDER_ASSET, debit_cents=30000000)
+    add_journal_line(session, je_open.id, ALDER_MORTGAGE, credit_cents=30000000)
     post_journal_entry(session, je_open.id)
 
     # Pre-draft check
@@ -318,8 +386,8 @@ def test_5_draft_journal_entries_excluded_from_debt_reporting(session: Session, 
 
     # Create DRAFT paydown entry of $50,000 (NOT POSTED)
     je_draft = create_journal_entry(session, date(2026, 2, 1), "CASH_SETTLEMENT", "Draft paydown", "TEST5:DRAFT")
-    add_journal_line(session, je_draft.id, 2110, debit_cents=5000000)
-    add_journal_line(session, je_draft.id, 1010, credit_cents=5000000)
+    add_journal_line(session, je_draft.id, ALDER_MORTGAGE, debit_cents=5000000)
+    add_journal_line(session, je_draft.id, CHECKING, credit_cents=5000000)
     # Status remains DRAFT!
     session.commit()
 
@@ -523,12 +591,14 @@ def test_10_dashboard_totals_reconciling_to_posted_ledger_balances(session: Sess
     equity = calculate_portfolio_equity(session)
     fin = calculate_property_financials(session)
 
-    # 1. Total debt reconciles with credit balances on 2110, 2120, 2130
+    # 1. Total debt reconciles with credit balances on the demo's mortgage
+    #    principal accounts, whatever codes the allocator gave those loans.
+    principal_codes = session.exec(select(LoanAccount.principal_ledger_code)).all()
     debt_lines = session.exec(
         select(JournalEntryLine)
         .join(JournalEntry, JournalEntryLine.journal_entry_id == JournalEntry.id)
         .where(JournalEntry.status == "POSTED")
-        .where(JournalEntryLine.ledger_account_code.in_([2110, 2120, 2130]))
+        .where(JournalEntryLine.ledger_account_code.in_(principal_codes))
     ).all()
     ledger_debt = sum(l.credit_cents - l.debit_cents for l in debt_lines)
     assert equity["ledger_total_debt_cents"] == ledger_debt
@@ -538,12 +608,12 @@ def test_10_dashboard_totals_reconciling_to_posted_ledger_balances(session: Sess
     assert equity["unattributed_ledger_debt_cents"] == 0
     assert all(m["principal_source"] == "LEDGER_DERIVED" for m in equity["property_metrics"])
 
-    # 2. Rental revenue reconciles with credits to 4010, 4020 for rental doors
+    # 2. Rental revenue reconciles with credits to the rental income codes for rental doors
     rental_rev_lines = session.exec(
         select(JournalEntryLine)
         .join(JournalEntry, JournalEntryLine.journal_entry_id == JournalEntry.id)
         .where(JournalEntry.status == "POSTED")
-        .where(JournalEntryLine.ledger_account_code.in_([4010, 4020]))
+        .where(JournalEntryLine.ledger_account_code.in_(RENTAL_REVENUE_CODES))
         .where(JournalEntryLine.property_id.in_(["prop_tinsley_huntley", "prop_cimmaron_pingree"]))
     ).all()
     assert fin["gross_rental_income_cents"] == sum(l.credit_cents - l.debit_cents for l in rental_rev_lines)

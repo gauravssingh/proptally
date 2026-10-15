@@ -7,7 +7,7 @@ from sqlmodel import Session
 from proptally.db.connection import get_engine
 from proptally.db.models import Property
 from proptally.db.schema import init_schema
-from proptally.domain.accounting.coa import seed_chart_of_accounts
+from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
 from proptally.domain.tax.depreciation import calculate_annual_depreciation
 from proptally.domain.tax.schedule_e import export_schedule_e_csv, generate_schedule_e_workpaper
 from proptally.web.app import create_app
@@ -61,7 +61,7 @@ def test_schedule_e_workpaper_and_web_endpoints(tmp_path):
     init_schema(engine)
 
     with Session(engine) as session:
-        seed_chart_of_accounts(session)
+        ensure_entity_ledger_accounts(session)
         larkspur = Property(
             id="prop_tinsley_huntley",
             name="12307 Larkspur St",

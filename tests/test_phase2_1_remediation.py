@@ -8,7 +8,7 @@ number below is an amount a person would compute from the transactions.
 from datetime import date
 
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from proptally.db.models import (
     Document,
@@ -21,6 +21,13 @@ from proptally.db.models import (
     Transaction,
     TransactionProcessingState,
     TransactionSplit,
+)
+from proptally.domain.accounting.coa import (
+    MORTGAGE_INTEREST_CODE,
+    RENTAL_INCOME_CODE,
+    RENT_RECEIVABLE_CODE,
+    REPAIRS_CODE,
+    ensure_entity_ledger_accounts,
 )
 from proptally.domain.accounting.ledger import (
     add_journal_line,
@@ -35,6 +42,17 @@ from proptally.domain.accounting.metrics import (
 LARKSPUR = "prop_tinsley_huntley"
 ELDERBERRY = "prop_burkey_algonquin"
 
+# Ledger codes owned by the entities the fixture declares. They are allocated
+# from the entity rows on every run (the checking account, the Visa liability,
+# each door's fixed asset, and the Alder door's mortgage principal and escrow)
+# and rebound here, so no scenario depends on a pinned account number.
+CHECKING = None
+CARD_LIABILITY = None
+ALDER_ASSET = None
+ROWAN_ASSET = None
+ALDER_MORTGAGE = None
+ALDER_ESCROW = None
+
 
 @pytest.fixture(name="env")
 def env_fixture(session: Session):
@@ -43,14 +61,21 @@ def env_fixture(session: Session):
     session.add(bofa)
     session.flush()
 
-    session.add(FinancialAccount(
+    chk = FinancialAccount(
         id="acct_env_chk", institution_id=bofa.id, account_name="Checking",
         account_type="CHECKING", account_number_masked="...0001",
-    ))
-    session.add(FinancialAccount(
+    )
+    visa = FinancialAccount(
         id="acct_env_visa", institution_id=bofa.id, account_name="Visa",
         account_type="CREDIT_CARD", account_number_masked="...0002",
-    ))
+    )
+    mortgage_acct = FinancialAccount(
+        id="acct_env_mortgage", institution_id=bofa.id, account_name="Alder Mortgage Loan",
+        account_type="MORTGAGE", account_number_masked="...0003",
+    )
+    session.add(chk)
+    session.add(visa)
+    session.add(mortgage_acct)
     larkspur = Property(
         id=LARKSPUR, name="Larkspur", address_line1="12307 Larkspur St", city="Westbrook",
         zip_code="60196", property_type="RENTAL_INVESTMENT", purchase_price_cents=42500000,
@@ -61,6 +86,15 @@ def env_fixture(session: Session):
     )
     session.add(larkspur)
     session.add(elderberry)
+    session.flush()
+
+    # The Alder door's mortgage loan owns the principal and escrow accounts the
+    # debt-service scenarios post against.
+    alder_loan = LoanAccount(
+        id="loan_env_alder", financial_account_id=mortgage_acct.id, property_id=larkspur.id,
+        loan_number="0700000001", term_months=360,
+    )
+    session.add(alder_loan)
 
     doc = Document(
         id="doc_env", file_sha256="sha_env", original_filename="f.pdf",
@@ -69,12 +103,26 @@ def env_fixture(session: Session):
     session.add(doc)
     session.flush()
     statement = Statement(
-        id="stmt_env", document_id=doc.id, financial_account_id="acct_env_chk",
+        id="stmt_env", document_id=doc.id, financial_account_id=chk.id,
         statement_type="CHECKING", active_parser_name="T", active_parser_version="1",
         statement_date=date(2026, 3, 31),
     )
     session.add(statement)
-    session.commit()
+    session.flush()
+
+    # Give every declared entity the ledger account it owns, then read the codes
+    # off the rows: this portfolio's account numbers are its own.
+    ensure_entity_ledger_accounts(session)
+
+    global CHECKING, CARD_LIABILITY, ALDER_ASSET, ROWAN_ASSET
+    global ALDER_MORTGAGE, ALDER_ESCROW
+    CHECKING = chk.ledger_account_code
+    CARD_LIABILITY = visa.ledger_account_code
+    ALDER_ASSET = larkspur.asset_ledger_code
+    ROWAN_ASSET = elderberry.asset_ledger_code
+    ALDER_MORTGAGE = alder_loan.principal_ledger_code
+    ALDER_ESCROW = alder_loan.escrow_ledger_code
+
     return {"larkspur": larkspur, "elderberry": elderberry, "statement": statement}
 
 
@@ -91,8 +139,8 @@ def post_entry(session, entry_date, entry_type, description, lines, key=None, so
 def rent_received(session, amount_cents, key, prop=LARKSPUR, day=1):
     """Rent that genuinely landed in the checking account."""
     return post_entry(session, date(2026, 3, day), "REVENUE_POST", "Rent received", [
-        (1010, amount_cents, 0, None),
-        (4010, 0, amount_cents, prop),
+        (CHECKING, amount_cents, 0, None),
+        (RENTAL_INCOME_CODE, 0, amount_cents, prop),
     ], key=key)
 
 
@@ -101,8 +149,8 @@ def rent_received(session, amount_cents, key, prop=LARKSPUR, day=1):
 def test_accrued_rent_is_revenue_but_not_collected_cash(session: Session, env):
     """Revenue is recognised when earned; only a checking receipt makes it OCF."""
     post_entry(session, date(2026, 3, 1), "REVENUE_POST", "March rent accrued", [
-        (1210, 200000, 0, LARKSPUR),   # rent receivable: no cash moved
-        (4010, 0, 200000, LARKSPUR),
+        (RENT_RECEIVABLE_CODE, 200000, 0, LARKSPUR),   # rent receivable: no cash moved
+        (RENTAL_INCOME_CODE, 0, 200000, LARKSPUR),
     ], key="T1:ACCRUED")
 
     accrued = calculate_property_financials(session, property_id=LARKSPUR)
@@ -122,8 +170,8 @@ def test_accrued_rent_is_revenue_but_not_collected_cash(session: Session, env):
 def test_rent_is_only_counted_when_checking_actually_received_it(session: Session, env):
     """A revenue credit settled to a non-cash asset is never treated as collected."""
     post_entry(session, date(2026, 3, 2), "REVENUE_POST", "Rent posted to receivable", [
-        (1210, 150000, 0, LARKSPUR),
-        (4010, 0, 150000, LARKSPUR),
+        (RENT_RECEIVABLE_CODE, 150000, 0, LARKSPUR),
+        (RENTAL_INCOME_CODE, 0, 150000, LARKSPUR),
     ], key="T2:RECV")
 
     financials = calculate_property_financials(session, property_id=LARKSPUR)
@@ -142,10 +190,10 @@ def test_rent_is_only_counted_when_checking_actually_received_it(session: Sessio
 
 def _mortgage_payment(session, key="T34:PAY", day=28):
     return post_entry(session, date(2026, 3, day), "CASH_SETTLEMENT", "Mortgage payment", [
-        (2110, 50000, 0, LARKSPUR),    # principal
-        (5010, 40000, 0, LARKSPUR),    # interest
-        (1110, 30000, 0, LARKSPUR),    # escrow funding: a transfer, not debt service
-        (1010, 0, 120000, None),
+        (ALDER_MORTGAGE, 50000, 0, LARKSPUR),            # principal
+        (MORTGAGE_INTEREST_CODE, 40000, 0, LARKSPUR),    # interest
+        (ALDER_ESCROW, 30000, 0, LARKSPUR),              # escrow funding: a transfer, not debt service
+        (CHECKING, 0, 120000, None),
     ], key=key)
 
 
@@ -180,13 +228,13 @@ def test_unallocated_expenses_are_reported_but_excluded(session: Session, env):
     rent_received(session, 300000, "T5:RENT")
 
     post_entry(session, date(2026, 3, 8), "EXPENSE_POST", "Untagged repair", [
-        (5040, 10000, 0, None),       # no property attribution
-        (1010, 0, 10000, None),
+        (REPAIRS_CODE, 10000, 0, None),       # no property attribution
+        (CHECKING, 0, 10000, None),
     ], key="T5:UNTAGGED")
 
     post_entry(session, date(2026, 3, 9), "EXPENSE_POST", "Tagged repair", [
-        (5040, 25000, 0, LARKSPUR),
-        (1010, 0, 25000, None),
+        (REPAIRS_CODE, 25000, 0, LARKSPUR),
+        (CHECKING, 0, 25000, None),
     ], key="T5:TAGGED")
 
     financials = calculate_property_financials(session, property_id=LARKSPUR)
@@ -227,8 +275,8 @@ def _card_settlement(session, env, *, liability_property_tag=None):
     session.commit()
 
     post_entry(session, date(2026, 3, 20), "CASH_SETTLEMENT", "Visa payoff", [
-        (2010, 60000, 0, liability_property_tag),   # card liability cleared
-        (1010, 0, 60000, None),
+        (CARD_LIABILITY, 60000, 0, liability_property_tag),   # card liability cleared
+        (CHECKING, 0, 60000, None),
     ], key="T6:SETTLE", source_txn=txn.id)
     return txn
 
@@ -251,8 +299,8 @@ def test_settlement_without_linked_allocation_is_not_guessed(session: Session, e
     rent_received(session, 300000, "T6B:RENT")
     # Tagged liability lines, but no source transaction to allocate against.
     post_entry(session, date(2026, 3, 20), "CASH_SETTLEMENT", "Unlinked payoff", [
-        (2010, 60000, 0, LARKSPUR),
-        (1010, 0, 60000, None),
+        (CARD_LIABILITY, 60000, 0, LARKSPUR),
+        (CHECKING, 0, 60000, None),
     ], key="T6B:SETTLE")
 
     financials = calculate_property_financials(session, property_id=LARKSPUR)
@@ -264,30 +312,32 @@ def test_settlement_without_linked_allocation_is_not_guessed(session: Session, e
 
 def test_primary_residence_excluded_by_classification_not_by_account_code(session: Session, env):
     """Rowan activity sits on the SAME ledger codes as a rental and is still excluded."""
-    # Opening debt for both doors on the same liability account, 2110.
+    # Opening debt for both doors on the same liability account: the Alder door's
+    # mortgage principal, which the primary residence also happens to bank with.
     post_entry(session, date(2026, 1, 1), "OPENING_BALANCE", "Alder opening", [
-        (1510, 20000000, 0, None),
-        (2110, 0, 20000000, LARKSPUR),
+        (ALDER_ASSET, 20000000, 0, None),
+        (ALDER_MORTGAGE, 0, 20000000, LARKSPUR),
     ], key="T7:OPEN_T")
     post_entry(session, date(2026, 1, 1), "OPENING_BALANCE", "Rowan opening", [
-        (1530, 50000000, 0, None),
-        (2110, 0, 50000000, ELDERBERRY),
+        (ROWAN_ASSET, 50000000, 0, None),
+        (ALDER_MORTGAGE, 0, 50000000, ELDERBERRY),
     ], key="T7:OPEN_B")
 
     post_entry(session, date(2026, 3, 28), "CASH_SETTLEMENT", "Alder payment", [
-        (2110, 50000, 0, LARKSPUR),
-        (5010, 40000, 0, LARKSPUR),
-        (1010, 0, 90000, None),
+        (ALDER_MORTGAGE, 50000, 0, LARKSPUR),
+        (MORTGAGE_INTEREST_CODE, 40000, 0, LARKSPUR),
+        (CHECKING, 0, 90000, None),
     ], key="T7:LARKSPUR")
-    # Primary residence on the very same account codes (2110 / 5010 / 5040).
+    # Primary residence on the very same mortgage principal, interest and repairs
+    # account codes as the rental.
     post_entry(session, date(2026, 3, 29), "CASH_SETTLEMENT", "Rowan payment", [
-        (2110, 70000, 0, ELDERBERRY),
-        (5010, 90000, 0, ELDERBERRY),
-        (1010, 0, 160000, None),
+        (ALDER_MORTGAGE, 70000, 0, ELDERBERRY),
+        (MORTGAGE_INTEREST_CODE, 90000, 0, ELDERBERRY),
+        (CHECKING, 0, 160000, None),
     ], key="T7:ELDERBERRY")
     post_entry(session, date(2026, 3, 30), "EXPENSE_POST", "Rowan roof repair", [
-        (5040, 45000, 0, ELDERBERRY),
-        (1010, 0, 45000, None),
+        (REPAIRS_CODE, 45000, 0, ELDERBERRY),
+        (CHECKING, 0, 45000, None),
     ], key="T7:ROWAN_REPAIR")
     rent_received(session, 300000, "T7:RENT")
 
@@ -329,10 +379,10 @@ def test_year_and_explicit_range_are_mutually_exclusive(session: Session, env):
 
 def test_period_filters_select_the_right_entries(session: Session, env):
     post_entry(session, date(2025, 6, 1), "REVENUE_POST", "2025 rent", [
-        (1010, 100000, 0, None), (4010, 0, 100000, LARKSPUR),
+        (CHECKING, 100000, 0, None), (RENTAL_INCOME_CODE, 0, 100000, LARKSPUR),
     ], key="T8:2025")
     post_entry(session, date(2026, 6, 1), "REVENUE_POST", "2026 rent", [
-        (1010, 250000, 0, None), (4010, 0, 250000, LARKSPUR),
+        (CHECKING, 250000, 0, None), (RENTAL_INCOME_CODE, 0, 250000, LARKSPUR),
     ], key="T8:2026")
 
     assert calculate_property_financials(session, property_id=LARKSPUR, year=2025)["goi_cents"] == 100000
@@ -352,22 +402,20 @@ def test_inverted_date_range_is_rejected(session: Session, env):
 
 # --- 9: original principal is never reported as current debt ---------------
 
-def _add_loan(session, loan_id, account_id, original_principal_cents):
-    session.add(FinancialAccount(
-        id=account_id, institution_id="inst_env_bofa", account_name="Loan",
-        account_type="MORTGAGE", account_number_masked="...0009",
-    ))
-    session.flush()
-    session.add(LoanAccount(
-        id=loan_id, financial_account_id=account_id, property_id=LARKSPUR,
-        loan_number=loan_id.upper(), original_principal_cents=original_principal_cents,
-        term_months=360,
-    ))
+def _record_original_principal(session, original_principal_cents):
+    """Records the door's original loan amount; current debt is never read from it.
+
+    The loan itself is already declared by the fixture, so this only supplies the
+    origination figure a servicer-reported or ledger-derived balance must beat.
+    """
+    loan = session.exec(select(LoanAccount).where(LoanAccount.property_id == LARKSPUR)).one()
+    loan.original_principal_cents = original_principal_cents
     session.commit()
+    return loan
 
 
 def test_original_principal_is_never_reported_as_current_debt(session: Session, env):
-    _add_loan(session, "loan_env_unreported", "acct_env_loan", 99000000)
+    loan = _record_original_principal(session, 99000000)
 
     equity = calculate_portfolio_equity(session)
     metric = next(m for m in equity["property_metrics"] if m["property"].id == LARKSPUR)
@@ -379,7 +427,7 @@ def test_original_principal_is_never_reported_as_current_debt(session: Session, 
 
     # A servicer statement is authoritative and takes precedence.
     session.add(MortgagePeriod(
-        id="mp_env_1", statement_id=env["statement"].id, loan_account_id="loan_env_unreported",
+        id="mp_env_1", statement_id=env["statement"].id, loan_account_id=loan.id,
         payment_due_date=date(2026, 4, 1), statement_date=date(2026, 3, 31),
         principal_billed_cents=0, interest_billed_cents=0, escrow_billed_cents=0,
         total_amount_billed_cents=0, outstanding_principal_cents=44500000,
@@ -396,10 +444,10 @@ def test_original_principal_is_never_reported_as_current_debt(session: Session, 
 
 def test_ledger_principal_is_used_and_is_not_the_original_amount(session: Session, env):
     """Posted ledger debt wins over the original loan amount, which is never reported."""
-    _add_loan(session, "loan_env_ledger", "acct_env_loan2", 77000000)
+    _record_original_principal(session, 77000000)
     post_entry(session, date(2026, 1, 1), "OPENING_BALANCE", "Alder opening debt", [
-        (1510, 20000000, 0, None),
-        (2110, 0, 20000000, LARKSPUR),
+        (ALDER_ASSET, 20000000, 0, None),
+        (ALDER_MORTGAGE, 0, 20000000, LARKSPUR),
     ], key="T9:OPEN")
 
     equity = calculate_portfolio_equity(session)

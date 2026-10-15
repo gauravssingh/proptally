@@ -1,5 +1,6 @@
 import hashlib
 import os
+import re
 import shutil
 import urllib.parse
 from datetime import date
@@ -24,10 +25,12 @@ from proptally.db.models import (
     Property,
     PropertyPhoto,
     PropertyValuation,
+    Transaction,
     TransactionProcessingState,
 )
 from proptally.domain.accounting.metrics import calculate_property_financials
-from proptally.web.helpers import period_label
+from proptally.domain.transactions.suggest import suggest_split_for_transaction
+from proptally.web.helpers import format_cents, period_label
 
 
 def get_google_maps_url(prop: Property) -> str:
@@ -40,6 +43,81 @@ def get_google_maps_url(prop: Property) -> str:
     parts.append(f"{prop.city}, {prop.state} {prop.zip_code}")
     full_address = ", ".join(p for p in parts if p)
     return f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote_plus(full_address)}"
+
+
+#: Split categories that represent rent received on a door.
+RENT_INFLOW_CATEGORIES = ("RENT_INCOME", "RENT", "LATE_FEE", "FEE")
+
+
+def _counterparty_named_by_bank(raw_description: str) -> str:
+    """The remitter a bank record actually names, or "" when it names nobody.
+
+    Only explicit remitter wording is accepted (``ZELLE TRANSFER FROM JANE DOE``).
+    An ATM deposit or a card settlement names no tenant, and reporting one would be
+    a claim the bank record does not support.
+    """
+    match = re.search(r"\bFROM\s+([A-Z][A-Z'.\- ]{2,40})", raw_description.upper())
+    return match.group(1).strip(" .-") if match else ""
+
+
+def infer_unverified_tenant(session: Session, property_id: str, lease: Lease | None) -> dict | None:
+    """Summarises rent-like inflows on a door that have no lease behind them.
+
+    Returns ``None`` when a lease is registered (the lease is then the authority) or
+    when the door has no unconfirmed rent-like inflow. Which inflows belong to this
+    door comes from the same classification engine the review queue uses, so a
+    portfolio's own vendor rules decide it; nothing here is tied to a particular
+    client, tenant or deposit pattern. The counterparty is whatever the bank record
+    says, and is left empty when the record names nobody.
+    """
+    if lease is not None:
+        return None
+
+    rows = session.exec(
+        select(Transaction, TransactionProcessingState)
+        .join(
+            TransactionProcessingState,
+            TransactionProcessingState.transaction_id == Transaction.id,
+        )
+        .where(Transaction.amount_cents > 0)
+        .where(TransactionProcessingState.posting_status != "POSTED")
+        .order_by(Transaction.transaction_date)
+    ).all()
+
+    matched = []
+    for txn, state in rows:
+        if state.allocation_status == "FULLY_ALLOCATED":
+            continue
+        suggestion = suggest_split_for_transaction(
+            txn.raw_description, txn.amount_cents, session=session
+        )
+        if suggestion is None or suggestion.property_id != property_id:
+            continue
+        if str(suggestion.category).upper() not in RENT_INFLOW_CATEGORIES:
+            continue
+        matched.append(txn)
+
+    if not matched:
+        return None
+
+    total_cents = sum(txn.amount_cents for txn in matched)
+    named = next(
+        (name for name in (_counterparty_named_by_bank(t.raw_description) for t in matched) if name),
+        "",
+    )
+    sources = []
+    for txn in matched:
+        if txn.raw_description not in sources:
+            sources.append(txn.raw_description)
+
+    return {
+        "name": named,
+        "status": "UNVERIFIED",
+        "is_unverified": True,
+        "monthly_rent_cents": None,
+        "payment_summary": f"{len(matched)} unconfirmed rent deposit(s), {format_cents(total_cents)} total",
+        "source": "Unconfirmed rent-like inflows: " + "; ".join(sources),
+    }
 
 
 def get_properties_router(templates, get_session_dep):
@@ -74,12 +152,6 @@ def get_properties_router(templates, get_session_dep):
         reported_escrow_balance_cents = None
         calculated_escrow_balance_cents = 0
 
-        account_code_map = {
-            "loan_rocket_1000000001": 2110,
-            "loan_pnc_1000000002": 2120,
-            "loan_ccm_1000000003": 2130,
-        }
-
         if loan:
             fin_acct = session.get(FinancialAccount, loan.financial_account_id) if loan.financial_account_id else None
             inst = session.get(FinancialInstitution, fin_acct.institution_id) if fin_acct else None
@@ -102,8 +174,8 @@ def get_properties_router(templates, get_session_dep):
                 reported_escrow_balance_cents = latest_period.reported_escrow_balance_cents
 
             # Ledger-calculated principal from POSTED journal lines
-            code = account_code_map.get(loan.id)
-            if code:
+            code = loan.principal_ledger_code
+            if code is not None:
                 posted_lines = session.exec(
                     select(JournalEntryLine)
                     .join(JournalEntry, JournalEntryLine.journal_entry_id == JournalEntry.id)
@@ -183,36 +255,9 @@ def get_properties_router(templates, get_session_dep):
         if not lease_document and property_documents:
             lease_document = next((d for d in property_documents if d.document_type == "LEASE_AGREEMENT"), None)
 
-        detected_tenant = None
-        if prop.property_type == "RENTAL_INVESTMENT":
-            if property_id == "prop_tinsley_huntley":
-                detected_tenant = {
-                    "name": "Tyler J. Saxsma",
-                    "status": "UNVERIFIED",
-                    "is_unverified": True,
-                    "monthly_rent_cents": 260000,
-                    "monthly_rent_dollars": "2600.00",
-                    "security_deposit_cents": 200000,
-                    "security_deposit_dollars": "2000.00",
-                    "start_date": "2026-01-01",
-                    "end_date": "2026-12-31",
-                    "payment_summary": "6 Zelle Deposits ($9,683.00)",
-                    "source": "6 posted Zelle rent deposits ($9,683.00 total) from TYLER J SAXSMA in BofA Checking",
-                }
-            elif property_id == "prop_cimmaron_pingree":
-                detected_tenant = {
-                    "name": "",
-                    "status": "UNVERIFIED",
-                    "is_unverified": True,
-                    "monthly_rent_cents": None,
-                    "monthly_rent_dollars": "",
-                    "security_deposit_cents": None,
-                    "security_deposit_dollars": "",
-                    "start_date": "",
-                    "end_date": "",
-                    "payment_summary": "ATM Cash Deposits ($3,350.00)",
-                    "source": "Staged ATM cash rental deposits ($3,350.00 total) in CBD-1 review queue",
-                }
+        # An unverified tenant is inferred from this door's own bank activity,
+        # never assumed from a fixture. See infer_unverified_tenant.
+        detected_tenant = infer_unverified_tenant(session, property_id, lease)
 
         return templates.TemplateResponse(
             request=request,

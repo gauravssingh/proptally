@@ -17,35 +17,48 @@ from proptally.db.models import (
     TransactionSplit,
 )
 from proptally.db.schema import init_schema
-from proptally.domain.accounting.coa import seed_chart_of_accounts
-from proptally.domain.transactions.suggest import suggest_split_for_transaction
+from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
+from proptally.domain.fixtures.demo_seed import DEMO_VENDOR_RULES
+from proptally.domain.transactions.suggest import (
+    seed_vendor_rules,
+    suggest_split_for_transaction,
+)
 from proptally.web.app import create_app
 
 
-def test_auto_suggestion_rules():
-    # Tyler Saxsma Zelle rent
-    s1 = suggest_split_for_transaction("Zelle payment from TYLER J SAXSMA for rent", 48300)
-    assert s1 is not None
-    assert s1.property_id == "prop_tinsley_huntley"
-    assert s1.category == "RENT_INCOME"
+def test_auto_suggestion_rules(engine):
+    """A portfolio's own rules route its rent deposits; generic merchants stay generic.
 
-    # Millbrook ATM deposit
-    s2 = suggest_split_for_transaction("BKOFAMERICA ATM DEPOSIT CARPENTERSVILLE", 85000)
-    assert s2 is not None
-    assert s2.property_id == "prop_cimmaron_pingree"
-    assert s2.category == "RENT_INCOME"
-    assert s2.requires_client_confirmation is True
+    A named tenant and a branch-deposit pattern are portfolio data, so they come
+    from the portfolio's rule set (DEMO_VENDOR_RULES) rather than from the engine.
+    """
+    with Session(engine) as session:
+        ensure_entity_ledger_accounts(session)
+        seed_vendor_rules(session, DEMO_VENDOR_RULES)
 
-    # Hardware vendor
-    s3 = suggest_split_for_transaction("MENARDS CARPENTERSVILLE", -45000)
-    assert s3 is not None
-    assert s3.category == "REPAIRS"
-    assert s3.requires_cpa_review is True
+        # Tyler Saxsma Zelle rent
+        s1 = suggest_split_for_transaction("Zelle payment from TYLER J SAXSMA for rent", 48300, session=session)
+        assert s1 is not None
+        assert s1.property_id == "prop_tinsley_huntley"
+        assert s1.category == "RENT_INCOME"
 
-    # Personal restaurant
-    s4 = suggest_split_for_transaction("WOODLANDS RESTAURANT FAIRFAX VA", -5151)
-    assert s4 is not None
-    assert s4.category == "PERSONAL"
+        # Millbrook ATM deposit
+        s2 = suggest_split_for_transaction("BKOFAMERICA ATM DEPOSIT CARPENTERSVILLE", 85000, session=session)
+        assert s2 is not None
+        assert s2.property_id == "prop_cimmaron_pingree"
+        assert s2.category == "RENT_INCOME"
+        assert s2.requires_client_confirmation is True
+
+        # Hardware vendor (portfolio-independent rule)
+        s3 = suggest_split_for_transaction("MENARDS CARPENTERSVILLE", -45000, session=session)
+        assert s3 is not None
+        assert s3.category == "REPAIRS"
+        assert s3.requires_cpa_review is True
+
+        # Personal restaurant
+        s4 = suggest_split_for_transaction("WOODLANDS RESTAURANT FAIRFAX VA", -5151, session=session)
+        assert s4 is not None
+        assert s4.category == "PERSONAL"
 
 
 def test_review_queue_routes_and_multi_split(tmp_path):
@@ -55,7 +68,7 @@ def test_review_queue_routes_and_multi_split(tmp_path):
     init_schema(engine)
 
     with Session(engine) as session:
-        seed_chart_of_accounts(session)
+        ensure_entity_ledger_accounts(session)
         doc = Document(
             id="doc_1",
             file_sha256="abc123testsha",

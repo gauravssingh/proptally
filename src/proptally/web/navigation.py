@@ -5,9 +5,9 @@ duplicated as markup in the desktop sidebar and the mobile drawer. Doors come
 from the database, so adding a property to the portfolio is a data change, not
 a template change.
 
-`DOOR_SHORT_LABELS` supplies the compact label used by the mobile quick
-switcher and the door list; a door that is not listed falls back to a derived
-short name (street number plus street name, without the street-type suffix).
+`Property.short_label` supplies the compact label used by the mobile quick
+switcher and the door list; a door without one falls back to a derived short name
+(street number plus street name, without the street-type suffix).
 """
 
 from collections.abc import Iterable, Sequence
@@ -39,13 +39,10 @@ class NavSection:
     items: Sequence[NavItem]
 
 
-#: Doors grouped ahead of the primary residence, as in the portfolio view.
-DOOR_SHORT_LABELS = {
-    "prop_tinsley_huntley": "12307 Larkspur St",
-    "prop_cimmaron_pingree": "582 Foxglove Ct",
-    "prop_burkey_algonquin": "1017 Elderberry Dr",
-}
-
+#: Doors are grouped ahead of the primary residence, as in the portfolio view.
+#: Their compact labels come from `Property.short_label` when the owner set one,
+#: and are otherwise derived from the street address, so the shell never needs a
+#: list of a particular portfolio's properties.
 _STREET_SUFFIXES = {
     "st", "street", "dr", "drive", "cir", "circle", "ave", "avenue",
     "rd", "road", "ln", "lane", "ct", "court", "blvd", "boulevard",
@@ -70,7 +67,7 @@ def door_items(properties: Iterable[Property], active_property: Optional[str]) -
     return [
         {
             "id": prop.id,
-            "label": DOOR_SHORT_LABELS.get(prop.id) or _derived_short_label(prop),
+            "label": prop.short_label or _derived_short_label(prop),
             "full_name": prop.name,
             "place": f"{prop.city}, {prop.state}",
             "is_primary": prop.property_type != "RENTAL_INVESTMENT",

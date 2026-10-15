@@ -26,27 +26,15 @@ def get_mortgages_router(templates, get_session_dep):
         loans = session.exec(select(LoanAccount).where(LoanAccount.is_active == True)).all()
         loans_data = []
 
-        account_code_map = {
-            "loan_rocket_1000000001": 2110,
-            "loan_pnc_1000000002": 2120,
-            "loan_ccm_1000000003": 2130,
-        }
-
-        clearing_code_map = {
-            "loan_rocket_1000000001": 2115,
-            "loan_pnc_1000000002": 2125,
-            "loan_ccm_1000000003": 2135,
-        }
-
         for loan in loans:
             prop = session.get(Property, loan.property_id)
             fin_acct = session.get(FinancialAccount, loan.financial_account_id)
             inst = session.get(FinancialInstitution, fin_acct.institution_id) if fin_acct else None
 
             # 1. Ledger-Calculated Principal from strictly POSTED journal entry lines
-            code = account_code_map.get(loan.id)
+            code = loan.principal_ledger_code
             ledger_calculated_principal_cents = None
-            if code:
+            if code is not None:
                 posted_lines = session.exec(
                     select(JournalEntryLine)
                     .join(JournalEntry, JournalEntryLine.journal_entry_id == JournalEntry.id)
@@ -82,9 +70,9 @@ def get_mortgages_router(templates, get_session_dep):
                 principal_source = "UNAVAILABLE"
 
             # 3. Outstanding Clearing Balance (In-flight bank settlement vs confirmed application)
-            clr_code = clearing_code_map.get(loan.id)
+            clr_code = loan.clearing_ledger_code
             outstanding_clearing_balance_cents = 0
-            if clr_code:
+            if clr_code is not None:
                 clr_lines = session.exec(
                     select(JournalEntryLine)
                     .join(JournalEntry, JournalEntryLine.journal_entry_id == JournalEntry.id)

@@ -40,6 +40,16 @@ class AccountNotFoundError(PropTallyError):
     pass
 
 
+class LedgerCodeExhaustedError(PropTallyError):
+    """Raised when a portfolio has more entities of a class than the code ranges allow.
+
+    The ranges are generous but finite (see ``domain.accounting.coa.ALLOCATION_RANGES``)
+    and a silent fallback into another class's range would make a ledger account's
+    meaning ambiguous, so exhaustion fails loudly instead of guessing.
+    """
+    pass
+
+
 class TransactionAlreadyReversedError(PropTallyError):
     """Raised when attempting to reverse an already reversed journal entry."""
     pass

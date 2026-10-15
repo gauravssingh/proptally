@@ -78,30 +78,3 @@ def test_transactions_pagination_and_filtering(tmp_path):
         assert resp_create.status_code == 303
         assert resp_create.headers["location"] == "http://testserver/transactions?per_page=10&page=2"
 
-
-def test_live_poc_db_unverified_tenant_and_pagination():
-    """Verify live POC database has Tyler as unverified tenant and 578 paginated transactions."""
-    from pathlib import Path
-    db_path = Path("storage/client-portfolio.db")
-    if not db_path.exists():
-        return
-    app = create_app(db_url="sqlite:///storage/client-portfolio.db")
-    with TestClient(app) as client:
-        # Check unverified tenant on Alder
-        resp_t = client.get("/properties/prop_tinsley_huntley")
-        assert resp_t.status_code == 200
-        assert "Tyler J. Saxsma" in resp_t.text
-        assert "Unverified Tenant" in resp_t.text
-        assert "Upload Lease Agreement to Verify" in resp_t.text
-        assert "Inferred Rent" in resp_t.text
-
-        # Check transactions pagination
-        resp_tx = client.get("/transactions")
-        assert resp_tx.status_code == 200
-        assert "578 transactions recorded" in resp_tx.text
-        assert "Page 1 of 24" in resp_tx.text
-
-        # Check search filter for Tyler
-        resp_q = client.get("/transactions?q=saxsma")
-        assert resp_q.status_code == 200
-        assert "TYLER J SAXSMA" in resp_q.text
