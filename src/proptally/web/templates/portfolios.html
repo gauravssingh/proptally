@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Portfolios — PropTally{% endblock %}
+{% block content %}
+<div class="pt-stack pt-gap-6">
+
+    <div class="pt-stack pt-gap-1">
+        <h1 class="pt-fs-h2 pt-fw-bold">Your portfolios</h1>
+        <p class="pt-fs-caption pt-text-secondary">
+            Signed in as {{ context.user.display_name }} &lt;{{ context.user.email }}&gt;.
+            Each portfolio is a separate database; this page is the only place that looks
+            across them.
+        </p>
+    </div>
+
+    {% if error %}{{ ui.alert(variant="error", title="Not available", text=error) }}{% endif %}
+
+    <section class="pt-card">
+        <div class="pt-card__body">
+            <table class="pt-table">
+                <thead>
+                    <tr>
+                        <th>Portfolio</th>
+                        <th>Your role</th>
+                        <th>Doors</th>
+                        <th>Net equity</th>
+                        <th>Debt</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for portfolio in portfolios %}
+                    <tr>
+                        <td>
+                            <strong>{{ portfolio.name }}</strong>
+                            {% if portfolio.tenant_id == context.tenant.id %}
+                            <span class="pt-badge pt-badge--info">current</span>
+                            {% endif %}
+                            {% if not portfolio.available %}
+                            <div class="pt-fs-caption" style="color: var(--pt-warning, #fbbf24);">
+                                This portfolio's data could not be opened.
+                            </div>
+                            {% endif %}
+                        </td>
+                        <td title="{{ portfolio.role_description }}">{{ portfolio.role }}</td>
+                        <td>{{ portfolio.property_count }}</td>
+                        <td>{% if portfolio.net_equity_cents is not none %}{{ portfolio.net_equity_cents | format_cents }}{% else %}—{% endif %}</td>
+                        <td>{% if portfolio.total_debt_cents is not none %}{{ portfolio.total_debt_cents | format_cents }}{% else %}—{% endif %}</td>
+                        <td>
+                            <div class="pt-flex pt-flex-row pt-gap-2">
+                                {% if portfolio.tenant_id != context.tenant.id %}
+                                <form method="post" action="/portfolios/{{ portfolio.tenant_id }}/open">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <button class="pt-btn pt-btn--secondary pt-btn--sm" type="submit">Open</button>
+                                </form>
+                                {% endif %}
+                                {% if portfolio.can_export %}
+                                <a class="pt-btn pt-btn--secondary pt-btn--sm"
+                                   href="/portfolios/{{ portfolio.tenant_id }}/export"
+                                   title="Download this portfolio's ledger database and documents">Export</a>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <p class="pt-fs-caption pt-text-secondary">
+        An export contains one portfolio: its ledger database plus its document and photo
+        stores, with a manifest describing the export. It never contains another
+        portfolio, and it excludes the control plane (accounts and sessions).
+        Only an owner can export.
+    </p>
+
+    <a class="pt-btn pt-btn--secondary pt-btn--sm" href="/account">Account &amp; invitations</a>
+</div>
+{% endblock %}

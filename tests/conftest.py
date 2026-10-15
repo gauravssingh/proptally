@@ -86,6 +86,11 @@ def owner_fixture(tmp_path, monkeypatch) -> Iterator[Callable[..., SignedInOwner
     ``db_url`` points the owner's portfolio at a specific database file, which is how
     a test that needs a particular fixture database keeps working now that a session
     is required. Portfolios are otherwise isolated under their own storage root.
+
+    Pass ``app=`` to add a second (or third) person to an *existing* instance, which is
+    what a test about more than one account needs: two calls without it are two
+    separate servers with separate control planes, and neither can see the other's
+    users or invitations.
     """
     monkeypatch.delenv("PROPTALLY_ALLOW_REGISTRATION", raising=False)
     monkeypatch.delenv("PROPTALLY_SECURE_COOKIES", raising=False)
@@ -96,20 +101,22 @@ def owner_fixture(tmp_path, monkeypatch) -> Iterator[Callable[..., SignedInOwner
     def _make(
         db_url: Optional[str] = None,
         *,
+        app=None,
         demo_seed: bool = False,
         email: str = "owner@example.com",
         password: str = "owner-password-1",
         display_name: str = "Owner",
         portfolio_name: str = "Test Portfolio",
     ) -> SignedInOwner:
-        created["count"] += 1
-        storage = tmp_path / f"storage-{created['count']}"
-        app = create_app(
-            db_url=db_url,
-            system_db_url=f"sqlite:///{storage / 'system.db'}",
-            storage_root=str(storage),
-            demo_seed=False,
-        )
+        if app is None:
+            created["count"] += 1
+            storage = tmp_path / f"storage-{created['count']}"
+            app = create_app(
+                db_url=db_url,
+                system_db_url=f"sqlite:///{storage / 'system.db'}",
+                storage_root=str(storage),
+                demo_seed=False,
+            )
         client = TestClient(app)
         client.__enter__()
         started.append(client)

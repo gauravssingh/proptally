@@ -214,4 +214,10 @@ class TenantManager:
     # --- helpers -----------------------------------------------------------
 
     def tenant_exists(self, tenant_id: str) -> bool:
-        return tenant_db_path(tenant_id).exists()
+        """Whether this manager's root holds the portfolio's database.
+
+        Resolved through the manager rather than the module-level default, so a
+        manager pointed at a different storage root reports on the portfolios it
+        actually owns.
+        """
+        return self.paths(tenant_id).database.exists()

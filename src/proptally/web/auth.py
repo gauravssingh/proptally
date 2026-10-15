@@ -745,9 +745,20 @@ class AuthenticationDependency:
     rejects the request outright.
     """
 
-    def __init__(self, control_engine: Engine, tenant_manager: TenantManager):
+    def __init__(
+        self,
+        control_engine: Engine,
+        tenant_manager: TenantManager,
+        *,
+        require_mutating_role: bool = True,
+    ):
         self.control_engine = control_engine
         self.tenant_manager = tenant_manager
+        #: Whether an unsafe method also requires a mutating role. False for the one
+        #: operation that is about the session rather than the portfolio -- choosing
+        #: which portfolio the session is looking at -- because a read-only member
+        #: must still be able to leave a portfolio they were invited into.
+        self.require_mutating_role = require_mutating_role
         self.last_resolved: Optional[TenantContext] = None
 
     async def __call__(self, request: Request) -> TenantContext:
@@ -770,8 +781,8 @@ class AuthenticationDependency:
                 )
             # A read-only member may never change anything, so the role is checked
             # here rather than in each route: a route that forgets would otherwise
-            # silently accept the write.
-            if not context.can_mutate:
+            # silently accept the write. The session-scoped dependency opts out.
+            if self.require_mutating_role and not context.can_mutate:
                 raise AuthorizationError(
                     f"Role {context.role} may read this portfolio but not change it."
                 )

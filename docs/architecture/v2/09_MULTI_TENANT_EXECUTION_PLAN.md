@@ -430,12 +430,33 @@ to reversal.
    this is a scoped addition rather than a redesign. `TenantManager.drop_tenant_storage()`
    exists for the operator but no route calls it.
 
+### Delivered beyond the plan (deferred items closed or advanced)
+* **Cross-portfolio view — delivered.** `GET /portfolios` lists every portfolio the
+  account is a member of, with the member's own role and each portfolio's headline
+  figures, and lets a member switch the session's active portfolio. This is the
+  read-only "one reviewer across several portfolios" view the plan left open; a full
+  multi-client *editing* workbench is still not built, but the nav now has somewhere
+  to reach more than one portfolio from.
+* **Owner-facing portfolio export — delivered.** `GET /portfolios/{id}/export` returns
+  a `.tar.gz` of one portfolio: a WAL-safe `VACUUM INTO` snapshot of its database, its
+  `vault/` and `photos/`, and a `manifest.json`. Owner-only, and resolved through the
+  requesting account's own memberships, so a portfolio id from elsewhere is not found.
+* **Portfolio delete — deliberately not built.** It is irreversible, and the plan left
+  it to the user to decide what deletion should mean (immediate removal versus an
+  export-then-remove flow, and whether anything is retained). `TenantManager.drop_tenant_storage()`
+  exists for an operator with shell access; no route calls it. Export delivers the part
+  of that need that carries no risk of data loss.
+* **`PROPTALLY_DEMO_SEED` posture — decided.** Demo seeding defaults off and requires an
+  explicit `PROPTALLY_DEMO_PASSWORD`; enabling it without one reports the mistake and
+  seeds nothing rather than minting a guessable credential. Demo data is also per
+  portfolio and opt-in from the UI, so the global flag has no place in a production
+  deployment and can be dropped whenever it is convenient to remove the code path.
+
 ### Still open for the user
-* Whether an owner may delete or export their own portfolio from the UI.
-* Whether one reviewer account should span several portfolios in one screen.
-* Whether login throttling must survive a multi-worker deployment (currently
-  per-process, see `ADR-010`).
-* Whether the reference deployment should keep `PROPTALLY_DEMO_SEED` available at all in
-  production, now that the demo portfolio is opt-in per portfolio rather than global.
+* Portfolio deletion semantics (above).
+* Login throttling and the session store are per-process; a multi-worker deployment
+  multiplies the login allowance and re-opens databases per worker (`ADR-010`).
+* Whether a reviewer should be able to *work across* several portfolios in one
+  screen rather than switching between them.
 
 *End of Multi-Tenant Self-Hosted Architecture & Execution Plan.*

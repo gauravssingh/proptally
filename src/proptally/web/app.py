@@ -41,6 +41,7 @@ from proptally.web.routes.auth import get_auth_router
 from proptally.web.routes.dashboard import get_dashboard_router
 from proptally.web.routes.ingestion import get_ingestion_router
 from proptally.web.routes.mortgages import get_mortgages_router
+from proptally.web.routes.portfolios import get_portfolios_router
 from proptally.web.routes.properties import get_properties_router
 from proptally.web.routes.reconciliation import get_reconciliation_router
 from proptally.web.routes.settings import get_settings_router
@@ -136,6 +137,11 @@ def create_app(
     # --- Authentication ---------------------------------------------------
 
     auth_dep = AuthenticationDependency(control_engine, tenant_manager)
+    # Same authentication, without the mutating-role requirement: used only by the
+    # operation that picks which portfolio the session is viewing.
+    session_dep = AuthenticationDependency(
+        control_engine, tenant_manager, require_mutating_role=False
+    )
 
     @app.exception_handler(AuthenticationRequired)
     async def _unauthenticated(request, exc):
@@ -198,6 +204,10 @@ def create_app(
     # Unauthenticated: sign-in, registration, invitations, password reset.
     app.include_router(get_auth_router(templates, control_engine, tenant_manager, rate_limiter, auth_dep))
 
+    # The cross-portfolio screen spans portfolios rather than serving the active one,
+    # so it takes the authentication dependency directly instead of a tenant session.
+    app.include_router(get_portfolios_router(templates, auth_dep, session_dep))
+
     # Everything else requires an authenticated portfolio context. Declaring it here
     # means a route added later cannot be reached without one.
     protected = [
@@ -217,6 +227,7 @@ def create_app(
     app.state.control_engine = control_engine
     app.state.tenant_manager = tenant_manager
     app.state.auth_dependency = auth_dep
+    app.state.session_dependency = session_dep
 
     return app
 
