@@ -26,6 +26,7 @@ from proptally.db.models import (
 )
 from proptally.domain.accounting import coa
 from proptally.domain.accounting.coa import (
+    STANDARD_ACCOUNTS,
     ALLOCATION_RANGES,
     CARD_LIABILITY,
     DEPOSIT,
@@ -189,36 +190,72 @@ def test_standard_accounts_are_seeded_once_and_shared(session: Session):
 def test_escaping_a_class_range_fails_loudly(session: Session):
     """Exhaustion raises rather than silently borrowing another class's range.
 
-    A guessed code would give one ledger account two meanings and make every
-    figure derived from it ambiguous, so the allocator refuses instead.
+    A guessed code would give one ledger account two meanings and make every figure
+    derived from it ambiguous, so the allocator refuses instead. Capacity is reached
+    by declaring entities -- the allocator hands out one account per entity and
+    adopts an existing compatible account rather than minting a second one.
     """
-    seed_standard_accounts(session)
-    start, stop, step = ALLOCATION_RANGES[CARD_LIABILITY][0]
-    capacity = len(range(start, stop + 1, step))
-    for _ in range(capacity):
-        allocate_ledger_account(session, CARD_LIABILITY, "card")
-    session.commit()
+    session.add(FinancialInstitution(id="inst_exhaust", name="Bank"))
+    session.flush()
+    start_, stop, step = ALLOCATION_RANGES[CARD_LIABILITY][0]
+    capacity = len(range(start_, stop + 1, step))
+    for index in range(capacity):
+        _account(session, f"acct_exhaust_{index}", "CREDIT_CARD", BASE + timedelta(minutes=index), "inst_exhaust")
+    session.flush()
+    ensure_entity_ledger_accounts(session)
 
+    codes = {
+        session.get(FinancialAccount, f"acct_exhaust_{index}").ledger_account_code
+        for index in range(capacity)
+    }
+    assert len(codes) == capacity, "each declared card must hold its own account"
+
+    _account(session, "acct_exhaust_one_too_many", "CREDIT_CARD", BASE + timedelta(days=1), "inst_exhaust")
+    session.flush()
     with pytest.raises(LedgerCodeExhaustedError):
-        allocate_ledger_account(session, CARD_LIABILITY, "one card too many")
+        ensure_entity_ledger_accounts(session)
 
 
-def test_allocator_skips_codes_already_taken_by_other_classes(session: Session):
-    """Ranges may pass over a standard account; the allocator steps around it.
+def test_adopting_is_idempotent_and_never_takes_a_standard_account(session: Session):
+    """The escrow range passes over the shared receivable and does not re-mint.
 
-    The escrow range spans 1110-1490, which contains the shared Rent Receivable
-    account (1210). Escrow allocation must skip it rather than replace it.
+    The escrow range spans 1110-1490, which contains the standard Rent Receivable
+    account (1210). An entity must never be handed that account -- it means
+    something else -- and an entity that already holds a code keeps it, so posting
+    history stays attributed to the account it was written against.
     """
     seed_standard_accounts(session)
-    receivable = session.get(LedgerAccount, coa.RENT_RECEIVABLE_CODE)
-    assert receivable is not None
+    session.add(FinancialInstitution(id="inst_escrow", name="Bank"))
+    session.flush()
+    for index in range(4):
+        _account(session, f"acct_escrow_{index}", "CHECKING", BASE + timedelta(minutes=index), "inst_escrow")
+        session.flush()
+        session.add(Property(
+            id=f"prop_escrow_{index}", name=f"Door {index}", address_line1=f"{index} St",
+            city="Springfield", zip_code="62701", property_type="RENTAL_INVESTMENT",
+            created_at=BASE + timedelta(hours=1, minutes=index),
+        ))
+        mortgage_account = _account(
+            session, f"acct_escrow_mtg_{index}", "MORTGAGE",
+            BASE + timedelta(hours=2, minutes=index), "inst_escrow",
+        )
+        session.flush()
+        session.add(LoanAccount(
+            id=f"loan_escrow_{index}", financial_account_id=mortgage_account.id,
+            property_id=f"prop_escrow_{index}", loan_number=f"E-{index}",
+            created_at=BASE + timedelta(hours=2, minutes=index),
+        ))
+    session.flush()
 
-    allocated = [
-        allocate_ledger_account(session, ESCROW, f"escrow {index}").code
-        for index in range(4)
-    ]
-    session.commit()
+    ensure_entity_ledger_accounts(session)
 
-    assert coa.RENT_RECEIVABLE_CODE not in allocated
-    assert len(set(allocated)) == 4
-    assert session.get(LedgerAccount, coa.RENT_RECEIVABLE_CODE).name == receivable.name
+    escrow_codes = [session.get(LoanAccount, f"loan_escrow_{i}").escrow_ledger_code for i in range(4)]
+    assert len(set(escrow_codes)) == 4, "each loan must own its own escrow account"
+    assert coa.RENT_RECEIVABLE_CODE not in escrow_codes
+    assert session.get(LedgerAccount, coa.RENT_RECEIVABLE_CODE).name == "Rent Receivable (Accrued)"
+
+    # Re-running changes nothing: the accounts are adopted, not re-created.
+    before = {loan.id: loan.escrow_ledger_code for loan in session.exec(select(LoanAccount)).all()}
+    ensure_entity_ledger_accounts(session)
+    after = {loan.id: loan.escrow_ledger_code for loan in session.exec(select(LoanAccount)).all()}
+    assert before == after

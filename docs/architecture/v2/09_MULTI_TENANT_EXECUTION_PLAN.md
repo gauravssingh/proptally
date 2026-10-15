@@ -286,14 +286,43 @@ CSRF token returns 403; a second owner receives 404 for the first owner's proper
 sees only their own portfolio; sign-out revokes the session; two tenant databases exist
 on disk; and the listener is bound to `127.0.0.1` only.
 
-### Guard defect found and fixed during verification
-The migrator refused a second run by comparing the source database's **file** hash.
-These databases run in WAL mode, so committed pages can live in the `-wal` sidecar and
-a later checkpoint rewrites the main file: the same logical database produced a
-different hash and the refusal silently did not fire. It reproduced as an
-order-dependent test failure that passed in isolation. The guard now keys on the source
-**path**, with the hash retained as a record of what was migrated, plus an explicit
-`--force-remigrate` for the deliberate case of restoring an older copy.
+### Defects found and fixed during end-to-end verification
+
+**1. Migrating a real legacy database zeroed its debt and cash flow.** The first
+attempt at the migration was run against the client's actual
+`storage/proptally.db` (7 journal entries, 30 lines, 3 properties, 3 loans, schema
+version 5, no ledger-code columns). The legacy chart of accounts already contained
+an account per entity under the original numbering (1010 checking, 1110 escrow,
+1510-1530 property assets, 2010/2020 cards, 2110-2130 mortgage debt with
+2115/2125/2135 clearing), and the posted history referenced those codes. The
+allocator only skipped codes that were already occupied, so it handed every entity a
+*fresh* code instead — after which metrics, which derive their code sets from the
+entity rows, no longer recognised the accounts their own history used. Reported
+figures went from \$102,822,821 of debt and \$35,972 of CADS to zero.
+
+Fixed by making allocation **adopt** an existing compatible account rather than walk
+past it: a code already held by a ledger account is claimed by the next entity of
+that class when it is not a standard account, its type matches the class, and no
+other entity has claimed it. Re-running the same real database now reproduces all
+eleven reported figures exactly (`net_equity_cents`, `total_debt_cents`,
+`total_valuation_cents`, `noi_cents`, `ocf_cents`, `cads_cents`, `goi_cents`,
+`principal_paid_cents`, `mortgage_interest_cents`, `escrow_funded_cents`,
+`cash_rent_collected_cents`), and the entities reclaim their original numbers.
+Two tests were added for it: a legacy-chart database keeps its codes, and an existing
+account of the wrong class is never adopted.
+
+This case is why the plan's verification gate is an end-to-end check on real data
+rather than only a synthetic fixture: a fresh database has no pre-existing chart, so
+the original test could not have caught it.
+
+**2. The migrator's duplicate-run guard did not fire.** The guard compared the source
+database's **file** hash. These databases run in WAL mode, so committed pages can live
+in the `-wal` sidecar and a later checkpoint rewrites the main file: the same logical
+database produced a different hash and the refusal silently did not fire. It
+reproduced as an order-dependent test failure that passed in isolation. The guard now
+keys on the source **path**, with the hash retained as a record of what was migrated,
+plus an explicit `--force-remigrate` for the deliberate case of restoring an older
+copy.
 
 ### Deviation from the plan as written
 * **Ingestion entity coupling moved from M1 to M4.** The parser and

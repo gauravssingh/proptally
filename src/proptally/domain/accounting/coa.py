@@ -174,32 +174,110 @@ def _occupied_codes(session: Session) -> set:
     return {row for row in session.exec(select(LedgerAccount.code)).all()}
 
 
-def _next_code(session: Session, allocation_class: str) -> int:
-    """The first unoccupied code in the class's ranges."""
-    occupied = _occupied_codes(session)
+def _ledger_account_types(session: Session) -> dict:
+    """``{code: account_type}`` for every ledger account that already exists."""
+    return {
+        row.code: row.account_type
+        for row in session.exec(select(LedgerAccount)).all()
+    }
+
+
+def _claimed_codes(session: Session) -> set:
+    """Codes already recorded on an entity, so two entities never share an account."""
+    claimed = set()
+    for row in session.exec(
+        select(Property.asset_ledger_code).where(Property.asset_ledger_code.is_not(None))
+    ).all():
+        claimed.add(row)
+    for row in session.exec(
+        select(FinancialAccount.ledger_account_code).where(
+            FinancialAccount.ledger_account_code.is_not(None)
+        )
+    ).all():
+        claimed.add(row)
+    for column in (
+        LoanAccount.principal_ledger_code,
+        LoanAccount.clearing_ledger_code,
+        LoanAccount.escrow_ledger_code,
+    ):
+        for row in session.exec(select(column).where(column.is_not(None))).all():
+            claimed.add(row)
+    return claimed
+
+
+def _resolve_code(
+    session: Session,
+    allocation_class: str,
+    *,
+    existing_types: Optional[dict] = None,
+    claimed: Optional[set] = None,
+) -> tuple:
+    """The next code for ``allocation_class``, and the row it already belongs to.
+
+    A code that is already held by a ledger account is **adopted** rather than walked
+    past, when that account can only have been created for this entity: it is not one
+    of the standard accounts, its type matches the class, and no other entity has
+    claimed it. Skipping it instead would hand a database created before per-entity
+    ledgers a fresh set of accounts, leaving its posted history pointing at codes no
+    entity owns -- silently zeroing the debt and cash-flow figures those lines carry.
+
+    Adopting is also what makes the numbering deterministic: on a fresh database each
+    class walks its own range, and on a migrated one the original accounts are claimed
+    back in the same order they were created.
+    """
+    existing_types = _ledger_account_types(session) if existing_types is None else existing_types
+    claimed = _claimed_codes(session) if claimed is None else claimed
+    expected_type = _CLASS_SHAPE[allocation_class][0]
+    standard_codes = {spec["code"] for spec in STANDARD_ACCOUNTS}
+
     for start, stop, step in ALLOCATION_RANGES[allocation_class]:
         for code in range(start, stop + 1, step):
-            if code not in occupied:
-                return code
+            if code in claimed or code in standard_codes:
+                continue
+            owner_type = existing_types.get(code)
+            if owner_type is None:
+                return code, None
+            if owner_type == expected_type:
+                return code, code
     raise LedgerCodeExhaustedError(
         f"No free ledger account code left for {allocation_class}. "
         f"Ranges tried: {ALLOCATION_RANGES[allocation_class]}."
     )
 
 
-def allocate_ledger_account(session: Session, allocation_class: str, name: str) -> LedgerAccount:
-    """Creates one ledger account in the next free code of ``allocation_class``."""
+def allocate_ledger_account(
+    session: Session,
+    allocation_class: str,
+    name: str,
+    *,
+    existing_types: Optional[dict] = None,
+    claimed: Optional[set] = None,
+) -> LedgerAccount:
+    """The ledger account for the next entity of ``allocation_class``.
+
+    Returns an existing account when the class's next code is already held by a
+    compatible account (the migrated-database case) and creates one otherwise.
+    """
     if allocation_class not in ALLOCATION_RANGES:
         raise ValueError(f"Unknown ledger allocation class: {allocation_class!r}")
-    account_type, normal_balance = _CLASS_SHAPE[allocation_class]
-    record = LedgerAccount(
-        code=_next_code(session, allocation_class),
-        name=name,
-        account_type=account_type,
-        normal_balance=normal_balance,
+
+    code, existing = _resolve_code(
+        session, allocation_class, existing_types=existing_types, claimed=claimed
     )
+    if existing is not None:
+        record = session.get(LedgerAccount, code)
+        if claimed is not None:
+            claimed.add(code)
+        return record
+
+    account_type, normal_balance = _CLASS_SHAPE[allocation_class]
+    record = LedgerAccount(code=code, name=name, account_type=account_type, normal_balance=normal_balance)
     session.add(record)
     session.flush()
+    if claimed is not None:
+        claimed.add(code)
+    if existing_types is not None:
+        existing_types[code] = account_type
     return record
 
 
@@ -211,7 +289,13 @@ def _loan_label(session: Session, loan: LoanAccount) -> str:
     return loan.loan_number or loan.id
 
 
-def allocate_loan_ledger_accounts(session: Session, loan: LoanAccount) -> None:
+def allocate_loan_ledger_accounts(
+    session: Session,
+    loan: LoanAccount,
+    *,
+    existing_types: Optional[dict] = None,
+    claimed: Optional[set] = None,
+) -> None:
     """Assigns the principal, clearing and escrow ledger accounts for one loan.
 
     All three are allocated together because the mortgage lifecycle always needs
@@ -219,9 +303,18 @@ def allocate_loan_ledger_accounts(session: Session, loan: LoanAccount) -> None:
     debits clearing, and escrow funding debits the reserve.
     """
     label = _loan_label(session, loan)
-    principal = allocate_ledger_account(session, MORTGAGE_PRINCIPAL, f"Mortgage Debt: {label}")
-    clearing = allocate_ledger_account(session, MORTGAGE_CLEARING, f"Mortgage Clearing: {label}")
-    escrow = allocate_ledger_account(session, ESCROW, f"Servicer Escrow Reserve: {label}")
+    principal = allocate_ledger_account(
+        session, MORTGAGE_PRINCIPAL, f"Mortgage Debt: {label}",
+        existing_types=existing_types, claimed=claimed,
+    )
+    clearing = allocate_ledger_account(
+        session, MORTGAGE_CLEARING, f"Mortgage Clearing: {label}",
+        existing_types=existing_types, claimed=claimed,
+    )
+    escrow = allocate_ledger_account(
+        session, ESCROW, f"Servicer Escrow Reserve: {label}",
+        existing_types=existing_types, claimed=claimed,
+    )
     loan.principal_ledger_code = principal.code
     loan.clearing_ledger_code = clearing.code
     loan.escrow_ledger_code = escrow.code
@@ -229,7 +322,13 @@ def allocate_loan_ledger_accounts(session: Session, loan: LoanAccount) -> None:
     session.flush()
 
 
-def allocate_account_ledger_account(session: Session, account: FinancialAccount) -> Optional[int]:
+def allocate_account_ledger_account(
+    session: Session,
+    account: FinancialAccount,
+    *,
+    existing_types: Optional[dict] = None,
+    claimed: Optional[set] = None,
+) -> Optional[int]:
     """Assigns the ledger account for a deposit or credit-card account.
 
     Mortgage accounts have no ledger account of their own: their debt and clearing
@@ -243,17 +342,27 @@ def allocate_account_ledger_account(session: Session, account: FinancialAccount)
     else:
         return None
 
-    record = allocate_ledger_account(session, allocation_class, f"{prefix}: {account.account_name}")
+    record = allocate_ledger_account(
+        session, allocation_class, f"{prefix}: {account.account_name}",
+        existing_types=existing_types, claimed=claimed,
+    )
     account.ledger_account_code = record.code
     session.add(account)
     session.flush()
     return record.code
 
 
-def allocate_property_ledger_account(session: Session, prop: Property) -> None:
+def allocate_property_ledger_account(
+    session: Session,
+    prop: Property,
+    *,
+    existing_types: Optional[dict] = None,
+    claimed: Optional[set] = None,
+) -> None:
     """Assigns the fixed-asset ledger account for one property."""
     record = allocate_ledger_account(
-        session, PROPERTY_ASSET, f"Property Asset: {prop.name or prop.address_line1 or prop.id}"
+        session, PROPERTY_ASSET, f"Property Asset: {prop.name or prop.address_line1 or prop.id}",
+        existing_types=existing_types, claimed=claimed,
     )
     prop.asset_ledger_code = record.code
     session.add(prop)
@@ -274,6 +383,11 @@ def ensure_entity_ledger_accounts(session: Session, *, commit: bool = True) -> d
     seed_standard_accounts(session)
 
     allocated = {"properties": 0, "accounts": 0, "loans": 0}
+    # Shared across the pass: what accounts exist, and which codes an entity has
+    # already claimed. Recomputing per allocation would also be correct, but this
+    # keeps a first-time provisioning of a portfolio to a handful of queries.
+    existing_types = _ledger_account_types(session)
+    claimed = _claimed_codes(session)
 
     properties = session.exec(
         select(Property)
@@ -281,7 +395,7 @@ def ensure_entity_ledger_accounts(session: Session, *, commit: bool = True) -> d
         .order_by(Property.created_at, Property.id)
     ).all()
     for prop in properties:
-        allocate_property_ledger_account(session, prop)
+        allocate_property_ledger_account(session, prop, existing_types=existing_types, claimed=claimed)
         allocated["properties"] += 1
 
     accounts = session.exec(
@@ -291,7 +405,9 @@ def ensure_entity_ledger_accounts(session: Session, *, commit: bool = True) -> d
         .order_by(FinancialAccount.created_at, FinancialAccount.id)
     ).all()
     for account in accounts:
-        if allocate_account_ledger_account(session, account) is not None:
+        if allocate_account_ledger_account(
+            session, account, existing_types=existing_types, claimed=claimed
+        ) is not None:
             allocated["accounts"] += 1
 
     loans = session.exec(
@@ -300,7 +416,9 @@ def ensure_entity_ledger_accounts(session: Session, *, commit: bool = True) -> d
         .order_by(LoanAccount.created_at, LoanAccount.id)
     ).all()
     for loan in loans:
-        allocate_loan_ledger_accounts(session, loan)
+        allocate_loan_ledger_accounts(
+            session, loan, existing_types=existing_types, claimed=claimed
+        )
         allocated["loans"] += 1
 
     if commit:
