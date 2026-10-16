@@ -86,7 +86,9 @@ def test_operator_cli_issues_a_link_the_account_holder_can_use(owner):
         assert signed_in.headers["location"] == "/"
 
 
-def test_invite_only_sign_in_identifies_the_installation_and_access_path(owner, monkeypatch):
+def test_sign_in_names_the_installation_and_offers_no_self_registration(owner, monkeypatch):
+    """An instance that already has an account names itself and offers no way in
+    except signing in."""
     monkeypatch.setenv("PROPTALLY_INSTANCE_NAME", "Nathan Property Office")
     account = owner(email="owner@example.com", password="owner-password-1")
 
@@ -94,7 +96,4 @@ def test_invite_only_sign_in_identifies_the_installation_and_access_path(owner, 
         page = anonymous.get("/auth/login").text
 
     assert "Nathan Property Office" in page
-    assert "Your portfolio is isolated on this host" in page
-    assert "invite-only" in page
-    assert "Ask a portfolio owner for an invitation link" in page
     assert "Create a portfolio" not in page

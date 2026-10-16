@@ -2,39 +2,41 @@
 {% block title %}Sign in — PropTally{% endblock %}
 
 {# ---------------------------------------------------------------------------
-   Embedded single-screen sign-in.
+   Embedded single-screen sign-in, with no card.
 
-   The whole viewport is one continuous scene; the form is a glass card that
-   sits inside it rather than beside it. Below lg the scene is dropped and the
-   card is centred on an ambient gradient (auth.css), so a phone gets a plain
-   high-contrast form instead of a cropped illustration.
+   The whole viewport is one continuous scene and the form sits directly on it:
+   a narrow column of fields, each with one leading icon, over a soft wash that
+   has no edges. Below lg the scene is dropped for an ambient gradient.
 
    Positioning lives in `.auth-panel`'s lg rule rather than in the markup:
-   `absolute right-12 top-1/2` would offset a static card on mobile, so the
-   breakpoint has to own it.
+   `absolute right-12 top-1/2` would offset a static form on mobile.
    --------------------------------------------------------------------------- #}
 
 {% block shell %}
 <div class="auth-root relative h-screen w-full overflow-hidden">
     <img class="auth-scene absolute inset-0 w-full h-full object-cover z-0"
          src="/static/img/login-neighborhood.svg" alt="">
+    <div class="auth-glow" aria-hidden="true"></div>
 
-    <div class="auth-panel w-full max-w-md z-10">
-        <div class="auth-card bg-white/80 backdrop-blur-md rounded-2xl border border-white/50 shadow-2xl shadow-slate-900/10 p-8">
+    <div class="auth-panel w-full z-10">
+        <div class="auth-form">
 
             <div class="flex items-center gap-3">
                 <span class="auth-mark">P</span>
                 <span>
                     <span class="block text-xl font-bold tracking-tight text-slate-900">PropTally</span>
+                    {% if instance_name != "PropTally" %}
                     <span class="auth-instance">
                         <span class="auth-instance__dot" aria-hidden="true"></span>
-                        {{ instance_name if instance_name != "PropTally" else "Local instance" }}
+                        {{ instance_name }}
                     </span>
+                    {% endif %}
                 </span>
             </div>
 
-            <h1 class="mt-6 text-2xl font-bold tracking-tight text-slate-900">Welcome back</h1>
-            <p class="mt-1 text-sm text-slate-500">Your portfolio is isolated on this host.</p>
+            {# Heading kept for screen-reader structure only; the visible page is
+               the mark and the form. #}
+            <h1 class="pt-sr-only">Sign in to PropTally</h1>
 
             {% if error %}
             <div class="mt-6">{{ ui.alert(variant="error", title="Could not sign in", text=error) }}</div>
@@ -45,19 +47,23 @@
                 <input type="hidden" name="next" value="{{ next_url }}">
 
                 <div class="flex flex-col gap-4">
-                    {{ ui.text_field("email", "Email", value=email or "", type="email", required=true,
-                                     placeholder="name@company.com",
-                                     extra='autocomplete="email" autofocus') }}
+                    <div class="pt-field">
+                        <label class="pt-field__label" for="email">Email<span class="pt-field__required" aria-hidden="true">*</span></label>
+                        <div class="auth-input">
+                            <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("mail", "md") }}</span>
+                            <input type="email" id="email" name="email" value="{{ email or '' }}"
+                                   placeholder="name@company.com"
+                                   required aria-required="true" autocomplete="email" autofocus>
+                        </div>
+                    </div>
 
-                    {# Written out rather than composed from text_field(): the
-                       reveal control has to sit inside the field, and "Forgot
-                       password?" shares the label's row. #}
                     <div class="pt-field">
                         <div class="auth-row">
                             <label class="pt-field__label" for="password">Password<span class="pt-field__required" aria-hidden="true">*</span></label>
                             <a class="auth-link" href="/auth/reset">Forgot password?</a>
                         </div>
-                        <div class="auth-password">
+                        <div class="auth-input auth-password">
+                            <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("lock", "md") }}</span>
                             <input type="password" id="password" name="password"
                                    required aria-required="true" autocomplete="current-password">
                             <button type="button" class="auth-toggle"
@@ -79,14 +85,13 @@
                 </div>
             </form>
 
-            <div class="auth-notice">
-                <span class="auth-notice__icon" aria-hidden="true">🔒</span>
-                {% if registration_open %}
+            {% if registration_open %}
+            {# Only a fresh, account-less instance shows anything here: without it
+               there is no route to /auth/register from the sign-in page. #}
+            <div class="auth-notice mt-6">
                 <span>No account yet? <a href="/auth/register">Create a portfolio</a>.</span>
-                {% else %}
-                <span>This installation is invite-only. Ask a portfolio owner for an invitation link.</span>
-                {% endif %}
             </div>
+            {% endif %}
 
         </div>
     </div>

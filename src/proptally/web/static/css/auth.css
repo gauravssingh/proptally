@@ -6,9 +6,14 @@
 
    Brand primary: #00684A (hover #00523A, focus ring rgba(0, 104, 74, 0.4)).
 
-   The markup for this page uses utility class names for layout and type, and
-   the handful of named classes at the bottom for the parts a utility cannot
-   express (brand colour, focus ring, the password toggle, the loading state).
+   There is no card. The form sits directly on the illustration: a compact
+   column of inputs with leading icons. Legibility over the artwork comes from
+   the fields' own translucent fill and from `.auth-glow`, a soft radial wash
+   with no edges to read as a panel (delete that rule for a completely bare
+   form).
+
+   Markup uses utility class names for layout and type; the named classes below
+   carry everything a utility cannot express.
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
@@ -28,72 +33,23 @@
 .flex { display: flex; }
 .flex-col { flex-direction: column; }
 .items-center { align-items: center; }
-.justify-between { justify-content: space-between; }
-.gap-2 { gap: 0.5rem; }
 .gap-3 { gap: 0.75rem; }
 .gap-4 { gap: 1rem; }
-.mt-1 { margin-top: 0.25rem; }
 .mt-2 { margin-top: 0.5rem; }
 .mt-6 { margin-top: 1.5rem; }
-.p-3 { padding: 0.75rem; }
-.p-8 { padding: 2rem; }
-.right-12 { right: 3rem; }
-.top-1\/2 { top: 50%; }
-.-translate-y-1\/2 { transform: translateY(-50%); }
-.max-w-md { max-width: 28rem; }
 
 /* --------------------------------------------------------------------------
    2. Type utilities
    -------------------------------------------------------------------------- */
-.text-2xl { font-size: 1.5rem; line-height: 2rem; }
 .text-xl { font-size: 1.25rem; line-height: 1.75rem; }
-.text-sm { font-size: 0.875rem; line-height: 1.25rem; }
-.text-xs { font-size: 0.75rem; line-height: 1rem; }
 .font-bold { font-weight: 700; }
-.font-mono {
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-}
 .tracking-tight { letter-spacing: -0.015em; }
 .text-slate-900 { color: #0f172a; }
-.text-slate-600 { color: #475569; }
-.text-slate-500 { color: #64748b; }
-.text-white { color: #ffffff; }
 
 /* --------------------------------------------------------------------------
-   3. Surfaces: the glass card, the notice banner
+   3. Scene, panel, glow
    -------------------------------------------------------------------------- */
-.rounded-lg { border-radius: 0.5rem; }
-.rounded-xl { border-radius: 0.75rem; }
-.rounded-2xl { border-radius: 1rem; }
-.border { border-width: 1px; border-style: solid; }
-.bg-white\/80 { background-color: rgba(255, 255, 255, 0.8); }
-.bg-white\/45 { background-color: rgba(255, 255, 255, 0.45); }
-.border-white\/50 { border-color: rgba(255, 255, 255, 0.5); }
-.border-white\/40 { border-color: rgba(255, 255, 255, 0.4); }
-.border-slate-200\/50 { border-color: rgba(226, 232, 240, 0.5); }
-.backdrop-blur-md { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
-.backdrop-blur-sm { backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
-
-/* Tailwind's shadow colour hook, so `shadow-2xl shadow-slate-900/10` reads as
-   written rather than as two unrelated declarations. */
-.shadow-slate-900\/10 { --auth-shadow-color: rgba(15, 23, 42, 0.1); }
-.shadow-2xl {
-    box-shadow:
-        0 25px 50px -12px var(--auth-shadow-color, rgba(15, 23, 42, 0.25)),
-        0 12px 24px -12px var(--auth-shadow-color, rgba(15, 23, 42, 0.25));
-}
-
-/* --------------------------------------------------------------------------
-   4. Brand colour
-   -------------------------------------------------------------------------- */
-.bg-brand { background-color: #00684A; }
-.text-brand { color: #00684A; }
-.border-brand { border-color: #00684A; }
-
-/* --------------------------------------------------------------------------
-   5. The scene, the panel and the card
-   -------------------------------------------------------------------------- */
-/* Hidden below lg: a phone gets an ambient gradient and a plain card, not a
+/* Hidden below lg: a phone gets an ambient gradient and a bare form, not a
    cropped illustration. */
 .auth-scene {
     display: none;
@@ -105,14 +61,14 @@
     z-index: 0;
 }
 
-/* Mobile and tablet: no scene, just an ambient gradient, and the card centred
-   in the viewport with nothing behind it to fight the text. */
 .auth-root {
     position: relative;
     min-height: 100dvh;
     overflow: hidden;
     background-image: linear-gradient(160deg, #EAF4FD 0%, #F4FAF7 55%, #E5F3EA 100%);
 }
+
+.auth-glow { display: none; }
 
 .auth-panel {
     position: relative;
@@ -124,64 +80,59 @@
     padding: 1.5rem;
 }
 
-.auth-card {
+/* The form: no background, no border, no shadow. Just a column. */
+.auth-form {
     width: 100%;
-    max-width: 28rem;
-    padding: 2rem;
-    border-radius: 1rem;
-    border: 1px solid rgba(226, 232, 240, 0.9);
-    background-color: #ffffff;
-    /* Nothing is behind the card on small screens, so the blur would be a
-       compositing cost with no visible effect. The lg rule turns it on. */
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    box-shadow:
-        0 25px 50px -12px rgba(15, 23, 42, 0.1),
-        0 12px 24px -12px rgba(15, 23, 42, 0.1);
+    max-width: 24rem;
 }
 
 @media (min-width: 1024px) {
     .auth-scene { display: block; }
 
-    .auth-root {
-        background-image: none;
+    .auth-root { background-image: none; }
+
+    /* An edgeless wash over the right third, so the labels and inputs keep their
+       contrast against whatever the scene is doing underneath. */
+    .auth-glow {
+        display: block;
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        background-image: radial-gradient(
+            closest-side at 76% 50%,
+            rgba(255, 255, 255, 0.82),
+            rgba(255, 255, 255, 0.45) 62%,
+            rgba(255, 255, 255, 0) 100%
+        );
     }
 
-    /* The card floats inside the illustration rather than beside it. */
     .auth-panel {
         display: block;
         min-height: 0;
         padding: 0;
         position: absolute;
-        right: 3rem;
+        right: 4rem;
         top: 50%;
         transform: translateY(-50%);
         width: 100%;
-        max-width: 28rem;
-    }
-
-    .auth-card {
-        border-color: rgba(255, 255, 255, 0.5);
-        background-color: rgba(255, 255, 255, 0.8);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
+        max-width: 24rem;
     }
 }
 
 /* --------------------------------------------------------------------------
-   6. Embedded card contents
+   4. Brand row
    -------------------------------------------------------------------------- */
 .auth-mark {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 2.5rem;
-    height: 2.5rem;
+    width: 2.25rem;
+    height: 2.25rem;
     flex-shrink: 0;
-    border-radius: 0.75rem;
+    border-radius: 0.625rem;
     background-color: #00684A;
     color: #ffffff;
-    font-size: 1.125rem;
+    font-size: 1rem;
     font-weight: 700;
 }
 
@@ -189,108 +140,107 @@
     display: flex;
     align-items: center;
     gap: 0.375rem;
-    margin-top: 0.25rem;
-    font-size: 0.75rem;
-    line-height: 1rem;
+    margin-top: 0.125rem;
     color: #64748b;
+    font-size: 0.6875rem;
+    line-height: 1rem;
     font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 .auth-instance__dot {
-    width: 0.5rem;
-    height: 0.5rem;
+    width: 0.4375rem;
+    height: 0.4375rem;
     border-radius: 9999px;
     background-color: #22c55e;
-    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15);
 }
 
-/* Fields: opaque enough to stay legible over the artwork behind the glass. */
-.auth-card .pt-field__label {
-    color: #0f172a;
+/* --------------------------------------------------------------------------
+   5. Fields: compact, translucent, one leading icon each
+   -------------------------------------------------------------------------- */
+.auth-form .pt-field__label {
+    color: #1e293b;
+    font-size: 0.75rem;
+    line-height: 1rem;
     font-weight: 600;
-}
-
-.auth-card .pt-field input {
-    width: 100%;
-    min-height: 2.75rem;
-    padding: 0.625rem 0.875rem;
-    border: 1px solid #cbd5e1;
-    border-radius: 0.75rem;
-    background-color: rgba(255, 255, 255, 0.92);
-    color: #0f172a;
-    font-size: 0.9375rem;
-    transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-
-.auth-card .pt-field input::placeholder { color: #94a3b8; }
-
-.auth-card .pt-field input:hover { border-color: #94a3b8; }
-
-.auth-card .pt-field input:focus {
-    outline: none;
-    border-color: #00684A;
-    box-shadow: 0 0 0 4px rgba(0, 104, 74, 0.4);
-}
-
-.auth-card .pt-field input:focus-visible {
-    outline: 2px solid #00684A;
-    outline-offset: 1px;
-}
-
-.auth-card .pt-field input[aria-invalid="true"] {
-    border-color: #dc2626;
-}
-
-.auth-card .pt-field input[aria-invalid="true"]:focus {
-    box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.35);
 }
 
 .auth-row {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     justify-content: space-between;
     gap: 0.75rem;
 }
 
-.auth-link {
-    font-size: 0.75rem;
-    line-height: 1rem;
-    font-weight: 600;
-    color: #00684A;
-    text-decoration: none;
+.auth-input { position: relative; }
+
+.auth-input input {
+    width: 100%;
+    min-height: 2.5rem;
+    padding: 0.5rem 0.75rem 0.5rem 2.25rem;
+    border: 1px solid rgba(100, 116, 139, 0.45);
+    border-radius: 0.625rem;
+    background-color: rgba(255, 255, 255, 0.62);
+    color: #0f172a;
+    font-size: 0.875rem;
+    transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
 }
 
-.auth-link:hover { color: #00523A; text-decoration: underline; }
+.auth-input input::placeholder { color: #94a3b8; }
 
-.auth-link:focus-visible {
+.auth-input input:hover {
+    border-color: rgba(71, 85, 105, 0.6);
+    background-color: rgba(255, 255, 255, 0.72);
+}
+
+.auth-input input:focus {
+    outline: none;
+    border-color: #00684A;
+    background-color: rgba(255, 255, 255, 0.85);
+    box-shadow: 0 0 0 3px rgba(0, 104, 74, 0.4);
+}
+
+.auth-input input:focus-visible {
     outline: 2px solid #00684A;
-    outline-offset: 2px;
-    border-radius: 0.25rem;
+    outline-offset: 1px;
 }
 
-/* Password field with its reveal control */
-.auth-password { position: relative; }
+.auth-input input[aria-invalid="true"] { border-color: #dc2626; }
 
-.auth-password input { padding-right: 3rem; }
+.auth-input input[aria-invalid="true"]:focus {
+    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.35);
+}
+
+.auth-input__icon {
+    position: absolute;
+    left: 0.75rem;
+    top: 50%;
+    display: flex;
+    color: #64748b;
+    transform: translateY(-50%);
+    pointer-events: none;
+}
+
+.auth-password input { padding-right: 2.5rem; }
 
 .auth-toggle {
     position: absolute;
-    right: 0.5rem;
-    bottom: 0.5rem;
+    right: 0.375rem;
+    top: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 2rem;
-    height: 2rem;
+    width: 1.75rem;
+    height: 1.75rem;
     padding: 0;
     border: 0;
-    border-radius: 0.5rem;
+    border-radius: 0.375rem;
     background: transparent;
     color: #475569;
     cursor: pointer;
+    transform: translateY(-50%);
 }
 
-.auth-toggle:hover { background-color: rgba(15, 23, 42, 0.06); color: #0f172a; }
+.auth-toggle:hover { background-color: rgba(15, 23, 42, 0.07); color: #0f172a; }
 
 .auth-toggle:focus-visible {
     outline: 2px solid #00684A;
@@ -304,20 +254,34 @@
 
 .auth-toggle[aria-pressed="true"] .auth-toggle__icon--on { display: block; }
 
-/* The action */
-.auth-cta { margin-top: 0.25rem; }
+.auth-link {
+    color: #00684A;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 600;
+    text-decoration: none;
+}
 
+.auth-link:hover { color: #00523A; text-decoration: underline; }
+
+.auth-link:focus-visible {
+    outline: 2px solid #00684A;
+    outline-offset: 2px;
+    border-radius: 0.25rem;
+}
+
+/* --------------------------------------------------------------------------
+   6. Action
+   -------------------------------------------------------------------------- */
 .auth-cta .pt-btn {
-    position: relative;
     width: 100%;
-    min-height: 2.75rem;
-    border-radius: 0.75rem;
+    min-height: 2.5rem;
+    border-radius: 0.625rem;
     background-color: #00684A;
     color: #ffffff;
-    font-size: 0.9375rem;
+    font-size: 0.875rem;
     font-weight: 700;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
-    transition: background-color 150ms ease, box-shadow 150ms ease;
+    transition: background-color 140ms ease;
 }
 
 .auth-cta .pt-btn:hover:not(:disabled) { background-color: #00523A; color: #ffffff; }
@@ -325,15 +289,15 @@
 .auth-cta .pt-btn:focus-visible {
     outline: 2px solid #00684A;
     outline-offset: 2px;
-    box-shadow: 0 0 0 4px rgba(0, 104, 74, 0.4);
+    box-shadow: 0 0 0 3px rgba(0, 104, 74, 0.4);
 }
 
 .auth-cta .pt-btn:disabled { opacity: 0.85; cursor: progress; }
 
 .auth-spinner {
     display: none;
-    width: 1rem;
-    height: 1rem;
+    width: 0.875rem;
+    height: 0.875rem;
     border: 2px solid rgba(255, 255, 255, 0.4);
     border-top-color: #ffffff;
     border-radius: 9999px;
@@ -348,31 +312,20 @@
 
 @media (prefers-reduced-motion: reduce) {
     .auth-spinner { animation-duration: 1600ms; }
-    .auth-card .pt-field input,
+    .auth-input input,
     .auth-cta .pt-btn { transition: none; }
 }
 
-/* The invite-only notice */
+/* --------------------------------------------------------------------------
+   7. First-run registration path: small text, no container
+   -------------------------------------------------------------------------- */
 .auth-notice {
     display: flex;
     align-items: flex-start;
-    gap: 0.5rem;
-    margin-top: 1.5rem;
-    padding: 0.75rem;
-    border: 1px solid rgba(226, 232, 240, 0.5);
-    border-radius: 0.5rem;
-    background-color: rgba(255, 255, 255, 0.45);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    gap: 0.375rem;
     color: #475569;
     font-size: 0.75rem;
-    line-height: 1rem;
-}
-
-.auth-notice__icon {
-    flex-shrink: 0;
-    font-size: 0.875rem;
-    line-height: 1rem;
+    line-height: 1.125rem;
 }
 
 .auth-notice a { color: #00684A; font-weight: 600; }
