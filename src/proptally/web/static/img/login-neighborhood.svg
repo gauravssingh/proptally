@@ -295,26 +295,16 @@
     <path d="M1042,562 L1076,562 C1045,615 995,665 955,705 L915,695 C965,650 1015,605 1042,562 Z" fill="url(#concreteGrad)" opacity="0.92"/>
   </g>
 
-  <!-- A car in the first house's driveway, given depth the way the houses are: the
-       rear silhouette repeated once more, offset up the drive and one shade darker,
-       so the car shows its left side and roof. The offset follows the drive's own
-       recede, (-9,-18), which is the same direction the houses' visible left-hand
-       side walls take. Deliberately not a rotated rear view: rotating one in plane
-       reads as the car tipping on two wheels, not as pointing up the drive. -->
-  <g id="driveway-car" transform="translate(184 656)">
-    <!-- Tyre shadow, stretched along the car's axis rather than across it. -->
-    <ellipse cx="-8" cy="-6" rx="24" ry="42" transform="rotate(64 -8 -6)" fill="#0F172A" opacity="0.11"/>
-    <!-- The car's own thickness: same silhouette, offset, in shade. -->
-    <g transform="translate(-9 -18)">
-      <rect x="-32" y="-12" width="12" height="22" rx="5" fill="#334155"/>
-      <rect x="20" y="-12" width="12" height="22" rx="5" fill="#334155"/>
-      <rect x="-32" y="-32" width="64" height="26" rx="7" fill="#94A3B8"/>
-      <polygon points="-30,-30 -24,-54 24,-54 30,-30" fill="#64748B"/>
-    </g>
-    <!-- The rear face, upright. -->
-    <rect x="-32" y="-32" width="64" height="26" rx="7" fill="#CBD5E1"/>
+  <!-- A car parked in the first house's driveway. Rear view, square to the garage,
+       and flat: the scene's vehicles are 2D sprites, so an extruded one read as a
+       different object pasted into the street. -->
+  <g id="driveway-car" transform="translate(164 620)">
+    <ellipse cx="0" cy="3" rx="40" ry="8" fill="#0F172A" opacity="0.12"/>
+    <rect x="-32" y="-12" width="12" height="22" rx="5" fill="#334155"/>
+    <rect x="20" y="-12" width="12" height="22" rx="5" fill="#334155"/>
     <polygon points="-30,-30 -24,-54 24,-54 30,-30" fill="#94A3B8"/>
     <polygon points="-25,-31 -20,-51 20,-51 25,-31" fill="#475569"/>
+    <rect x="-32" y="-32" width="64" height="26" rx="7" fill="#CBD5E1"/>
     <rect x="-32" y="-16" width="64" height="10" rx="4" fill="#94A3B8"/>
     <rect x="-9" y="-13" width="18" height="8" rx="2" fill="#E2E8F0"/>
     <rect x="-30" y="-30" width="9" height="6" rx="2" fill="#DC2626" opacity="0.8"/>
