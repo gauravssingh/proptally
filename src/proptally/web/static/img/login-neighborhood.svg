@@ -51,23 +51,6 @@
     }
     .road-car { animation: ptDrive 50s linear infinite; }
 
-    /* One tree lets go of its leaves. Each leaf is its own element with its own
-       delay, so they come down one at a time; each stays where it lands for the
-       tail of its cycle, so the grass underneath gathers a pile and the wind
-       clears it again. Origin at each leaf's own centre, so the spin reads as
-       tumbling rather than as a swing around the viewBox corner. */
-    @keyframes ptLeafFall {
-      0%   { transform: translate(0px, 0px) rotate(-10deg); opacity: 0; }
-      3%   { transform: translate(-3px, 14px) rotate(14deg); opacity: 1; }
-      15%  { transform: translate(7px, 54px) rotate(104deg); opacity: 1; }
-      29%  { transform: translate(-8px, 96px) rotate(206deg); opacity: 1; }
-      45%  { transform: translate(6px, 140px) rotate(310deg); opacity: 1; }
-      58%  { transform: translate(-1px, 168px) rotate(392deg); opacity: 1; }
-      92%  { transform: translate(-1px, 168px) rotate(398deg); opacity: 1; }
-      100% { transform: translate(-1px, 168px) rotate(398deg); opacity: 0; }
-    }
-    .leaf { animation: ptLeafFall 46s linear infinite backwards; transform-box: fill-box; transform-origin: 50% 50%; }
-
     /* CSS transforms on SVG elements default to rotating about the middle of the
        viewBox, which would slide these off their keyframes. Anchor them to the
        user-space origin so the translate values mean what they say. Safe for the
@@ -77,9 +60,6 @@
     @media (prefers-reduced-motion: reduce) {
       .cloud-drift-slow, .pin-anim-1, .pin-anim-2, .pin-anim-3,
       .sun-breathe, .kite, .bird-flock, .road-car { animation: none; }
-      /* The leaves stop rather than hang: the pile gathered on the grass is the
-         state that still says "autumn" without anything moving. */
-      .leaf { display: none; }
     }
   </style>
 
@@ -559,16 +539,10 @@
     <path d="M1080,900 Q1110,855 1155,865 Q1195,825 1250,848 Q1295,815 1350,845 Q1395,830 1440,860 L1440,900 Z" fill="#1A4225"/>
   </g>
 
-  <!-- The big tree on the right shedding onto the grass under it. Four leaves come
-       down on staggered delays and stay where they land; the rest are already down,
-       so the pile is there to be found whether or not a leaf happens to be moving. -->
-  <g id="falling-leaves">
-    <g transform="translate(1252 592)"><g class="leaf" style="animation-delay:-4s;color:#D97706"><use href="#leaf-shape"/></g></g>
-    <g transform="translate(1284 600)"><g class="leaf" style="animation-delay:-15s;color:#F59E0B"><use href="#leaf-shape"/></g></g>
-    <g transform="translate(1316 586)"><g class="leaf" style="animation-delay:-26s;color:#D97706"><use href="#leaf-shape"/></g></g>
-    <g transform="translate(1298 596)"><g class="leaf" style="animation-delay:-37s;color:#F59E0B"><use href="#leaf-shape"/></g></g>
-
-    <!-- Already gathered, at the foot of the trunk. -->
+  <!-- Leaves gathered at the foot of the big tree. Static: the falling ones were
+       taken out because the animation drew more attention than the scenery should
+       ask for. -->
+  <g id="fallen-leaves">
     <g transform="translate(1240 772) rotate(38)" style="color:#F59E0B"><use href="#leaf-shape"/></g>
     <g transform="translate(1266 782) rotate(-24)" style="color:#D97706"><use href="#leaf-shape"/></g>
     <g transform="translate(1291 770) rotate(104)" style="color:#F59E0B"><use href="#leaf-shape"/></g>
