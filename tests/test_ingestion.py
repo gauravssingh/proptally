@@ -60,7 +60,7 @@ def _register_pnc_loan(engine) -> None:
     """
     with Session(engine) as session:
         session.add(Property(
-            id="prop_cimmaron_pingree", name="582 Foxglove Ct", address_line1="582 Foxglove Ct",
+            id="prop_cimmaron_pingree", name="2718 Foxglove Ct", address_line1="2718 Foxglove Ct",
             city="Oakhaven", state="IL", zip_code="60199", property_type="RENTAL_INVESTMENT",
         ))
         session.add(FinancialInstitution(id="inst_pnc", name="PNC Bank"))

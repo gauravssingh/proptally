@@ -44,8 +44,8 @@ A thorough audit of the client's financial records establishes the following exa
 graph TD
     subgraph Properties["Real Estate Portfolio (Doors)"]
         PROP_1["Door 1: 12307 Larkspur St<br>Westbrook, IL 60196<br><b>(Rental Investment)</b>"]
-        PROP_2["Door 2: 582 Foxglove Ct<br>Harborview, IL 60197<br><b>(Rental Investment)</b>"]
-        PROP_3["Door 3: 1017 Elderberry Dr<br>Cedar Grove, IL 60198<br><b>(Primary Residence)</b>"]
+        PROP_2["Door 2: 2718 Foxglove Ct<br>Harborview, IL 60197<br><b>(Rental Investment)</b>"]
+        PROP_3["Door 3: 3345 Elderberry Dr<br>Cedar Grove, IL 60198<br><b>(Primary Residence)</b>"]
     end
 
     subgraph Debt["Debt Servicing (Mortgages)"]
@@ -88,8 +88,8 @@ graph TD
 | Property Identifier | Role | Servicer & Loan ID | Typical Monthly Payment | Identified Inflow / Tenant |
 | :--- | :--- | :--- | :--- | :--- |
 | **Westbrook Rental**<br>`12307 Larkspur St, Westbrook, IL 60196` | Rental Investment | **Rocket Mortgage**<br>Loan #`0700000001` | ~$1,618.12<br>*(P&I: ~$1,020, Escrow: ~$598)* | **Riley Alvarez**<br>Zelle memo: *"Alder rent"*, *"partial Rental Deposit + pro-rent 12307 Larkspur"* ($2,600.00/mo) |
-| **Harborview Rental**<br>`582 Foxglove Ct, Harborview, IL 60197` | Rental Investment | **PNC Mortgage**<br>Loan #`0700000002` | ~$1,801.48<br>*(P&I: ~$960.16, Escrow: ~$841.32)* | Cash & ATM Branch Deposits (Millbrook) / Unit Inflows |
-| **Cedar Grove Residence**<br>`1017 Elderberry Dr, Cedar Grove, IL 60198` | Primary Residence | **CrossCountry Mortgage**<br>Loan #`0700000003` | ~$3,857.96<br>*(P&I + Escrow)* | Primary Residence operating expenses (e.g. Landscaper snow removal: *"Snow 3345 Elderberry"*) |
+| **Harborview Rental**<br>`2718 Foxglove Ct, Harborview, IL 60197` | Rental Investment | **PNC Mortgage**<br>Loan #`0700000002` | ~$1,801.48<br>*(P&I: ~$960.16, Escrow: ~$841.32)* | Cash & ATM Branch Deposits (Millbrook) / Unit Inflows |
+| **Cedar Grove Residence**<br>`3345 Elderberry Dr, Cedar Grove, IL 60198` | Primary Residence | **CrossCountry Mortgage**<br>Loan #`0700000003` | ~$3,857.96<br>*(P&I + Escrow)* | Primary Residence operating expenses (e.g. Landscaper snow removal: *"Snow 3345 Elderberry"*) |
 
 ---
 

@@ -145,8 +145,8 @@ def test_fresh_portfolio_offers_onboarding_and_the_settings_screen(owner):
     # renders: the empty state gives way to the populated dashboard, and the blank
     # optional money and date fields are accepted.
     _saved(_post(signed_in, "/properties/create", {
-        "name": "582 Foxglove Ct",
-        "address_line1": "582 Foxglove Ct",
+        "name": "2718 Foxglove Ct",
+        "address_line1": "2718 Foxglove Ct",
         "address_line2": "",
         "city": "Oakhaven",
         "state": "IL",

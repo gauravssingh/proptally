@@ -64,8 +64,8 @@ def portfolio_fixture(session: Session):
     )
     prop_maple = Property(
         id="prop_maple",
-        name="582 Foxglove Ct",
-        address_line1="582 Foxglove Ct",
+        name="2718 Foxglove Ct",
+        address_line1="2718 Foxglove Ct",
         city="Oakhaven",
         zip_code="60199",
     )

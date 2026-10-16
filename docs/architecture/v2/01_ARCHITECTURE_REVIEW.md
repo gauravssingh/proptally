@@ -32,8 +32,8 @@ In accordance with architectural review standards, all information from source d
 | Fact / Requirement | Source / Evidence | Classification |
 | :--- | :--- | :--- |
 | **Westbrook Rental:** 12307 Larkspur St, Westbrook, IL 60196 | Stated on Rocket Mortgage statements (`0700000001`) | **CONFIRMED** |
-| **Harborview Rental:** 582 Foxglove Ct, Harborview, IL 60197 | Stated on PNC Escrow Analysis & Form 1098 (`0700000002`) | **CONFIRMED** |
-| **Primary Residence:** 1017 Elderberry Dr, Cedar Grove, IL 60198 | Stated on CrossCountry statements (`0700000003`) & borrower mailing address | **CONFIRMED** |
+| **Harborview Rental:** 2718 Foxglove Ct, Harborview, IL 60197 | Stated on PNC Escrow Analysis & Form 1098 (`0700000002`) | **CONFIRMED** |
+| **Primary Residence:** 3345 Elderberry Dr, Cedar Grove, IL 60198 | Stated on CrossCountry statements (`0700000003`) & borrower mailing address | **CONFIRMED** |
 | **Rocket Loan #0700000001:** Secures Westbrook property | Verified on Page 1 of Rocket statements | **CONFIRMED** |
 | **PNC Loan #0700000002:** Secures Harborview property | Verified on PNC Escrow Analysis & 1098 Box 8 | **CONFIRMED** |
 | **CrossCountry Loan #0700000003:** Secures Cedar Grove property | Verified on Page 1 of CCM statements | **CONFIRMED** |
@@ -96,7 +96,7 @@ The initial exploration and architecture V1 established important foundations th
 
 ### 4.5 Primary Residence Mixed with Rental Calculations
 * **V1 Error:** V1 grouped all three properties together in general reporting without strict accounting boundaries.
-* **The Reality:** CrossCountry Loan #`0700000003` secures the client’s primary residence (`1017 Elderberry Dr`). Including its $3,857.96 monthly mortgage or lawn care expenses in rental calculations destroys Net Operating Income (NOI) accuracy and violates IRS Schedule E rules.
+* **The Reality:** CrossCountry Loan #`0700000003` secures the client’s primary residence (`3345 Elderberry Dr`). Including its $3,857.96 monthly mortgage or lawn care expenses in rental calculations destroys Net Operating Income (NOI) accuracy and violates IRS Schedule E rules.
 * **V2 Correction:** Explicit property classification (`RENTAL_INVESTMENT` vs `PRIMARY_RESIDENCE`). Primary residence debt and equity are tracked on the balance sheet, but excluded from rental operating statements.
 
 ### 4.6 Lack of Double-Entry Ledger Invariants

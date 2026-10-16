@@ -327,7 +327,7 @@ Below are the complete, end-to-end worked scenarios demonstrating exact database
 | Account Code & Name | Debit ($) | Credit ($) |
 | :--- | :---: | :---: |
 | **5040 Repairs: 12307 Larkspur St** | $250.00 | — |
-| **5050 Supplies: 582 Foxglove Ct** | $150.00 | — |
+| **5050 Supplies: 2718 Foxglove Ct** | $150.00 | — |
 | **5090 Personal Drawings** | $100.00 | — |
 | **2010 BoA Visa Liability (`...9306`)** | — | $500.00 |
 | **TOTALS** | **$500.00** | **$500.00** |

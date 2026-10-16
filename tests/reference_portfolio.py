@@ -61,7 +61,7 @@ REFERENCE_VENDOR_RULES = [
         "id": "vrule_carpentersville_atm",
         "pattern": "DEPOSIT CARPENTERSVILLE",
         "vendor_name": "Bank of America Millbrook ATM",
-        "service_type": "Branch ATM Deposit (CBD-1 Candidate for 582 Foxglove Ct)",
+        "service_type": "Branch ATM Deposit (CBD-1 Candidate for 2718 Foxglove Ct)",
         "default_category": "RENT_INCOME",
         "default_property_id": "prop_cimmaron_pingree",
         "confidence": 0.75,
@@ -133,8 +133,8 @@ def seed_reference_portfolio(session: Session) -> None:
     )
     foxglove = Property(
         id="prop_cimmaron_pingree",
-        name="582 Foxglove Ct",
-        address_line1="582 Foxglove Ct",
+        name="2718 Foxglove Ct",
+        address_line1="2718 Foxglove Ct",
         city="Oakhaven",
         state="IL",
         zip_code="60199",
@@ -146,8 +146,8 @@ def seed_reference_portfolio(session: Session) -> None:
     )
     elderberry = Property(
         id="prop_burkey_algonquin",
-        name="1017 Elderberry Dr",
-        address_line1="1017 Elderberry Dr",
+        name="3345 Elderberry Dr",
+        address_line1="3345 Elderberry Dr",
         city="Cedar Grove",
         state="IL",
         zip_code="60198",

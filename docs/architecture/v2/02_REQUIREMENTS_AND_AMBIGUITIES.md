@@ -42,8 +42,8 @@
 
 ### 2.2 Category 2: Client Business Decisions (Awaiting Client Confirmation)
 
-#### CBD-1 (P0): 582 Foxglove Ct Rent Inflow Mechanism
-* **Issue:** How does client collect rent for 582 Foxglove Ct (Harborview)?
+#### CBD-1 (P0): 2718 Foxglove Ct Rent Inflow Mechanism
+* **Issue:** How does client collect rent for 2718 Foxglove Ct (Harborview)?
 * **Observation:** Sample checking statements show recurring ATM cash deposits in Millbrook ($850, $500, $720, $470, $810).
 * **Engineering Guardrail:** The system **will not auto-post** cash deposits as rental income. All cash deposits route to an `Unassigned Inflow Review Queue` until client confirms the property attribution.
 * **Client Action:** client to confirm whether ATM cash deposits represent Maple rent, personal cash, or business reimbursements.
@@ -54,7 +54,7 @@
 * **Client Action:** client to confirm if card charges should default to review triage.
 
 #### CBD-3 (P1): Primary Residence (Cedar Grove) Accounting Scope
-* **Issue:** How should the Cedar Grove primary residence (`1017 Elderberry Dr`) and its CrossCountry mortgage be treated?
+* **Issue:** How should the Cedar Grove primary residence (`3345 Elderberry Dr`) and its CrossCountry mortgage be treated?
 * **Engineering Guardrail:** Cedar Grove is tracked on the balance sheet for debt amortization and total equity, but is **strictly isolated and excluded** from rental Net Operating Income (NOI) and Schedule E workpapers.
 * **Client Action:** client to confirm this presentation scope.
 

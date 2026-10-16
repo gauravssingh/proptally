@@ -7,7 +7,7 @@
 ## Context
 In real estate operations, single financial transactions frequently span multiple properties, multiple tax categories, and personal vs. business allocations. For example, a $500.00 purchase at Home Depot on the Bank of America Visa may include:
 - $250.00 in repairs for 12307 Larkspur St
-- $150.00 in paint supplies for 582 Foxglove Ct
+- $150.00 in paint supplies for 2718 Foxglove Ct
 - $100.00 in personal household garden supplies
 
 If the system modifies or overwrites the imported bank transaction to fit these allocations, the audit trail is broken, and reconciliation against the original bank statement becomes impossible.

@@ -62,10 +62,10 @@ new sign-in presents a portfolio chooser rather than silently opening the oldest
   * **Card 1: 12307 Larkspur St (Rental):**
     * Inflow: Riley Alvarez rent ($2,600/mo) | Debt: Rocket Loan (`$1,618.12/mo` @ 3.125%)
     * Monthly Net Cash Flow: `+$981.88` | Equity Paydown: `+$620.00/mo`
-  * **Card 2: 582 Foxglove Ct (Rental):**
+  * **Card 2: 2718 Foxglove Ct (Rental):**
     * Inflow: Monthly Rent | Debt: PNC Loan (`$1,801.48/mo` @ 2.500%)
     * Monthly Net Cash Flow: Calculated | Escrow Reserve Balance: `$2,523.96`
-  * **Card 3: 1017 Elderberry Dr (Primary Residence):**
+  * **Card 3: 3345 Elderberry Dr (Primary Residence):**
     * Status: Primary Home | Debt: CrossCountry (`$3,857.96/mo`) | Principal Balance: Tracked
 * **Cash Flow Waterfall Chart (Recharts):**
   * Visualizes cash progression: Gross Rent Collected $\rightarrow$ Operating Expenses $\rightarrow$ Mortgage Interest $\rightarrow$ Escrow Reserve $\rightarrow$ Principal Equity Paydown $\rightarrow$ Net In-Pocket Cash.
@@ -132,7 +132,7 @@ new sign-in presents a portfolio chooser rather than silently opening the oldest
 ### 3.7 Tax Center (IRS Schedule E Hub) (`/tax-center`)
 * **Tax Year Selector:** Toggle between tax years (2025, 2026).
 * **Schedule E Workpaper Grid:**
-  * Columns: `Tax Line Number | Category Description | 12307 Larkspur St | 582 Foxglove Ct | Total Rental Portfolio`
+  * Columns: `Tax Line Number | Category Description | 12307 Larkspur St | 2718 Foxglove Ct | Total Rental Portfolio`
   * Direct line mapping: Line 3 (Rents), Line 12 (Mortgage Interest), Line 14 (Repairs), Line 16 (Taxes), Line 19 (Other).
   * **CPA Input Row:** Line 18 (Depreciation) input field for entering agreed CPA depreciation.
 * **1-Click Export Actions:**

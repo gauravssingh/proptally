@@ -113,8 +113,8 @@ def hardened_env_fixture(session: Session):
     )
     foxglove = Property(
         id="prop_cimmaron_pingree",
-        name="582 Foxglove Ct",
-        address_line1="582 Foxglove Ct",
+        name="2718 Foxglove Ct",
+        address_line1="2718 Foxglove Ct",
         city="Oakhaven",
         zip_code="60199",
         property_type="RENTAL_INVESTMENT",
@@ -122,8 +122,8 @@ def hardened_env_fixture(session: Session):
     )
     elderberry = Property(
         id="prop_burkey_algonquin",
-        name="1017 Elderberry Dr",
-        address_line1="1017 Elderberry Dr",
+        name="3345 Elderberry Dr",
+        address_line1="3345 Elderberry Dr",
         city="Cedar Grove",
         zip_code="60198",
         property_type="PRIMARY_RESIDENCE",

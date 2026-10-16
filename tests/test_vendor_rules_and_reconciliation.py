@@ -101,7 +101,7 @@ def queue_env(tmp_path, monkeypatch, owner):
         session.add(acct2)
 
         prop1 = Property(id="prop_tinsley_huntley", name="12307 Larkspur St", address_line1="12307 Larkspur St", city="Westbrook", zip_code="60196")
-        prop2 = Property(id="prop_cimmaron_pingree", name="582 Foxglove Ct", address_line1="582 Foxglove Ct", city="Oakhaven", zip_code="60199")
+        prop2 = Property(id="prop_cimmaron_pingree", name="2718 Foxglove Ct", address_line1="2718 Foxglove Ct", city="Oakhaven", zip_code="60199")
         session.add(prop1)
         session.add(prop2)
         session.flush()
