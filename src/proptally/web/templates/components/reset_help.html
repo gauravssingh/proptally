@@ -1,15 +1,9 @@
-{#- How an account holder gets a reset link. Shared by the standalone
+{#- How an account holder gets a reset token. Shared by the standalone
     /auth/reset page and the sign-in box, so the two cannot drift.
 
-    Two steps and one command: this is a page someone reaches while locked out,
-    so it states what to do rather than why the security model is what it is. -#}
+    Written for the person signing in, not the person running the host: the
+    operator's own tooling is documented in README.md. -#}
 <p class="pt-fs-supporting pt-text-secondary">
-    This host sends no email: your operator issues the reset link.
+    This host does not send email. Ask the installation operator for a reset token,
+    then enter it below. It works once and expires after two hours.
 </p>
-<ol class="auth-steps">
-    <li>
-        Ask the installation operator to run
-        <code>python scripts/issue_password_reset.py --email&nbsp;&lt;your-email&gt;</code>
-    </li>
-    <li>Paste the single-use token they give you below. It expires after two hours.</li>
-</ol>

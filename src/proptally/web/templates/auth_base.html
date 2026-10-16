@@ -91,7 +91,7 @@
             var action = form.querySelector("[data-loading]");
             var label = form.querySelector("[data-loading-label]");
             if (action) { action.setAttribute("data-loading", "true"); }
-            if (label) { label.textContent = "Signing in…"; }
+            if (label) { label.textContent = form.getAttribute("data-loading-text") || "Signing in…"; }
             form.querySelectorAll("button[type=submit]").forEach(function (button) {
                 button.disabled = true;
             });

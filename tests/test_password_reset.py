@@ -24,8 +24,9 @@ def test_public_reset_never_issues_a_token(owner):
         page = anonymous.get("/auth/reset")
         assert page.status_code == 200
         assert "Ask the installation operator" in page.text
-        assert "issue_password_reset.py" in page.text
         assert 'action="/auth/reset"' not in page.text
+        # Written for the person signing in: host tooling is not advertised here.
+        assert "scripts/" not in page.text
 
         # No public endpoint accepts an email and returns its reset token.
         for email in (account.email, "nobody@example.com"):
@@ -37,24 +38,35 @@ def test_public_reset_never_issues_a_token(owner):
             assert response.status_code == 405
 
 
-def test_a_pasted_token_reaches_the_change_password_screen(owner):
-    """The sign-in box cannot build a path segment, so the token arrives as a
-    query parameter and is forwarded to the canonical URL."""
-    account = owner(email="token-holder@example.com", password="token-holder-1")
+def test_the_box_checks_a_token_before_the_change_password_screen(owner):
+    """The reset step answers about the token itself: a live one sends the reader
+    on to set a password, a dead one stays on the step with the reason."""
+    from proptally.web.auth import issue_password_reset
+
+    account = owner(email="box-token@example.com", password="box-token-1")
 
     with TestClient(account.app) as anonymous:
-        forwarded = anonymous.get(
-            "/auth/reset", params={"token": "tok_example"}, follow_redirects=False
-        )
-        assert forwarded.status_code == 303
-        assert forwarded.headers["location"] == "/auth/reset/tok_example"
+        page = anonymous.get("/auth/login")
+        assert 'action="/auth/reset/token"' in page.text, "the box posts the token"
 
-        # Nothing usable pasted: the instructions render and nothing redirects.
-        blank = anonymous.get(
-            "/auth/reset", params={"token": "   "}, follow_redirects=False
+        refused = anonymous.post(
+            "/auth/reset/token",
+            data={"token": "not-a-real-token", "csrf_token": _csrf(page.text)},
+            follow_redirects=False,
         )
-        assert blank.status_code == 200
-        assert "Ask the installation operator" in blank.text
+        assert refused.status_code == 200
+        assert "Token not accepted" in refused.text
+        assert 'data-pane="signin" hidden' in refused.text, "the step stays open"
+
+        live = issue_password_reset(account.control_engine, account.email)
+        assert live is not None
+        accepted = anonymous.post(
+            "/auth/reset/token",
+            data={"token": live, "csrf_token": _csrf(page.text)},
+            follow_redirects=False,
+        )
+        assert accepted.status_code == 303
+        assert accepted.headers["location"] == f"/auth/reset/{live}"
 
 
 def test_operator_cli_issues_a_link_the_account_holder_can_use(owner):

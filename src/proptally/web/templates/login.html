@@ -35,7 +35,7 @@
                 </span>
             </div>
 
-            <div class="auth-pane" data-pane="signin">
+            <div class="auth-pane" data-pane="signin"{% if pane == 'forgot' %} hidden{% endif %}>
                 {# Heading kept for screen-reader structure only. #}
                 <h1 class="pt-sr-only" tabindex="-1" data-pane-heading>Sign in to PropTally</h1>
 
@@ -100,34 +100,44 @@
                 {% endif %}
             </div>
 
-            {# The forgot-password step, in the same box. The box is centred and sized
-               by its content, so it simply grows for this pane. #}
-            <div class="auth-pane" data-pane="forgot" hidden>
+            {# The reset step, in the same box. The box is centred and sized by its
+               content, so it simply grows for this pane. It opens by itself when the
+               server has a verdict to show (pane == "forgot"). #}
+            <div class="auth-pane" data-pane="forgot"{% if pane != 'forgot' %} hidden{% endif %}>
                 <h2 class="auth-pane__title" tabindex="-1" data-pane-heading>Reset your password</h2>
                 <div class="mt-2">{% include "components/reset_help.html" %}</div>
 
-                {# A plain GET form: the box cannot build a path segment, so the token
-                   travels as ?token= and the server forwards it to /auth/reset/<token>.
-                   That keeps the step working with no script at all. #}
-                <form method="get" action="/auth/reset" class="auth-token">
-                    <label class="pt-field__label auth-label" for="reset-token">Reset token</label>
+                {% if reset_error %}
+                <div class="mt-2">{{ ui.alert(variant="error", title="Token not accepted", text=reset_error) }}</div>
+                {% endif %}
+
+                {# The token is checked here, then the holder is sent on to set a
+                   password. The form posts, so it works with no script at all. #}
+                <form method="post" action="/auth/reset/token" class="auth-token" data-loading-form
+                      data-loading-text="Checking the token…">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    {# No visible label: the placeholder says it. The name stays for
+                       screen readers, since a placeholder is not an accessible name. #}
+                    <label class="pt-sr-only" for="reset-token">Reset token</label>
                     <div class="auth-input">
                         <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("lock", "md") }}</span>
                         <input class="bg-white/95 backdrop-blur-xl border-2 border-white rounded-xl shadow-lg"
                                type="text" id="reset-token" name="token"
-                               placeholder="Paste the token from your operator"
+                               placeholder="Paste the token you were given"
+                               aria-invalid="{{ 'true' if reset_error else 'false' }}"
                                autocomplete="one-time-code" autocapitalize="off" spellcheck="false">
                     </div>
-                    <div class="auth-cta">
+                    <div class="auth-cta" data-loading="false">
                         <button type="submit" class="pt-btn pt-btn--block rounded-full">
-                            <span>Change password</span>
+                            <span class="auth-spinner" aria-hidden="true"></span>
+                            <span data-loading-label>Continue</span>
                             <span class="auth-cta__arrow" aria-hidden="true">{{ ui.icon("arrow_right", "md") }}</span>
                         </button>
                     </div>
                 </form>
 
-                <div class="auth-notice mt-6">
-                    <span><a class="auth-link" href="/auth/login" data-pane-toggle="signin">Back to sign in</a></span>
+                <div class="auth-pane__footer">
+                    <a class="auth-link" href="/auth/login" data-pane-toggle="signin">Back to sign in</a>
                 </div>
             </div>
 

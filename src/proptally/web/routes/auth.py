@@ -51,6 +51,7 @@ from proptally.web.auth import (
     clear_session_cookie,
     consume_password_reset,
     cookie_name,
+    find_reset_token,
     memberships_for,
     pre_session_csrf_valid,
     register_portfolio,
