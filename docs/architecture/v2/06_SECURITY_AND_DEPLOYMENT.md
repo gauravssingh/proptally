@@ -72,23 +72,22 @@ Tailscale provides device identity, but application-level authentication enforce
 
 ### 3.2 Role-Based Permissions
 
-| Role | Target User | Permissions |
+| Role | Target user | Enforced permissions |
 | :--- | :--- | :--- |
-| **`OWNER` (Admin)** | Portfolio Owner | Full read/write access. Upload statements, manage properties, confirm matches, split transactions, configure local AI, perform backups. |
-| **`ACCOUNTANT` (Read-Only)** | Client's CPA / Tax Preparer | Read-only access to Tax Center, Schedule E workpapers, Form 1098 reconciliation tables, and categorized expense ledgers. Cannot upload or delete. |
+| **`OWNER`** | Portfolio owner | Administer people and roles, do bookkeeping/setup, authorize as the client, export or remove the portfolio. |
+| **`MANAGER`** | Portfolio operator | Do bookkeeping and portfolio setup; cannot administer people, export/remove the portfolio, or authorize as the client. |
+| **`CPA_REVIEWER`** | External reviewer | Do bookkeeping as needed and record a verified external review; cannot administer people or authorize as the client. |
+| **`READ_ONLY`** | Viewer | Read portfolio data only; cannot change or export it. |
 
 ---
 
 ## 4. Data Protection & Privacy Guardrails
 
 ### 4.1 Storage & Filesystem Security
-* **Restricted Permissions:** Application files, database, and vault directories are created with strict POSIX permissions:
-  ```bash
-  chmod 700 ~/PropTally/storage
-  chmod 700 ~/PropTally/storage/vault
-  chmod 600 ~/PropTally/storage/proptally.db
-  ```
-* **Disk-Level Encryption:** Hosted on Linux NVMe partitions protected with **LUKS (dm-crypt)** full-disk encryption, ensuring data is unreadable if the physical drive is stolen.
+* **Tenant boundary:** Each portfolio has its own database and file tree under `storage/tenants/<tenant_id>/`; `storage/system.db` holds accounts and memberships. These files share the host filesystem and process account. Tenant separation is an application/authorization boundary, not independent encryption.
+* **Filesystem permissions:** Restrict the configured storage root to the service account. For example, `chmod -R go-rwx /path/to/storage`; ensure directories remain traversable by the service owner and backup operator.
+* **Disk-level encryption:** LUKS or equivalent host-volume encryption protects data at rest while the volume is locked. It does not provide per-tenant keys or protect against access to the running host.
+* **Encryption roadmap:** Independently encrypted tenant backups, vault/document encryption, key management and rotation remain future work; do not treat them as implemented guarantees.
 
 ### 4.2 Sensitive PII & Logging Sanitization
 * **Zero PII in Application Logs:** Application logs must never write raw PDF text, unmasked bank account numbers, taxpayer identification numbers (SSNs/EINs), or full tenant legal names.
@@ -153,11 +152,14 @@ flowchart LR
 5. Restart PropTally service and verify dashboard health check.
 
 ### 6.3 SQLite Single-Writer Coordination & Lock Contention
-To prevent database locks between the background hot-folder ingestion daemon (`watchfiles`) and the interactive FastAPI web dashboard:
+The standalone polling watcher and the interactive FastAPI dashboard can write concurrently; SQLite WAL and short transaction scopes coordinate them:
 * **WAL Mode:** Write-Ahead Logging allows unlimited concurrent readers while write transactions execute.
 * **Connection Scoping:** Writes are scoped into short-lived, atomic Python transactions.
 * **Application-Level Retry Decorator:** Database write operations wrap with an exponential backoff decorator (`max_retries=5`, `backoff_base=0.05s`) on `sqlite3.OperationalError: database is locked`.
 * **Busy Timeout:** All connection pools execute `PRAGMA busy_timeout = 10000;` on connection acquisition.
+
+### 6.4 Tenant-scoped background execution
+The repository has one background-style ingestion entry point: the standalone watcher in `proptally.ingestion.cli`. With `--tenant`, it resolves an `ACTIVE` tenant through the control plane and passes that tenant's database engine, vault path, inbox path, and short-lived SQLModel sessions explicitly. Each scan holds a durable tenant operation lease, so deletion stops new scans and waits for an active scan. It does not read a request `ContextVar`, process-global active tenant, or implicit tenant fallback. The watcher imports documents and statements but does not post journal entries, so it has no financial actor attribution to inherit; its explicit actor is the local operator. The only web `BackgroundTask` discards a completed export archive and accesses no tenant database or storage. There is no web background worker or web-started watcher.
 
 ---
 

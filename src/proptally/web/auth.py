@@ -22,19 +22,21 @@ import hmac
 import logging
 import os
 import secrets
+import socket
 import time
+from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
-from typing import Optional
+from typing import AsyncIterator, Optional
 from uuid import uuid4
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from fastapi import HTTPException, Request
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
-
 from proptally.db.system_models import (
     ADMIN_ROLES,
     CLIENT_CONFIRMATION_ROLES,
@@ -52,6 +54,10 @@ from proptally.db.system_models import (
     PasswordResetToken,
     Tenant,
     TenantMembership,
+    TENANT_ACTIVE,
+    TENANT_FAILED,
+    TENANT_PENDING,
+    TENANT_PROVISIONING,
     User,
     UserInvite,
     UserSession,
@@ -119,6 +125,11 @@ class AuthenticationRequired(Exception):
     """Raised when a request has no valid session. Rendered as a redirect to /auth/login."""
 
 
+
+class NoActivePortfolio(RuntimeError):
+    """A valid account has memberships, but none currently has usable storage state."""
+
+
 class AuthorizationError(PermissionError):
     """Raised when the authenticated role may not perform the requested change."""
 
@@ -176,6 +187,7 @@ class TenantContext:
     session: UserSession
     engine: Engine
     paths: TenantPaths
+    operation_id: Optional[str] = None
 
     @property
     def csrf_token(self) -> str:
@@ -511,6 +523,85 @@ def unique_slug(engine: Engine, name: str) -> str:
     return f"{base}-{secrets.token_hex(3)}"
 
 
+
+class TenantProvisioningError(ValueError):
+    """The portfolio account exists but its tenant storage is not usable yet."""
+
+
+def provision_tenant(
+    control_engine: Engine,
+    tenant_manager: TenantManager,
+    tenant_id: str,
+    *,
+    recover_stale: bool = False,
+) -> Tenant:
+    """Provision or retry one tenant, activating it only after SQLite verifies cleanly."""
+    with Session(control_engine) as session:
+        tenant = session.get(Tenant, tenant_id)
+        if tenant is None:
+            raise TenantProvisioningError("Portfolio not found.")
+        if tenant.status == TENANT_ACTIVE:
+            tenant_manager.ensure_tenant_storage(tenant_id)
+            return tenant
+        allowed = (TENANT_PENDING, TENANT_FAILED)
+        if recover_stale:
+            allowed += (TENANT_PROVISIONING,)
+        placeholders = ", ".join(f":s{i}" for i in range(len(allowed)))
+        params = {f"s{i}": value for i, value in enumerate(allowed)}
+        params.update({"tenant_id": tenant_id, "provisioning": TENANT_PROVISIONING})
+        claimed = session.execute(text(
+            f"UPDATE tenants SET status=:provisioning WHERE id=:tenant_id "
+            f"AND status IN ({placeholders})"
+        ), params)
+        if claimed.rowcount != 1:
+            raise TenantProvisioningError(
+                f"Portfolio provisioning is already in progress or unavailable (state {tenant.status})."
+            )
+        session.commit()
+
+    try:
+        tenant_manager.provision_tenant_storage(tenant_id)
+    except Exception as exc:
+        with Session(control_engine) as session:
+            session.execute(text(
+                "UPDATE tenants SET status=:failed WHERE id=:tenant_id "
+                "AND status=:provisioning"
+            ), {"failed": TENANT_FAILED, "tenant_id": tenant_id,
+                "provisioning": TENANT_PROVISIONING})
+            session.commit()
+        raise TenantProvisioningError(
+            f"Portfolio storage provisioning failed and is safe to retry: {exc}"
+        ) from exc
+
+    with Session(control_engine) as session:
+        activated = session.execute(text(
+            "UPDATE tenants SET status=:active WHERE id=:tenant_id "
+            "AND status=:provisioning"
+        ), {"active": TENANT_ACTIVE, "tenant_id": tenant_id,
+            "provisioning": TENANT_PROVISIONING})
+        if activated.rowcount != 1:
+            session.rollback()
+            raise TenantProvisioningError(
+                "Portfolio state changed during provisioning; storage remains inactive."
+            )
+        session.commit()
+        tenant = session.get(Tenant, tenant_id)
+        session.expunge(tenant)
+        return tenant
+
+def retry_incomplete_provisioning(
+    control_engine: Engine, tenant_manager: TenantManager
+) -> None:
+    """Resume retryable PENDING/FAILED tenants before serving requests."""
+    with Session(control_engine) as session:
+        tenant_ids = session.exec(
+            select(Tenant.id).where(Tenant.status.in_((TENANT_PENDING, TENANT_FAILED)))
+        ).all()
+    for tenant_id in tenant_ids:
+        try:
+            provision_tenant(control_engine, tenant_manager, tenant_id)
+        except TenantProvisioningError:
+            logger.error("Tenant provisioning remains incomplete: tenant=%s", tenant_id)
 def register_portfolio(
     control_engine: Engine,
     tenant_manager: TenantManager,
@@ -552,6 +643,7 @@ def register_portfolio(
             id=f"tnt_{uuid4().hex[:16]}",
             name=portfolio_name.strip() or f"{user.display_name}'s portfolio",
             slug=unique_slug(control_engine, portfolio_name),
+            status=TENANT_PENDING,
         )
         session.add(tenant)
         session.flush()
@@ -568,8 +660,8 @@ def register_portfolio(
         session.refresh(tenant)
         session.refresh(membership)
 
-    # Provision the portfolio's own database, directories and standard accounts.
-    tenant_manager.ensure_tenant_storage(tenant.id)
+    # The control-plane rows remain unusable until storage and financial schema verify.
+    tenant = provision_tenant(control_engine, tenant_manager, tenant.id)
     return user, tenant, membership
 
 
@@ -661,55 +753,80 @@ def accept_invite(
     password: str,
     display_name: str = "",
 ) -> tuple[User, Tenant, TenantMembership]:
-    """Joins the inviting portfolio, creating the account if it does not exist yet."""
-    invite = find_invite(control_engine, token)
-    if invite is None:
+    """Atomically claim a live invitation and create its membership."""
+    preview = find_invite(control_engine, token)
+    if preview is None:
         raise ValueError("This invitation is invalid, already used, or has expired.")
+    tenant_manager.ensure_tenant_storage(preview.tenant_id)
 
     ok, reason = password_is_acceptable(password)
     if not ok:
         raise ValueError(reason)
+    password_hash = hash_password(password)
+    now = utc_now().isoformat()
 
-    with Session(control_engine) as session:
-        user = session.exec(select(User).where(User.email == invite.email)).first()
-        if user is None:
-            user = User(
-                id=f"usr_{uuid4().hex[:16]}",
-                email=invite.email,
-                password_hash=hash_password(password),
-                display_name=display_name.strip() or invite.email,
+    try:
+        with Session(control_engine) as session:
+            claimed = session.execute(text(
+                "UPDATE user_invites SET accepted_at=:accepted_at "
+                "WHERE token_hash=:token_hash AND accepted_at IS NULL "
+                "AND julianday(expires_at) > julianday(:now) "
+                "AND EXISTS (SELECT 1 FROM tenants WHERE tenants.id=user_invites.tenant_id "
+                "AND tenants.status=:active)"
+            ), {"accepted_at": now, "token_hash": token_digest(token),
+                "now": now, "active": TENANT_ACTIVE})
+            if claimed.rowcount != 1:
+                raise ValueError("This invitation is invalid, already used, or has expired.")
+
+            invite = session.exec(
+                select(UserInvite).where(UserInvite.token_hash == token_digest(token))
+            ).one()
+            user = session.exec(select(User).where(User.email == invite.email)).first()
+            if user is None:
+                user = User(
+                    id=f"usr_{uuid4().hex[:16]}",
+                    email=invite.email,
+                    password_hash=password_hash,
+                    display_name=display_name.strip() or invite.email,
+                )
+                session.add(user)
+                session.flush()
+            elif not verify_password(user.password_hash, password):
+                raise ValueError(
+                    "An account already exists for this email; sign in to accept the invitation."
+                )
+
+            existing = session.exec(
+                select(TenantMembership).where(
+                    TenantMembership.user_id == user.id,
+                    TenantMembership.tenant_id == invite.tenant_id,
+                )
+            ).first()
+            if existing is not None:
+                raise ValueError("This account is already a member of that portfolio.")
+
+            membership = TenantMembership(
+                id=f"mem_{uuid4().hex[:16]}",
+                user_id=user.id,
+                tenant_id=invite.tenant_id,
+                role=invite.role,
             )
-            session.add(user)
-            session.flush()
-        elif not verify_password(user.password_hash, password):
-            raise ValueError("An account already exists for this email; sign in to accept the invitation.")
+            session.add(membership)
+            session.commit()
+            session.refresh(user)
+            session.refresh(membership)
+            tenant = session.get(Tenant, invite.tenant_id)
+    except ValueError:
+        raise
+    except Exception as exc:
+        from sqlalchemy.exc import IntegrityError
 
-        existing = session.exec(
-            select(TenantMembership).where(
-                TenantMembership.user_id == user.id,
-                TenantMembership.tenant_id == invite.tenant_id,
-            )
-        ).first()
-        if existing is not None:
-            raise ValueError("This account is already a member of that portfolio.")
+        if isinstance(exc, IntegrityError):
+            raise ValueError(
+                "This invitation was already accepted or the account is already a member."
+            ) from exc
+        raise
 
-        membership = TenantMembership(
-            id=f"mem_{uuid4().hex[:16]}",
-            user_id=user.id,
-            tenant_id=invite.tenant_id,
-            role=invite.role,
-        )
-        session.add(membership)
-
-        stored_invite = session.get(UserInvite, invite.id)
-        stored_invite.accepted_at = utc_now()
-        session.add(stored_invite)
-        session.commit()
-        session.refresh(user)
-        session.refresh(membership)
-        tenant = session.get(Tenant, invite.tenant_id)
-
-    tenant_manager.ensure_tenant_storage(tenant.id)
     return user, tenant, membership
 
 
@@ -838,13 +955,21 @@ def resolve_context(
         if not memberships:
             return None
 
-        membership = next(
-            (m for m in memberships if m.tenant_id == row.active_tenant_id),
-            memberships[0],
+        active_memberships = []
+        for membership in memberships:
+            tenant = session.get(Tenant, membership.tenant_id)
+            if tenant is not None and tenant.status == TENANT_ACTIVE:
+                active_memberships.append((membership, tenant))
+        if not active_memberships:
+            raise NoActivePortfolio(
+                "This account has no active portfolio. Tenant provisioning or deletion "
+                "must be resolved before financial data is available."
+            )
+
+        membership, tenant = next(
+            (pair for pair in active_memberships if pair[1].id == row.active_tenant_id),
+            active_memberships[0],
         )
-        tenant = session.get(Tenant, membership.tenant_id)
-        if tenant is None:
-            return None
         session.expunge(user)
         session.expunge(row)
         session.expunge(tenant)
@@ -987,13 +1112,70 @@ def registration_is_open(control_engine: Engine) -> bool:
     return flag or count_users(control_engine) == 0
 
 
-class AuthenticationDependency:
-    """FastAPI dependency resolving (and enforcing) the request's portfolio context.
 
-    Unsafe methods are checked for the CSRF token here rather than in each route, so
-    a route added later cannot forget it: the dependency runs before any handler and
-    rejects the request outright.
-    """
+def _acquire_tenant_operation(
+    control_engine: Engine, tenant_id: str, user_id: str, session_id: str, role: str
+) -> Optional[str]:
+    """Atomically lease an active tenant only while its session and membership remain valid."""
+    operation_id = f"op_{uuid4().hex}"
+    now = utc_now().isoformat()
+    with Session(control_engine) as session:
+        result = session.execute(text(
+            "INSERT INTO tenant_operations "
+            "(id, tenant_id, actor_id, user_id, session_id, process_id, host_name, started_at) "
+            "SELECT :operation_id, t.id, :actor_id, u.id, s.id, :process_id, :host_name, :now "
+            "FROM tenants AS t "
+            "JOIN tenant_memberships AS m ON m.tenant_id=t.id AND m.user_id=:user_id "
+            "JOIN users AS u ON u.id=m.user_id AND u.is_active=1 "
+            "JOIN user_sessions AS s ON s.id=:session_id AND s.user_id=u.id "
+            "WHERE t.id=:tenant_id AND t.status=:active AND m.role=:role "
+            "AND s.revoked_at IS NULL AND julianday(s.expires_at)>julianday(:now)"
+        ), {"operation_id": operation_id, "tenant_id": tenant_id,
+            "actor_id": user_id, "process_id": os.getpid(), "host_name": socket.gethostname(),
+            "user_id": user_id, "session_id": session_id, "role": role, "now": now,
+            "active": TENANT_ACTIVE})
+        if result.rowcount != 1:
+            session.rollback()
+            return None
+        session.commit()
+    return operation_id
+
+
+def _release_tenant_operation(
+    control_engine: Engine, tenant_manager: TenantManager, operation_id: str, tenant_id: str
+) -> None:
+    try:
+        with Session(control_engine) as session:
+            session.execute(text("DELETE FROM tenant_operations WHERE id=:id"), {"id": operation_id})
+            session.commit()
+    finally:
+        tenant_manager.end_operation(tenant_id, operation_id)
+
+
+@contextmanager
+def tenant_operation_scope(
+    control_engine: Engine,
+    tenant_manager: TenantManager,
+    *,
+    context: TenantContext,
+    tenant_id: str,
+    role: str,
+):
+    """Lease a member-selected tenant while a cross-portfolio operation uses it."""
+    operation_id = _acquire_tenant_operation(
+        control_engine, tenant_id, context.user.id, context.session.id, role
+    )
+    if operation_id is None:
+        raise AuthenticationRequired()
+    tenant_manager.begin_operation(tenant_id, operation_id)
+    try:
+        paths = tenant_manager.ensure_tenant_storage(tenant_id)
+        yield tenant_manager.engine_for(tenant_id), paths, operation_id
+    finally:
+        _release_tenant_operation(control_engine, tenant_manager, operation_id, tenant_id)
+
+class AuthenticationDependency:
+    """Resolve a tenant context and hold a request lease until its response ends."""
 
     def __init__(
         self,
@@ -1004,42 +1186,52 @@ class AuthenticationDependency:
     ):
         self.control_engine = control_engine
         self.tenant_manager = tenant_manager
-        #: Whether an unsafe method also requires a mutating role. False for the one
-        #: operation that is about the session rather than the portfolio -- choosing
-        #: which portfolio the session is looking at -- because a read-only member
-        #: must still be able to leave a portfolio they were invited into.
         self.require_mutating_role = require_mutating_role
-        self.last_resolved: Optional[TenantContext] = None
 
-    async def __call__(self, request: Request) -> TenantContext:
+    async def __call__(self, request: Request) -> AsyncIterator[TenantContext]:
         token = request.cookies.get(cookie_name())
         context = resolve_context(self.control_engine, self.tenant_manager, token)
         if context is None:
             raise AuthenticationRequired()
 
-        if request.method in UNSAFE_METHODS:
-            presented = request.headers.get("x-csrf-token")
-            if not presented:
-                presented = await _form_csrf_token(request)
-            if not csrf_token_valid(context, presented):
-                raise HTTPException(
-                    status_code=403,
-                    detail=(
-                        "Missing or invalid CSRF token. Reload the page and try again; "
-                        "if the problem persists, sign in again."
-                    ),
-                )
-            # A read-only member may never change anything, so the role is checked
-            # here rather than in each route: a route that forgets would otherwise
-            # silently accept the write. The session-scoped dependency opts out.
-            if self.require_mutating_role and not context.can_mutate:
-                raise AuthorizationError(
-                    f"Role {context.role} may read this portfolio but not change it."
-                )
+        operation_id = _acquire_tenant_operation(
+            self.control_engine,
+            context.tenant.id,
+            context.user.id,
+            context.session.id,
+            context.role,
+        )
+        if operation_id is None:
+            raise AuthenticationRequired()
+        self.tenant_manager.begin_operation(context.tenant.id, operation_id)
+        context = replace(context, operation_id=operation_id)
+        context_token = None
+        try:
+            if request.method in UNSAFE_METHODS:
+                presented = request.headers.get("x-csrf-token")
+                if not presented:
+                    presented = await _form_csrf_token(request)
+                if not csrf_token_valid(context, presented):
+                    raise HTTPException(
+                        status_code=403,
+                        detail=(
+                            "Missing or invalid CSRF token. Reload the page and try again; "
+                            "if the problem persists, sign in again."
+                        ),
+                    )
+                if self.require_mutating_role and not context.can_mutate:
+                    raise AuthorizationError(
+                        f"Role {context.role} may read this portfolio but not change it."
+                    )
 
-        set_current_context(context)
-        self.last_resolved = context
-        return context
+            context_token = _current_context.set(context)
+            yield context
+        finally:
+            if context_token is not None:
+                _current_context.reset(context_token)
+            _release_tenant_operation(
+                self.control_engine, self.tenant_manager, operation_id, context.tenant.id
+            )
 
 
 async def _form_csrf_token(request: Request) -> Optional[str]:

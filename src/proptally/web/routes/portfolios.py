@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import urllib.parse
 
+from contextlib import contextmanager
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
@@ -26,7 +27,7 @@ from proptally.db.portfolio_lifecycle import (
     portfolio_summary,
 )
 from proptally.db.portfolio_archive import build_portfolio_archive, discard_archive
-from proptally.db.system_models import ROLE_CPA_REVIEWER, ROLE_OWNER, ROLE_READ_ONLY, Tenant
+from proptally.db.system_models import ROLE_CPA_REVIEWER, ROLE_OWNER, ROLE_READ_ONLY, TENANT_DELETING, Tenant
 from proptally.db.tenant_manager import TenantManager
 from proptally.domain.accounting.metrics import calculate_portfolio_equity
 from proptally.web.auth import (
@@ -34,6 +35,8 @@ from proptally.web.auth import (
     cookie_name,
     memberships_for,
     switch_active_tenant,
+    AuthenticationRequired,
+    tenant_operation_scope,
 )
 
 #: Roles that may take a full copy of a portfolio away with them.
@@ -66,6 +69,38 @@ def _membership_for(request: Request, context, tenant_id: str, *, roles):
         )
     return membership
 
+@contextmanager
+def _portfolio_lease(request: Request, context, tenant_id: str, role: str):
+    """Reuse the current request lease or acquire a durable lease for another tenant."""
+    control_engine = request.app.state.control_engine
+    tenant_manager = request.app.state.tenant_manager
+    if context.tenant.id == tenant_id:
+        yield context.operation_id
+        return
+
+    lease = tenant_operation_scope(
+        control_engine,
+        tenant_manager,
+        context=context,
+        tenant_id=tenant_id,
+        role=role,
+    )
+    try:
+        _engine, _paths, operation_id = lease.__enter__()
+    except AuthenticationRequired:
+        with Session(control_engine) as session:
+            tenant = session.get(Tenant, tenant_id)
+        if tenant is None or tenant.status != TENANT_DELETING:
+            raise
+        yield None
+        return
+    try:
+        yield operation_id
+    except BaseException as exc:
+        lease.__exit__(type(exc), exc, exc.__traceback__)
+        raise
+    else:
+        lease.__exit__(None, None, None)
 
 def _safe_return_to(path: str) -> str:
     """Only redirect back to a path on this host after a workspace switch."""
@@ -74,15 +109,10 @@ def _safe_return_to(path: str) -> str:
     return "/"
 
 
-def _portfolio_rows(control_engine, tenant_manager: TenantManager, user_id: str) -> list[dict]:
-    """Every portfolio this account is a member of, with its role and headline figures.
-
-    Figures are read from each portfolio's own database. A portfolio that cannot be
-    opened is reported as unavailable rather than dropped, so a member never sees a
-    shorter list than they belong to.
-    """
+def _portfolio_rows(request, control_engine, tenant_manager: TenantManager, context) -> list[dict]:
+    """Every portfolio this account belongs to, with safely leased headline figures."""
     rows = []
-    for membership in memberships_for(control_engine, user_id):
+    for membership in memberships_for(control_engine, context.user.id):
         with Session(control_engine) as session:
             tenant = session.get(Tenant, membership.tenant_id)
         if tenant is None:
@@ -101,11 +131,15 @@ def _portfolio_rows(control_engine, tenant_manager: TenantManager, user_id: str)
             "total_debt_cents": None,
         }
         try:
-            with Session(tenant_manager.engine_for(tenant.id)) as session:
-                row["property_count"] = len(session.exec(select(Property)).all())
-                equity = calculate_portfolio_equity(session)
-                row["net_equity_cents"] = equity["net_equity_cents"]
-                row["total_debt_cents"] = equity["total_debt_cents"]
+            with _portfolio_lease(request, context, tenant.id, membership.role) as operation_id:
+                if operation_id is None:
+                    row["available"] = False
+                else:
+                    with Session(tenant_manager.engine_for(tenant.id)) as session:
+                        row["property_count"] = len(session.exec(select(Property)).all())
+                        equity = calculate_portfolio_equity(session)
+                        row["net_equity_cents"] = equity["net_equity_cents"]
+                        row["total_debt_cents"] = equity["total_debt_cents"]
         except Exception:  # noqa: BLE001 - one unopenable portfolio must not blank the page
             row["available"] = False
         rows.append(row)
@@ -134,9 +168,10 @@ def get_portfolios_router(templates, auth_dep, session_dep=None):
                 "active_page": "portfolios",
                 "context": context,
                 "portfolios": _portfolio_rows(
+                    request,
                     request.app.state.control_engine,
                     request.app.state.tenant_manager,
-                    context.user.id,
+                    context,
                 ),
                 "error": request.query_params.get("error"),
                 "csrf_token": context.csrf_token,
@@ -153,22 +188,27 @@ def get_portfolios_router(templates, auth_dep, session_dep=None):
         by looking the portfolio up among this account's own memberships, so an id
         from anywhere else is simply not found.
         """
-        _membership_for(request, context, tenant_id, roles=EXPORT_ROLES)
+        membership = _membership_for(request, context, tenant_id, roles=EXPORT_ROLES)
 
         tenant_manager = request.app.state.tenant_manager
         if not tenant_manager.tenant_exists(tenant_id):
             raise HTTPException(status_code=404, detail="Portfolio data not found")
-
         with Session(request.app.state.control_engine) as session:
             tenant = session.get(Tenant, tenant_id)
 
-        archive = build_portfolio_archive(
-            tenant_manager,
-            tenant_id,
-            portfolio_name=tenant.name if tenant else "",
-            tenant_slug=tenant.slug if tenant else "",
-            exported_for=context.user.email,
-        )
+        try:
+            with _portfolio_lease(request, context, tenant_id, membership.role) as operation_id:
+                if operation_id is None:
+                    raise HTTPException(status_code=409, detail="Portfolio is being deleted.")
+                archive = build_portfolio_archive(
+                    tenant_manager,
+                    tenant_id,
+                    portfolio_name=tenant.name if tenant else "",
+                    tenant_slug=tenant.slug if tenant else "",
+                    exported_for=context.user.email,
+                )
+        except AuthenticationRequired as exc:
+            raise HTTPException(status_code=404, detail="Portfolio not found") from exc
         return FileResponse(
             path=archive.path,
             media_type="application/gzip",
@@ -185,10 +225,12 @@ def get_portfolios_router(templates, auth_dep, session_dep=None):
     @router.get("/portfolios/{tenant_id}/delete", response_class=HTMLResponse, dependencies=[Depends(session_scope)])
     def confirm_delete_portfolio(tenant_id: str, request: Request, context=Depends(session_scope)):
         """Shows what removing this portfolio would destroy, and how to keep a copy."""
-        _membership_for(request, context, tenant_id, roles=DELETE_ROLES)
-
+        membership = _membership_for(request, context, tenant_id, roles=DELETE_ROLES)
         tenant_manager = request.app.state.tenant_manager
-        summary = portfolio_summary(request.app.state.control_engine, tenant_manager, tenant_id)
+        with _portfolio_lease(request, context, tenant_id, membership.role):
+            summary = portfolio_summary(
+                request.app.state.control_engine, tenant_manager, tenant_id
+            )
         if summary is None:
             raise HTTPException(status_code=404, detail="Portfolio not found")
 
@@ -216,35 +258,36 @@ def get_portfolios_router(templates, auth_dep, session_dep=None):
         The typed name is the confirmation: it cannot be satisfied by a stray click,
         and it forces the page that lists what will be lost to be read.
         """
-        _membership_for(request, context, tenant_id, roles=DELETE_ROLES)
-
+        membership = _membership_for(request, context, tenant_id, roles=DELETE_ROLES)
         tenant_manager = request.app.state.tenant_manager
-        summary = portfolio_summary(request.app.state.control_engine, tenant_manager, tenant_id)
-        if summary is None:
-            raise HTTPException(status_code=404, detail="Portfolio not found")
-
-        if confirm_name.strip() != summary.name:
-            return RedirectResponse(
-                url=f"/portfolios/{tenant_id}/delete"
-                    f"?error={urllib.parse.quote('Type the portfolio name exactly to confirm.')}",
-                status_code=303,
+        with _portfolio_lease(request, context, tenant_id, membership.role) as operation_id:
+            summary = portfolio_summary(
+                request.app.state.control_engine, tenant_manager, tenant_id
             )
+            if summary is None:
+                raise HTTPException(status_code=404, detail="Portfolio not found")
 
-        try:
-            delete_portfolio(
-                request.app.state.control_engine,
-                tenant_manager,
-                tenant_id=tenant_id,
-                actor_user_id=context.user.id,
-            )
-        except PortfolioDeletionError as exc:
-            return RedirectResponse(
-                url=f"/portfolios/{tenant_id}/delete?error={urllib.parse.quote(str(exc))}",
-                status_code=303,
-            )
+            if confirm_name.strip() != summary.name:
+                return RedirectResponse(
+                    url=f"/portfolios/{tenant_id}/delete"
+                        f"?error={urllib.parse.quote('Type the portfolio name exactly to confirm.')}",
+                    status_code=303,
+                )
 
-        # The session may have been looking at the portfolio that just went away; the
-        # deletion repointed it, so the list is the safe place to land.
+            try:
+                delete_portfolio(
+                    request.app.state.control_engine,
+                    tenant_manager,
+                    tenant_id=tenant_id,
+                    actor_user_id=context.user.id,
+                    operation_id=operation_id,
+                )
+            except PortfolioDeletionError as exc:
+                return RedirectResponse(
+                    url=f"/portfolios/{tenant_id}/delete?error={urllib.parse.quote(str(exc))}",
+                    status_code=303,
+                )
+
         return RedirectResponse(url="/portfolios", status_code=303)
 
     @router.post("/portfolios/{tenant_id}/open", dependencies=[Depends(session_scope)])

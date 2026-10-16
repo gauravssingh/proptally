@@ -8,18 +8,20 @@ control plane (``storage/system.db``: accounts, portfolios, memberships) and one
 directory per portfolio (``storage/tenants/<tenant_id>/`` holding that
 portfolio's own ``proptally.db``, ``vault`` and ``photos``).
 
-This tool performs that conversion once:
+The apply path is staged and resumable:
 
-1. creates the first account (the owner, who also becomes instance administrator)
-   and a portfolio in ``storage/system.db``;
-2. relocates the legacy database to ``storage/tenants/<tenant_id>/proptally.db``
-   and the vault/photos directories alongside it; and
-3. brings the relocated database's schema up to date (adds any columns and
-   constraints that post-date it, allocates per-entity ledger accounts).
+1. validate inputs and persist a migration record in ``system.db``;
+2. snapshot SQLite through its backup API, then copy the database and file stores into
+   a private staging directory without altering the legacy source;
+3. migrate schema, verify SQLite/foreign keys and posted-ledger balance invariants;
+4. atomically publish the verified tenant directory, then create the account, ACTIVE
+   tenant, and membership together in the control plane;
+5. leave the legacy source in place by default; deleting it is an explicit operator opt-in.
 
-It is **dry-run by default**: nothing is written until ``--apply`` is passed, and
-it refuses to run twice over the same data (detected from the source database's
-SHA-256, recorded in ``storage/migration_log.json``).
+The dry-run is the default. Failed work remains inactive and records its last completed
+stage and error in ``system.db``; rerunning the same command resumes from durable state.
+The source remains authoritative until activation. Before activation, rollback means
+leaving the source in place and not resuming; staged files are never exposed as a tenant.
 
 Usage
 -----
@@ -30,7 +32,7 @@ Usage
         --source storage/client-portfolio.db \
         --email owner@example.com --password 'a-strong-password'
 
-    # Perform the migration (moves the database and vault into place)
+    # Perform the staged migration
     PYTHONPATH=src python scripts/migrate_to_multitenant.py \
         --source storage/client-portfolio.db \
         --email owner@example.com --password 'a-strong-password' \
@@ -38,16 +40,17 @@ Usage
 
 The vault defaults to the legacy ``storage/vault`` (or ``storage/documents``) and
 photos to ``storage/photos`` beside the source database; override with ``--vault``
-and ``--photos``. Pass ``--keep-source`` to copy rather than move, leaving the
-legacy files in place.
+and ``--photos``. The source database and file stores remain after activation unless
+``--remove-source`` is explicitly passed; stop every legacy writer before opting in.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
-import json
+import os
 import shutil
+import sqlite3
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -63,7 +66,9 @@ from sqlmodel import Session, select  # noqa: E402
 from proptally.db.connection import get_engine  # noqa: E402
 from proptally.db.schema import SCHEMA_MIGRATIONS, init_schema  # noqa: E402
 from proptally.db.system_models import (  # noqa: E402
+    LegacyMigration,
     ROLE_OWNER,
+    TENANT_ACTIVE,
     Tenant,
     TenantMembership,
     User,
@@ -82,9 +87,6 @@ from proptally.web.auth import (  # noqa: E402
     unique_slug,
 )
 
-#: Where the fingerprint of every migrated source database is recorded, so the
-#: migration refuses to run twice over the same data even if the source remains.
-MIGRATION_LOG = "migration_log.json"
 
 #: Subdirectory of the source that a legacy layout keeps its vault in.
 _LEGACY_VAULT_NAMES = ("vault", "documents")
@@ -101,6 +103,7 @@ class MigrationPlan:
     source_db: Path
     storage_root: Path
     system_db: Path
+    migration_id: str
     tenant_id: str
     tenant_slug: str
     tenant_paths: TenantPaths
@@ -132,9 +135,83 @@ def _fingerprint(path: Path) -> str:
             digest.update(chunk)
     return digest.hexdigest()
 
+def _sqlite_fingerprint(path: Path) -> str:
+    """Hash a logical SQLite dump, independent of WAL checkpoint/page layout."""
+    digest = hashlib.sha256()
+    connection = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    try:
+        for statement in connection.iterdump():
+            digest.update(statement.encode("utf-8"))
+            digest.update(b"\n")
+    finally:
+        connection.close()
+    return digest.hexdigest()
 
-def _log_path(storage_root: Path) -> Path:
-    return storage_root / MIGRATION_LOG
+
+
+def _file_tree_fingerprint(directory: Path | None) -> str:
+    """Hash relative names, types and bytes for one legacy file store."""
+    digest = hashlib.sha256()
+    if directory is None or not directory.exists():
+        return digest.hexdigest()
+    if directory.is_symlink() or not directory.is_dir():
+        raise MigrationError(f"Legacy file store must be a real directory: {directory}")
+
+    for item in sorted(directory.rglob("*"), key=lambda entry: entry.relative_to(directory).as_posix()):
+        if item.is_symlink():
+            raise MigrationError(f"Legacy file store contains a symbolic link: {item}")
+        relative = item.relative_to(directory).as_posix().encode("utf-8")
+        if item.is_dir():
+            digest.update(b"D\0" + relative + b"\0")
+        elif item.is_file():
+            digest.update(b"F\0" + relative + b"\0")
+            with item.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1 << 20), b""):
+                    digest.update(chunk)
+            digest.update(b"\0")
+        else:
+            raise MigrationError(f"Legacy file store contains an unsupported entry: {item}")
+    return digest.hexdigest()
+def _migration_history(system_db: Path, source_path: Path) -> list[dict]:
+    """Read migration state without creating or changing anything (including in dry-run)."""
+    if not system_db.is_file():
+        return []
+    uri = f"{system_db.as_uri()}?mode=ro"
+    connection = sqlite3.connect(uri, uri=True)
+    try:
+        tables = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='legacy_migrations'"
+        ).fetchone()
+        if tables is None:
+            return []
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(legacy_migrations)")
+        }
+        vault_fingerprint = "vault_fingerprint" if "vault_fingerprint" in columns else "''"
+        photos_fingerprint = "photos_fingerprint" if "photos_fingerprint" in columns else "''"
+        connection.row_factory = sqlite3.Row
+        return [dict(row) for row in connection.execute(
+            "SELECT id, tenant_id, source_fingerprint, state, stage, email, display_name, "
+            "portfolio_name, vault_path, photos_path, "
+            f"{vault_fingerprint} AS vault_fingerprint, "
+            f"{photos_fingerprint} AS photos_fingerprint, keep_source "
+            "FROM legacy_migrations WHERE source_path=? ORDER BY updated_at DESC",
+            (str(source_path),),
+        )]
+    finally:
+        connection.close()
+
+
+def _save_migration(control_engine, migration_id: str, **changes) -> None:
+    with Session(control_engine) as session:
+        migration = session.get(LegacyMigration, migration_id)
+        if migration is None:
+            raise MigrationError(f"Migration record {migration_id!r} disappeared.")
+        for name, value in changes.items():
+            setattr(migration, name, value)
+        migration.updated_at = datetime.now(timezone.utc)
+        session.add(migration)
+        session.commit()
 
 
 def _applied_schema_versions(engine) -> set[int]:
@@ -150,14 +227,6 @@ def _applied_schema_versions(engine) -> set[int]:
         return {row[0] for row in conn.execute(text("SELECT version FROM schema_migrations"))}
 
 
-def _read_log(storage_root: Path) -> list[dict]:
-    path = _log_path(storage_root)
-    if not path.exists():
-        return []
-    try:
-        return json.loads(path.read_text())
-    except (ValueError, OSError):
-        return []
 
 
 def _legacy_vault(source_db: Path) -> Path | None:
@@ -177,7 +246,7 @@ def build_plan(
     portfolio_name: str = "",
     vault_dir: Path | None = None,
     photos_dir: Path | None = None,
-    keep_source: bool = False,
+    keep_source: bool = True,
     system_db: Path | None = None,
     force: bool = False,
 ) -> MigrationPlan:
@@ -204,26 +273,63 @@ def build_plan(
     if not normalised_email or "@" not in normalised_email:
         raise MigrationError("A valid --email is required.")
 
-    source_fingerprint = _fingerprint(source_db)
+    system_database = (
+        Path(system_db).expanduser().resolve() if system_db else storage_root / "system.db"
+    )
+    history = _migration_history(system_database, source_db)
+    unfinished = next((record for record in history if record["state"] != "ACTIVE"), None)
+    if unfinished is not None:
+        migration_id = unfinished["id"]
+        tenant_id = unfinished["tenant_id"]
+        if normalised_email != unfinished["email"]:
+            raise MigrationError(
+                f"Migration {migration_id} is resumable only with owner email "
+                f"{unfinished['email']!r}."
+            )
+        if display_name.strip() and display_name.strip() != unfinished["display_name"]:
+            raise MigrationError("A resumed migration must use its recorded display name.")
+        if portfolio_name.strip() and portfolio_name.strip() != unfinished["portfolio_name"]:
+            raise MigrationError("A resumed migration must use its recorded portfolio name.")
+        if keep_source != bool(unfinished["keep_source"]):
+            keep_source = bool(unfinished["keep_source"])
+        display_name = unfinished["display_name"]
+        portfolio_name = unfinished["portfolio_name"]
+        saved_vault = (
+            Path(unfinished["vault_path"])
+            if unfinished["vault_path"]
+            else (_legacy_vault(source_db) or source_db.parent / "vault")
+        )
+        saved_photos = (
+            Path(unfinished["photos_path"])
+            if unfinished["photos_path"]
+            else source_db.parent / "photos"
+        )
+        if vault_dir is not None and saved_vault != Path(vault_dir).expanduser().resolve():
+            raise MigrationError("A resumed migration must use its recorded vault directory.")
+        if photos_dir is not None and saved_photos != Path(photos_dir).expanduser().resolve():
+            raise MigrationError("A resumed migration must use its recorded photos directory.")
+        resolved_vault, resolved_photos = saved_vault, saved_photos
+        source_fingerprint = unfinished["source_fingerprint"] or _fingerprint(source_db)
+    else:
+        completed = next((record for record in history if record["state"] == "ACTIVE"), None)
+        if completed is not None and not force:
+            raise MigrationError(
+                f"{source_db} was already migrated to tenant {completed['tenant_id']!r}. "
+                "Refusing to run twice over the same legacy database. Pass --force-remigrate "
+                "only after deliberately restoring an older copy."
+            )
+        migration_id = f"mig_{uuid4().hex}"
+        tenant_id = f"tnt_{uuid4().hex[:16]}"
+        source_fingerprint = _fingerprint(source_db)
+        resolved_vault = (
+            Path(vault_dir).expanduser().resolve()
+            if vault_dir
+            else (_legacy_vault(source_db) or source_db.parent / "vault")
+        )
+        resolved_photos = (
+            Path(photos_dir).expanduser().resolve() if photos_dir else source_db.parent / "photos"
+        )
 
-    # The duplicate check keys on the source *path*, not on its bytes. These
-    # databases run in WAL mode, so committed pages can sit in the -wal sidecar
-    # while the main file is unchanged, and a later checkpoint rewrites the main
-    # file. Hashing only the main file therefore yields a different value for the
-    # same logical database and would let a second migration through silently.
-    # The fingerprint is still recorded, as evidence of what was migrated.
-    if not force:
-        for entry in _read_log(storage_root):
-            if entry.get("source") == str(source_db):
-                raise MigrationError(
-                    f"{source_db} was already migrated to tenant {entry.get('tenant_id')!r} "
-                    f"on {entry.get('migrated_at')} "
-                    f"(recorded sha256 {str(entry.get('sha256'))[:12]}…). Refusing to run twice "
-                    "over the same legacy database. Pass --force-remigrate only if you have "
-                    "deliberately restored an older copy of it."
-                )
-
-    tenant_id = f"tnt_{uuid4().hex[:16]}"
     paths = TenantPaths(
         root=storage_root / "tenants" / tenant_id,
         database=storage_root / "tenants" / tenant_id / "proptally.db",
@@ -234,80 +340,215 @@ def build_plan(
         quarantine=storage_root / "tenants" / tenant_id / "quarantine",
     )
 
-    resolved_vault = Path(vault_dir).expanduser().resolve() if vault_dir else _legacy_vault(source_db)
-    resolved_photos = (
-        Path(photos_dir).expanduser().resolve()
-        if photos_dir
-        else (source_db.parent / "photos")
-    )
-
     plan = MigrationPlan(
         source_db=source_db,
         storage_root=storage_root,
-        system_db=Path(system_db).expanduser().resolve() if system_db else storage_root / "system.db",
+        system_db=system_database,
+        migration_id=migration_id,
         tenant_id=tenant_id,
         tenant_slug="",  # resolved against the live control plane at apply time
         tenant_paths=paths,
         email=normalised_email,
         display_name=display_name.strip() or normalised_email,
         portfolio_name=portfolio_name.strip() or "Imported Portfolio",
-        vault_dir=resolved_vault if resolved_vault and resolved_vault.is_dir() else None,
-        photos_dir=resolved_photos if resolved_photos and resolved_photos.is_dir() else None,
+        vault_dir=resolved_vault,
+        photos_dir=resolved_photos,
         keep_source=keep_source,
         source_fingerprint=source_fingerprint,
     )
-
     plan.moves.append((source_db, paths.database))
-    if plan.vault_dir:
+    if plan.vault_dir.is_dir():
         plan.moves.append((plan.vault_dir, paths.vault))
-    if plan.photos_dir:
+    if plan.photos_dir.is_dir():
         plan.moves.append((plan.photos_dir, paths.photos))
     return plan
 
 
 def _copy_database(source: Path, destination: Path) -> None:
-    """Copy a SQLite database consistently, including any uncheckpointed WAL.
-
-    A live database keeps recently committed pages in its ``-wal`` sidecar until a
-    checkpoint, so a raw file copy can silently lose data. The SQLite backup API
-    reads through the log and writes a single consistent file.
-    """
-    import sqlite3
-
-    source_conn = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+    """Create an atomic consistent SQLite snapshot through SQLite's backup API."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(destination.name + ".tmp")
+    temporary.unlink(missing_ok=True)
+    source_conn = sqlite3.connect(f"{source.as_uri()}?mode=ro", uri=True)
     try:
-        destination_conn = sqlite3.connect(str(destination))
+        destination_conn = sqlite3.connect(str(temporary))
         try:
             source_conn.backup(destination_conn)
+            integrity = destination_conn.execute("PRAGMA integrity_check").fetchone()[0]
+            if integrity != "ok":
+                raise MigrationError(f"SQLite snapshot failed integrity check: {integrity}")
         finally:
             destination_conn.close()
     finally:
         source_conn.close()
+    os.replace(temporary, destination)
 
 
-def _relocate(source: Path, destination: Path, *, keep_source: bool) -> None:
-    """Moves (or copies) a file or directory into place, creating the parent."""
-    destination.parent.mkdir(parents=True, exist_ok=True)
+def _verify_financial_database(engine) -> None:
+    """Verify SQLite, foreign-key and posted-ledger balance invariants."""
+    from sqlalchemy import text
+
+    with engine.connect() as connection:
+        integrity = connection.exec_driver_sql("PRAGMA integrity_check").scalar_one()
+        if integrity != "ok":
+            raise MigrationError(f"SQLite integrity check failed: {integrity}")
+        foreign_keys = connection.exec_driver_sql("PRAGMA foreign_key_check").all()
+        if foreign_keys:
+            raise MigrationError(f"SQLite foreign-key check failed: {foreign_keys!r}")
+        unbalanced = connection.execute(text(
+            "SELECT entry.id FROM journal_entries AS entry "
+            "LEFT JOIN (SELECT journal_entry_id, COUNT(*) AS line_count, "
+            "SUM(debit_cents) AS debits, SUM(credit_cents) AS credits "
+            "FROM journal_entry_lines GROUP BY journal_entry_id) AS lines "
+            "ON lines.journal_entry_id=entry.id "
+            "WHERE entry.status='POSTED' AND "
+            "(COALESCE(lines.line_count, 0)=0 OR COALESCE(lines.debits, 0)<=0 "
+            "OR COALESCE(lines.debits, 0)!=COALESCE(lines.credits, 0)) LIMIT 1"
+        )).first()
+        if unbalanced:
+            raise MigrationError(
+                f"Posted journal entry {unbalanced[0]!r} violates the balance invariant."
+            )
+
+
+def _stage_portfolio(
+    snapshot: Path, stage_root: Path, plan: MigrationPlan
+) -> Path:
+    """Build a complete private tenant tree and verify its copied file stores."""
+    artifact = stage_root / "portfolio"
+    if artifact.exists():
+        return artifact
+    temporary = stage_root / "portfolio.tmp"
+    if temporary.exists():
+        shutil.rmtree(temporary)
+    temporary.mkdir(parents=True)
+    vault_before = _file_tree_fingerprint(plan.vault_dir)
+    photos_before = _file_tree_fingerprint(plan.photos_dir)
+    _copy_database(snapshot, temporary / "proptally.db")
+    if plan.vault_dir.is_dir():
+        shutil.copytree(plan.vault_dir, temporary / "vault")
+    if plan.photos_dir.is_dir():
+        shutil.copytree(plan.photos_dir, temporary / "photos")
+    for subdir in TENANT_SUBDIRS:
+        (temporary / subdir).mkdir(parents=True, exist_ok=True)
+    if (
+        _file_tree_fingerprint(plan.vault_dir) != vault_before
+        or _file_tree_fingerprint(plan.photos_dir) != photos_before
+        or _file_tree_fingerprint(temporary / "vault") != vault_before
+        or _file_tree_fingerprint(temporary / "photos") != photos_before
+    ):
+        shutil.rmtree(temporary)
+        raise MigrationError(
+            "A legacy vault or photos directory changed while it was being staged; "
+            "source files were preserved and the migration can be retried."
+        )
+    os.replace(temporary, artifact)
+    return artifact
+
+
+def _staged_artifact_matches(
+    artifact: Path,
+    expected_database_fingerprint: str,
+    expected_vault_fingerprint: str,
+    expected_photos_fingerprint: str,
+) -> bool:
+    """Reject partial or modified staged databases and file stores on resume."""
+    database = artifact / "proptally.db"
+    if not expected_database_fingerprint or not database.is_file():
+        return False
+    if any(not (artifact / subdir).is_dir() for subdir in TENANT_SUBDIRS):
+        return False
+    try:
+        connection = sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)
+        try:
+            if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                return False
+        finally:
+            connection.close()
+        return (
+            _sqlite_fingerprint(database) == expected_database_fingerprint
+            and _file_tree_fingerprint(artifact / "vault") == expected_vault_fingerprint
+            and _file_tree_fingerprint(artifact / "photos") == expected_photos_fingerprint
+        )
+    except (OSError, sqlite3.Error, MigrationError):
+        return False
+def _refresh_snapshot_if_source_changed(
+    plan: MigrationPlan,
+    control_engine,
+    stage_root: Path,
+    snapshot: Path,
+    artifact: Path,
+) -> tuple[str, str, str]:
+    """Refresh an inactive retry when any legacy database or file-store input changed."""
+    current_vault_fingerprint = _file_tree_fingerprint(plan.vault_dir)
+    current_photos_fingerprint = _file_tree_fingerprint(plan.photos_dir)
+    if not snapshot.is_file():
+        _copy_database(plan.source_db, snapshot)
+        return (
+            _sqlite_fingerprint(snapshot),
+            current_vault_fingerprint,
+            current_photos_fingerprint,
+        )
+
+    candidate = stage_root / "source.refresh.sqlite"
+    _copy_database(plan.source_db, candidate)
+    candidate_fingerprint = _sqlite_fingerprint(candidate)
+    with Session(control_engine) as session:
+        migration = session.get(LegacyMigration, plan.migration_id)
+        tenant = session.get(Tenant, plan.tenant_id)
+        if migration is None or migration.state == "ACTIVE" or tenant is not None:
+            candidate.unlink(missing_ok=True)
+            raise MigrationError("Refusing to refresh a migration that has already activated.")
+        database_changed = candidate_fingerprint != _sqlite_fingerprint(snapshot)
+        vault_changed = current_vault_fingerprint != migration.vault_fingerprint
+        photos_changed = current_photos_fingerprint != migration.photos_fingerprint
+        if not (database_changed or vault_changed or photos_changed):
+            candidate.unlink(missing_ok=True)
+            return candidate_fingerprint, current_vault_fingerprint, current_photos_fingerprint
+        previously_published = migration.stage in {"VERIFIED", "PUBLISHED"}
+
+    destination = plan.tenant_paths.root
     if destination.exists():
-        raise MigrationError(f"Refusing to overwrite existing path: {destination}")
+        if not previously_published:
+            candidate.unlink(missing_ok=True)
+            raise MigrationError(f"Refusing to replace an unrecognized tenant path: {destination}")
+        shutil.rmtree(destination)
+    for staged in (artifact, stage_root / "portfolio.tmp"):
+        if staged.exists():
+            shutil.rmtree(staged)
+    if database_changed:
+        os.replace(candidate, snapshot)
+    else:
+        candidate.unlink(missing_ok=True)
+    return (
+        _sqlite_fingerprint(snapshot),
+        current_vault_fingerprint,
+        current_photos_fingerprint,
+    )
 
-    if source.is_dir():
-        if keep_source:
-            shutil.copytree(source, destination)
-        else:
-            shutil.move(str(source), str(destination))
-        return
 
-    # A database file: snapshot it through SQLite so no WAL content is lost.
-    _copy_database(source, destination)
-    if not keep_source:
-        source.unlink(missing_ok=True)
-        for suffix in ("-wal", "-shm"):
-            Path(f"{source}{suffix}").unlink(missing_ok=True)
-
-
+def _lock_and_verify_source_snapshot(plan: MigrationPlan, stage_root: Path):
+    """Block new legacy writes until control-plane activation commits."""
+    source_guard = sqlite3.connect(str(plan.source_db), timeout=30)
+    verification_copy = stage_root / "source.activation.sqlite"
+    try:
+        source_guard.execute("BEGIN IMMEDIATE")
+        _copy_database(plan.source_db, verification_copy)
+        current_fingerprint = _sqlite_fingerprint(verification_copy)
+        verification_copy.unlink(missing_ok=True)
+        if current_fingerprint != plan.source_fingerprint:
+            raise MigrationError(
+                "Legacy source changed after its staged snapshot. No tenant was activated and "
+                "the source was retained; stop legacy writers and rerun to refresh the snapshot."
+            )
+        return source_guard
+    except Exception:
+        verification_copy.unlink(missing_ok=True)
+        source_guard.rollback()
+        source_guard.close()
+        raise
 def apply_migration(plan: MigrationPlan, *, password: str) -> MigrationResult:
-    """Perform the migration described by ``plan``. Requires an explicit password."""
+    """Run validated, resumable staging and publish only a verified tenant."""
     ok, reason = password_is_acceptable(password)
     if not ok:
         raise MigrationError(reason)
@@ -315,76 +556,285 @@ def apply_migration(plan: MigrationPlan, *, password: str) -> MigrationResult:
     plan.storage_root.mkdir(parents=True, exist_ok=True)
     control_engine = get_system_engine(f"sqlite:///{plan.system_db}")
     init_system_schema(control_engine)
-
     with Session(control_engine) as session:
-        slug = unique_slug(control_engine, plan.portfolio_name)
-        is_first_user = session.exec(select(User)).first() is None
-        existing_user = session.exec(select(User).where(User.email == plan.email)).first()
-        if existing_user is not None:
+        if session.exec(select(User).where(User.email == plan.email)).first() is not None:
             raise MigrationError(f"An account with email {plan.email!r} already exists.")
+    now = datetime.now(timezone.utc)
+    with Session(control_engine) as session:
+        migration = session.get(LegacyMigration, plan.migration_id)
+        if migration is None:
+            migration = LegacyMigration(
+                id=plan.migration_id,
+                source_path=str(plan.source_db),
+                tenant_id=plan.tenant_id,
+                state="IN_PROGRESS",
+                stage="VALIDATED",
+                email=plan.email,
+                display_name=plan.display_name,
+                portfolio_name=plan.portfolio_name,
+                vault_path=str(plan.vault_dir) if plan.vault_dir else None,
+                photos_path=str(plan.photos_dir) if plan.photos_dir else None,
+                vault_fingerprint=_file_tree_fingerprint(plan.vault_dir),
+                photos_fingerprint=_file_tree_fingerprint(plan.photos_dir),
+                keep_source=plan.keep_source,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(migration)
+        elif migration.state == "ACTIVE":
+            raise MigrationError(
+                f"Migration {plan.migration_id} is already active for tenant {plan.tenant_id}."
+            )
+        else:
+            migration.state = "IN_PROGRESS"
+            migration.last_error = None
+            migration.updated_at = now
+            session.add(migration)
+        session.commit()
 
-        user = User(
-            id=f"usr_{uuid4().hex[:16]}",
-            email=plan.email,
-            password_hash=hash_password(password),
-            display_name=plan.display_name,
-            is_instance_admin=is_first_user,
+    stage_root = plan.storage_root / ".migration-staging" / plan.migration_id
+    snapshot = stage_root / "source.sqlite"
+    artifact = stage_root / "portfolio"
+    moved: list[tuple[str, str]] = []
+    tenant_engine = None
+    source_guard = None
+    activation_committed = False
+    try:
+        stage_root.mkdir(parents=True, exist_ok=True)
+        (
+            plan.source_fingerprint,
+            vault_fingerprint,
+            photos_fingerprint,
+        ) = _refresh_snapshot_if_source_changed(
+            plan, control_engine, stage_root, snapshot, artifact
         )
-        tenant = Tenant(id=plan.tenant_id, name=plan.portfolio_name, slug=slug)
-        session.add(user)
-        session.add(tenant)
-        session.flush()
-        session.add(
-            TenantMembership(
+        destination = plan.tenant_paths.root
+        with Session(control_engine) as session:
+            migration = session.get(LegacyMigration, plan.migration_id)
+            tenant = session.get(Tenant, plan.tenant_id)
+            recognized_published = (
+                destination.exists()
+                and migration is not None
+                and migration.state != "ACTIVE"
+                and tenant is None
+                and (
+                    migration.stage == "PUBLISHED"
+                    or (migration.stage == "VERIFIED" and not artifact.exists())
+                )
+            )
+            prior_database_fingerprint = (
+                migration.staged_database_fingerprint if migration is not None else ""
+            )
+
+        already_published = recognized_published and _staged_artifact_matches(
+            destination,
+            prior_database_fingerprint,
+            vault_fingerprint,
+            photos_fingerprint,
+        )
+        if recognized_published and not already_published:
+            shutil.rmtree(destination)
+        if already_published:
+            if artifact.exists():
+                shutil.rmtree(artifact)
+            artifact = destination
+            _save_migration(
+                control_engine,
+                plan.migration_id,
+                source_fingerprint=plan.source_fingerprint,
+                vault_fingerprint=vault_fingerprint,
+                photos_fingerprint=photos_fingerprint,
+                state="IN_PROGRESS",
+                last_error=None,
+            )
+        else:
+            if artifact.exists():
+                shutil.rmtree(artifact)
+            _save_migration(
+                control_engine,
+                plan.migration_id,
+                source_fingerprint=plan.source_fingerprint,
+                vault_fingerprint=vault_fingerprint,
+                photos_fingerprint=photos_fingerprint,
+                staged_database_fingerprint="",
+                stage="SNAPSHOTTED",
+                state="IN_PROGRESS",
+                last_error=None,
+            )
+            artifact = _stage_portfolio(snapshot, stage_root, plan)
+            _save_migration(
+                control_engine, plan.migration_id, stage="STAGED", state="IN_PROGRESS"
+            )
+
+        snapshot_engine = get_engine(f"sqlite:///{snapshot}")
+        before = _applied_schema_versions(snapshot_engine)
+        snapshot_engine.dispose()
+        staged_database = artifact / "proptally.db"
+        tenant_engine = get_engine(f"sqlite:///{staged_database}")
+        init_schema(tenant_engine)
+        after = _applied_schema_versions(tenant_engine)
+        descriptions = {version: description for version, description, _ in SCHEMA_MIGRATIONS}
+        applied_log = [(v, descriptions.get(v, "")) for v in sorted(after - before)]
+        _save_migration(
+            control_engine,
+            plan.migration_id,
+            stage="SCHEMA_MIGRATED",
+            staged_database_fingerprint=_sqlite_fingerprint(staged_database),
+            state="IN_PROGRESS",
+        )
+        _verify_financial_database(tenant_engine)
+        tenant_engine.dispose()
+        tenant_engine = None
+        _save_migration(
+            control_engine, plan.migration_id, stage="VERIFIED", state="IN_PROGRESS"
+        )
+        if (
+            _file_tree_fingerprint(plan.vault_dir) != vault_fingerprint
+            or _file_tree_fingerprint(plan.photos_dir) != photos_fingerprint
+        ):
+            raise MigrationError(
+                "A legacy vault or photos directory changed after staging. No tenant was "
+                "published; the source is retained and the same command can restage it."
+            )
+        source_guard = _lock_and_verify_source_snapshot(plan, stage_root)
+        if (
+            _file_tree_fingerprint(plan.vault_dir) != vault_fingerprint
+            or _file_tree_fingerprint(plan.photos_dir) != photos_fingerprint
+        ):
+            raise MigrationError(
+                "A legacy vault or photos directory changed after staging. No tenant was "
+                "published; the source is retained and the same command can restage it."
+            )
+
+        destination = plan.tenant_paths.root
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            with Session(control_engine) as session:
+                migration = session.get(LegacyMigration, plan.migration_id)
+                published = (
+                    already_published
+                    or (
+                        migration is not None
+                        and (
+                            migration.stage in {"PUBLISHED", "ACTIVE"}
+                            or (migration.stage == "VERIFIED" and not artifact.exists())
+                        )
+                    )
+                )
+            if not published:
+                raise MigrationError(f"Refusing to overwrite existing path: {destination}")
+        else:
+            os.replace(artifact, destination)
+        published_engine = get_engine(f"sqlite:///{plan.tenant_paths.database}")
+        try:
+            _verify_financial_database(published_engine)
+        finally:
+            published_engine.dispose()
+        _save_migration(
+            control_engine, plan.migration_id, stage="PUBLISHED", state="IN_PROGRESS"
+        )
+
+        with Session(control_engine) as session:
+            migration = session.get(LegacyMigration, plan.migration_id)
+            if migration is None or migration.state == "ACTIVE":
+                raise MigrationError("Migration state changed before activation.")
+            existing_user = session.exec(
+                select(User).where(User.email == plan.email)
+            ).first()
+            if existing_user is not None:
+                raise MigrationError(f"An account with email {plan.email!r} already exists.")
+            slug = unique_slug(control_engine, plan.portfolio_name)
+            is_first_user = session.exec(select(User.id)).first() is None
+            user = User(
+                id=f"usr_{uuid4().hex[:16]}",
+                email=plan.email,
+                password_hash=hash_password(password),
+                display_name=plan.display_name,
+                is_instance_admin=is_first_user,
+            )
+            tenant = Tenant(
+                id=plan.tenant_id,
+                name=plan.portfolio_name,
+                slug=slug,
+                status=TENANT_ACTIVE,
+            )
+            session.add(user)
+            session.add(tenant)
+            session.flush()
+            session.add(TenantMembership(
                 id=f"mem_{uuid4().hex[:16]}",
                 user_id=user.id,
                 tenant_id=tenant.id,
                 role=ROLE_OWNER,
+            ))
+            migration.state = "ACTIVE"
+            migration.stage = "ACTIVE"
+            migration.last_error = None
+            migration.updated_at = datetime.now(timezone.utc)
+            session.add(migration)
+            session.commit()
+            plan.tenant_slug = slug
+            user_id = user.id
+            activation_committed = True
+        shutil.rmtree(stage_root, ignore_errors=True)
+        if not plan.keep_source:
+            source_paths = [plan.source_db]
+            source_paths.extend(Path(f"{plan.source_db}{suffix}") for suffix in ("-wal", "-shm"))
+            source_paths.extend(path for path in (plan.vault_dir, plan.photos_dir) if path)
+            for source in source_paths:
+                try:
+                    if source.is_dir():
+                        shutil.rmtree(source)
+                    else:
+                        source.unlink(missing_ok=True)
+                except OSError:
+                    # Publication and control-plane activation are already complete;
+                    # retaining a legacy copy is safer than reporting a false rollback.
+                    pass
+        if not plan.keep_source:
+            moved.extend(
+                (str(source), str(destination))
+                for source, destination in plan.moves
+                if not source.exists()
             )
-        )
-        session.commit()
-        session.refresh(user)
-        plan.tenant_slug = slug
-
-    # Relocate the database and files first, then fill in any portfolio
-    # subdirectories the legacy layout did not have.
-    moved: list[tuple[str, str]] = []
-    for source, destination in plan.moves:
-        _relocate(source, destination, keep_source=plan.keep_source)
-        moved.append((str(source), str(destination)))
-
-    for subdir in TENANT_SUBDIRS:
-        (plan.tenant_paths.root / subdir).mkdir(parents=True, exist_ok=True)
-
-    # Bring the relocated database's schema up to date (adds post-dating columns,
-    # constraints and the per-entity ledger accounts). Capture the versions that
-    # land so the operator sees exactly what changed.
-    tenant_engine = get_engine(f"sqlite:///{plan.tenant_paths.database}")
-    before = _applied_schema_versions(tenant_engine)
-    init_schema(tenant_engine)
-    after = _applied_schema_versions(tenant_engine)
-    descriptions = {version: description for version, description, _ in SCHEMA_MIGRATIONS}
-    applied_log = [(v, descriptions.get(v, "")) for v in sorted(after - before)]
-    tenant_engine.dispose()
-
-    # Record the source fingerprint so a second run over the same data refuses.
-    log = _read_log(plan.storage_root)
-    log.append(
-        {
-            "source": str(plan.source_db),
-            "sha256": plan.source_fingerprint,
-            "tenant_id": plan.tenant_id,
-            "tenant_slug": plan.tenant_slug,
-            "migrated_at": datetime.now(timezone.utc).isoformat(),
-            "kept_source": plan.keep_source,
-        }
-    )
-    _log_path(plan.storage_root).write_text(json.dumps(log, indent=2))
+        if source_guard is not None:
+            source_guard.rollback()
+            source_guard.close()
+            source_guard = None
+    except Exception as exc:
+        if tenant_engine is not None:
+            tenant_engine.dispose()
+        if source_guard is not None:
+            try:
+                source_guard.rollback()
+            finally:
+                source_guard.close()
+        if not activation_committed:
+            try:
+                _save_migration(
+                    control_engine,
+                    plan.migration_id,
+                    state="FAILED",
+                    last_error=f"{type(exc).__name__}: {exc}",
+                )
+            except Exception:
+                pass
+        if isinstance(exc, MigrationError):
+            raise
+        if activation_committed:
+            raise MigrationError(
+                f"Migration {plan.migration_id} activated successfully, but source cleanup "
+                f"did not finish: {exc}. The active tenant was not rolled back."
+            ) from exc
+        raise MigrationError(
+            f"Migration {plan.migration_id} failed safely: {exc}. Source data is preserved; "
+            "rerun the same command to resume from its durable SQLite stage."
+        ) from exc
 
     return MigrationResult(
         applied=True,
         plan=plan,
-        user_id=user.id,
+        user_id=user_id,
         applied_migrations=applied_log,
         moved_paths=moved,
     )
@@ -400,7 +850,7 @@ def migrate_to_multitenant(
     portfolio_name: str = "",
     vault_dir: Path | None = None,
     photos_dir: Path | None = None,
-    keep_source: bool = False,
+    keep_source: bool = True,
     apply: bool = False,
     system_db: Path | None = None,
     force: bool = False,
@@ -432,17 +882,18 @@ def _describe(plan: MigrationPlan, applied: bool) -> str:
         f"Control plane:    {plan.system_db}",
         f"Owner:            {plan.email} ({plan.display_name})",
         f"Portfolio:        {plan.portfolio_name} (slug {plan.tenant_slug or '<new>'})",
+        f"Migration id:    {plan.migration_id}",
         f"Tenant id:        {plan.tenant_id}",
         f"Mode:             {'APPLY' if applied else 'DRY RUN (pass --apply to write)'}"
-        + (" [keep source]" if plan.keep_source else " [move source]"),
+        + (" [preserve source]" if plan.keep_source else " [remove source after activation]"),
         "Relocations:",
     ]
     for source, destination in plan.moves:
         lines.append(f"  {source}")
         lines.append(f"    → {destination}")
-    if plan.vault_dir is None:
+    if not plan.vault_dir.is_dir():
         lines.append("  (no legacy vault directory found)")
-    if plan.photos_dir is None:
+    if not plan.photos_dir.is_dir():
         lines.append("  (no legacy photos directory found)")
     return "\n".join(lines)
 
@@ -479,8 +930,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="Storage root (defaults to PROPTALLY_STORAGE_ROOT or storage/).")
     parser.add_argument("--vault", type=Path, default=None, help="Legacy vault directory.")
     parser.add_argument("--photos", type=Path, default=None, help="Legacy photos directory.")
-    parser.add_argument("--keep-source", action="store_true",
-                        help="Copy the database and files instead of moving them.")
+    parser.add_argument(
+        "--remove-source",
+        action="store_true",
+        help="Delete legacy files only after activation; first stop every legacy writer.",
+    )
     parser.add_argument(
         "--force-remigrate",
         action="store_true",
@@ -507,7 +961,7 @@ def main(argv: list[str] | None = None) -> int:
             portfolio_name=args.portfolio_name,
             vault_dir=args.vault,
             photos_dir=args.photos,
-            keep_source=args.keep_source,
+            keep_source=not args.remove_source,
             apply=args.apply,
             force=args.force_remigrate,
         )

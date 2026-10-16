@@ -152,22 +152,22 @@ flowchart LR
 
 #### Scope & Deliverables
 1. **Control Plane Schema (`src/proptally/db/system_models.py`):**
-   * `User`: `id` (`usr_...`), `email` (unique, lowercase indexed), `password_hash` (Argon2id via `argon2-cffi` or `pwdlib`), `display_name`, `is_instance_admin` (bool), `is_active` (bool), `created_at`.
-   * `Tenant`: `id` (`tnt_...`), `name` (e.g. `"Singh Family Properties"`), `slug`, `storage_subdir`, `is_demo` (bool), `created_at`.
-   * `TenantMembership`: `id`, `user_id` (FK), `tenant_id` (FK), `role` (`OWNER` | `CPA_REVIEWER` | `READ_ONLY`), `created_at` — `UNIQUE(user_id, tenant_id)`.
+   * `User`: `id` (`usr_...`), `email` (unique, lowercase indexed), `password_hash` (Argon2id via `argon2-cffi`), `display_name`, `is_instance_admin` (bool), `is_active` (bool), `created_at`.
+   * `Tenant`: `id` (`tnt_...`), `name`, unique `slug`, lifecycle `status` (`PENDING`, `PROVISIONING`, `ACTIVE`, `FAILED`, `DELETING`, `DELETED`), deletion claim metadata, and `created_at`. A tenant is one portfolio in the current product.
+   * `TenantMembership`: `id`, `user_id` (FK), `tenant_id` (FK), `role` (`OWNER` | `MANAGER` | `CPA_REVIEWER` | `READ_ONLY`), `created_at` — `UNIQUE(user_id, tenant_id)`.
    * `UserSession`: `id` (SHA-256 of 32-byte random token), `user_id` (FK), `active_tenant_id` (FK), `csrf_token`, `ip_address`, `user_agent`, `expires_at`, `created_at`, `revoked_at`. Session tokens are compared by hash, rotated on login and on privilege change, and invalidated wholesale when the owner's password changes.
-   * `UserInvite`: `id`, `tenant_id` (FK), `email`, `role` (`CPA_REVIEWER` | `READ_ONLY`), `token_hash`, `invited_by_user_id`, `expires_at`, `accepted_at`, `created_at` — the table shown in the §2.2 diagram, and the only way a non-owner joins an existing tenant.
+   * `UserInvite`: `id`, `tenant_id` (FK), `email`, `role` (`MANAGER` | `CPA_REVIEWER` | `READ_ONLY`), `token_hash`, `invited_by_user_id`, `expires_at`, `accepted_at`, `created_at` — a single-use invite is the only route into an existing tenant.
    * `PasswordResetToken`: `id`, `user_id` (FK), `token_hash`, `expires_at`, `used_at`.
-   * **Dependency additions (`pyproject.toml`):** the repository currently declares no auth/crypto dependency (`grep` for `argon|passlib|bcrypt|itsdangerous|pwdlib` over `pyproject.toml` returns nothing). Add exactly one password-hashing library (Argon2id) and one cookie-signing/CSRF primitive, and pin them in `[project] dependencies`; do not hand-roll either.
+   * **Authentication dependencies (`pyproject.toml`):** `argon2-cffi` provides Argon2id password hashing. Sessions use random server-side tokens stored by hash; CSRF uses a pre-session or session-bound double-submit token. No cookie-signing dependency is required.
 2. **Tenant Engine Manager (`src/proptally/db/tenant_manager.py`):**
    * Maintains an LRU cache of SQLAlchemy `Engine` instances keyed by `tenant_id` pointing to `storage/tenants/{tenant_id}/proptally.db`.
    * On first creation of a tenant, initializes directory structure (`storage/tenants/{tenant_id}/{vault,photos,inbox}`), runs `init_schema(tenant_engine)` (including all 7 immutability triggers), and seeds `BASE_CHART_OF_ACCOUNTS` + generic `DEFAULT_VENDOR_RULES`.
 3. **Authentication & Session Dependencies (`src/proptally/web/auth.py`):**
    * Cookie-based session (`pt_session`, `HttpOnly`, `SameSite=Lax`, `Secure` when behind HTTPS).
    * Rate-limited login (`POST /auth/login` — max 5 failed attempts per 15 min per IP/email).
-   * Self-registration (`GET/POST /auth/register`) controlled by env flag `PROPTALLY_ALLOW_REGISTRATION=true` (default **false**: an unauthenticated endpoint that provisions a tenant must be opt-in). First registered user on a fresh server automatically becomes `is_instance_admin=True`.
+   * Self-registration is open only while the instance has no accounts (first-user bootstrap) or when `PROPTALLY_ALLOW_REGISTRATION=true`; the first account becomes `is_instance_admin=True`.
    * Logout (`POST /auth/logout`, revokes the session row), password change (`POST /account/password`, re-verifies the current password and revokes all other sessions), and password reset via single-use `PasswordResetToken`. With no SMTP transport, a local operator runs `scripts/issue_password_reset.py` and hands the link to the verified account holder; the public reset page never reveals whether an account exists or issues a token.
-   * Invite lifecycle: `POST /tenant/invites` (OWNER only) issues a `UserInvite`; `GET/POST /auth/invite/{token}` accepts it and creates the `TenantMembership` with the invited role. There is no other path to join a tenant.
+   * Invite lifecycle: portfolio owners issue single-use `UserInvite` records for `MANAGER`, `CPA_REVIEWER`, or `READ_ONLY`; atomic acceptance creates the `TenantMembership`. Ownership is granted only through an explicit owner role change, not an invitation.
    * **CSRF enforcement, not just a stored token:** every state-changing route requires the double-submit token from `UserSession.csrf_token`; requests failing validation are rejected before any domain call. `SameSite=Lax` alone is not treated as CSRF protection.
    * Workspace switcher (`POST /auth/switch-tenant`) for users who own multiple portfolios or CPAs invited to multiple clients.
    * Request dependencies:
@@ -248,11 +248,11 @@ flowchart LR
 **Objective:** Enable a portfolio owner to invite a CPA/Accountant user with appropriate governance permissions, upgrade `backup.sh`/`restore.sh` for multi-tenant directories, and provide a one-command migration for existing single-tenant databases.
 
 #### Scope & Deliverables
-1. **Role-Based Access Control & CPA Governance (`OWNER`, `CPA_REVIEWER`, `READ_ONLY`):**
-   * Enforce role checks in mutating routes (`POST` endpoints require `OWNER`, except CPA review attestation endpoints which allow `CPA_REVIEWER`).
-   * Upgrade `PostingAuthorization` (`src/proptally/db/models.py:401`): add `authorized_by_user_id: Optional[str]` and `authorized_by_role: Optional[str]` so CBD-2 external review records whether it was a self-attestation by `OWNER` (`USER_ATTESTED_CPA_REVIEW`) or a verified sign-off by an authenticated `CPA_REVIEWER`.
+1. **Role-Based Access Control & CPA Governance (`OWNER`, `MANAGER`, `CPA_REVIEWER`, `READ_ONLY`):**
+   * `OWNER` administers people, bookkeeping/setup, client authorization, export and removal. `MANAGER` handles bookkeeping/setup but cannot administer people, authorize for the client, export or remove. `CPA_REVIEWER` may do bookkeeping as needed and record a verified external review; `READ_ONLY` may view but cannot mutate or export. Instance-admin status alone grants no tenant membership or financial-data access.
+   * `PostingAuthorization` persists `authorized_by_user_id`, `authorized_by_role`, and `verified_cpa_reviewer`; an owner's self-attestation is never recorded as a verified CPA sign-off.
 2. **Legacy Single-Tenant Migration Tool (`scripts/migrate_to_multitenant.py`):**
-   * Takes an existing `storage/proptally.db` (or `storage/client-portfolio.db`) and `storage/documents` + `storage/photos`, creates the initial `Owner` user and default `Tenant` in `storage/system.db`, moves/copies the database and vault into `storage/tenants/{tenant_id}/`, and runs schema migrations.
+   * Validate first and keep dry-run as the default. On apply, persist migration stages in `system.db`, take a consistent SQLite backup snapshot, copy the database and file stores into private staging, run schema and financial-integrity checks, then atomically publish and activate. The legacy database/vault/photos remain by default; `--remove-source` is an explicit post-activation cleanup opt-in after stopping all legacy writers.
 3. **Multi-Tenant Backup & Restore (`scripts/backup.sh`, `scripts/restore.sh`):**
    * Update `scripts/backup.sh` to run `sqlite3 ... "VACUUM INTO ..."` across `storage/system.db` and every `storage/tenants/*/proptally.db`, verify `PRAGMA integrity_check` on each, and bundle all tenant vaults into a checksummed archive (plus support `--tenant <id>` for single-tenant export).
 
@@ -262,6 +262,14 @@ flowchart LR
   * Invite a `READ_ONLY` user and verify all `GET` views and CSV exports succeed while all `POST` mutations return `403 Forbidden`.
   * Run `scripts/backup.sh` and `scripts/restore.sh` across a 2-tenant storage directory and verify integrity checks pass.
 
+
+#### Migration Recovery and Rollback
+Migration progress is durable in `system.db` (`legacy_migrations`), including the source and file-store fingerprints, tenant id, stage, and last failure. A failed attempt leaves the tenant unavailable; rerun the same command with the same source and owner/portfolio settings to resume. Before activation the original source is untouched; after activation it is retained by default. Before activation, rollback is to leave the legacy installation in service and not resume; unpublished staging is never selected by request resolution. If `--remove-source` was explicitly requested, a verified pre-migration backup is required for later rollback.
+
+Immediately before atomic tenant publication, the migrator takes a second consistent SQLite backup and compares a logical database fingerprint, including committed WAL contents, with the staged snapshot while holding a write lock through control-plane activation. If source contents changed, it records `FAILED`, leaves the source intact, and publishes no tenant directory or active control-plane tenant. Rerunning the same command refreshes the snapshot and restages from the newer source. Stop legacy application/watcher writers before migration; the final guard blocks new SQLite writes during publication and activation.
+
+#### Tenant Provisioning Recovery
+Registration records `PENDING` and moves to `ACTIVE` only after storage/schema and SQLite integrity checks succeed. `FAILED` provisions are retried automatically at application startup. To resume an interrupted `PROVISIONING` state, first confirm the prior process has stopped, then run `PYTHONPATH=src python scripts/retry_tenant_provisioning.py --tenant <tenant-id-or-slug> --recover-stale`. Normal request resolution only accepts `ACTIVE` tenants and never creates a replacement database for missing existing storage.
 ---
 
 ## 5. Implementation Status
@@ -436,12 +444,10 @@ to reversal.
    encryption. `ADR-009` states this explicitly as a limit rather than implying
    at-rest separation between owners. If that is unacceptable, the mitigation is a
    host per owner, not a code change.
-4. **Tenant lifecycle: partially deferred.** Portfolio switching, invitation and
-   membership are implemented; a self-service "delete/export my portfolio" action and a
-   CPA's reverse view across many owners' portfolios are **not**. The schema supports
-   both (`tenant_memberships` is many-to-many, and a portfolio is one directory), so
-   this is a scoped addition rather than a redesign. `TenantManager.drop_tenant_storage()`
-   exists for the operator but no route calls it.
+4. **Tenant lifecycle — implemented.** Portfolio switching, invitations, memberships,
+   export, and deletion are implemented; a CPA reverse view across many owners' portfolios
+   remains out of scope. Deletion is routed through `portfolio_lifecycle.delete_portfolio()`
+   and `TenantManager.drop_tenant_storage()` only after its operation leases drain.
 
 ### Delivered beyond the plan (deferred items closed or advanced)
 * **Cross-portfolio view — delivered.** `GET /portfolios` lists every portfolio the
@@ -454,16 +460,14 @@ to reversal.
   a `.tar.gz` of one portfolio: a WAL-safe `VACUUM INTO` snapshot of its database, its
   `vault/` and `photos/`, and a `manifest.json`. Owner-only, and resolved through the
   requesting account's own memberships, so a portfolio id from elsewhere is not found.
-* **Portfolio delete — delivered with defined semantics.** Decided as: immediate and
-  irreversible removal of the portfolio's files and its control-plane rows, because
-  anything else (a recycle bin, a retention window) is a policy the deployment should
-  choose rather than the code assume. Guard rails: owner-only; a dedicated
-  confirmation page that lists precisely what would be destroyed and offers an export
-  first; the portfolio's name must be typed to confirm; and removal is refused when it
-  would leave any member with no portfolio at all, since such an account cannot sign
-  in to anything. Sessions pointing at the removed portfolio are moved to one the
-  member still has. Nothing is retained, so an owner who wants a copy must export or
-  restore from `scripts/backup.sh`.
+* **Portfolio delete — delivered with recoverable semantics.** Owner-only; a confirmation
+  page offers export first and requires the portfolio name. Deletion transitions through
+  `ACTIVE → DELETING → DELETED`, revokes sessions, blocks new tenant work, and waits for
+  existing operations before filesystem cleanup. Memberships and invitations are removed
+  only after cleanup succeeds. A filesystem failure leaves a `DELETING` tombstone that an
+  owner can retry; it is never reported as complete early. Ledger data is not retained,
+  though the control plane keeps the `DELETED` tenant tombstone and migration audit state.
+  Owners who need a copy must export or restore from `scripts/backup.sh`.
 * **Sample data — removed entirely.** This is a live deployment, so nothing synthetic
   ships: a new account gets the standard chart of accounts and the generic vendor rules,
   and an empty portfolio otherwise. Deleted: the start-up seeder and its
@@ -474,11 +478,12 @@ to reversal.
 
 * **Multi-worker deployment — decided: supported, single process recommended.**
   Several processes against one storage root work, because the state that must be
-  shared (accounts, portfolios, memberships, invitations, sessions) lives in
-  `system.db` and each portfolio database is opened through SQLite's own multi-process
-  locking. Verified with two real processes on one root: a session issued by one is
-  honoured by the other, writes through either are visible on both, and signing out on
-  one invalidates the session on the other. Two things change with N workers and are
+  shared (accounts, tenant states, memberships, invitations, sessions, request/job
+  operation leases, migration records) lives in `system.db`; each portfolio database
+  is opened through SQLite's own multi-process locking. Verified with two real
+  processes on one root: a session issued by one is honoured by the other, writes
+  through either are visible on both, and signing out on one invalidates the session
+  on the other. Two things change with N workers and are
   documented rather than hidden: login throttling is an in-memory counter per process,
   so the effective allowance multiplies (the one behaviour a hard limit would need a
   `system.db`-backed counter to fix), and per-process caches multiply file handles.

@@ -15,7 +15,9 @@ Three promises are covered end to end:
 from __future__ import annotations
 
 import shutil
+import sqlite3
 import subprocess
+import threading
 import sys
 import tarfile
 from datetime import date, datetime, timezone
@@ -47,6 +49,7 @@ from proptally.db.models import (  # noqa: E402
 )
 from proptally.db.schema import init_schema  # noqa: E402
 from proptally.db.system_models import (  # noqa: E402
+    LegacyMigration,
     ROLE_CPA_REVIEWER,
     ROLE_OWNER,
     Tenant,
@@ -335,6 +338,11 @@ def test_migration_preserves_metrics_and_refuses_a_second_run(tmp_path):
         assert verify_password(user.password_hash, "a-strong-password")
         tenant = control.get(Tenant, result.plan.tenant_id)
         assert tenant is not None
+        assert tenant.status == "ACTIVE"
+        migration = control.get(LegacyMigration, result.plan.migration_id)
+        assert migration is not None
+        assert migration.state == "ACTIVE"
+        assert migration.stage == "ACTIVE"
         membership = control.exec(
             select(TenantMembership).where(TenantMembership.tenant_id == tenant.id)
         ).one()
@@ -399,6 +407,170 @@ def test_migration_preserves_metrics_and_refuses_a_second_run(tmp_path):
     assert forced.plan.tenant_paths.database.exists()
 
 
+
+def test_migration_failure_keeps_legacy_source_and_resumes_from_sqlite_state(tmp_path, monkeypatch):
+    legacy_dir = tmp_path / "legacy"
+    vault = legacy_dir / "vault"
+    vault.mkdir(parents=True)
+    lease = vault / "lease.pdf"
+    lease.write_text("authoritative source lease")
+    source_db = legacy_dir / "client-portfolio.db"
+    _seed_legacy_database(source_db)
+    storage_root = tmp_path / "storage"
+    arguments = {
+        "storage_root": storage_root,
+        "email": "resume-owner@example.com",
+        "display_name": "Resume Owner",
+        "portfolio_name": "Resume Portfolio",
+    }
+    plan = migrator.build_plan(source_db, **arguments)
+    verify = migrator._verify_financial_database
+    calls = {"count": 0}
+
+    def fail_once(engine):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise migrator.MigrationError("injected financial verification failure")
+        verify(engine)
+
+    monkeypatch.setattr(migrator, "_verify_financial_database", fail_once)
+    with pytest.raises(migrator.MigrationError, match="injected financial verification failure"):
+        migrator.apply_migration(plan, password="a-strong-password")
+
+    assert source_db.is_file()
+    assert lease.read_text() == "authoritative source lease"
+    assert not plan.tenant_paths.root.exists()
+    control_engine = get_system_engine(f"sqlite:///{plan.system_db}")
+    with Session(control_engine) as control:
+        migration = control.get(LegacyMigration, plan.migration_id)
+        assert migration.state == "FAILED"
+        assert migration.stage == "SCHEMA_MIGRATED"
+        assert not control.exec(select(Tenant)).all()
+        assert not control.exec(select(User)).all()
+
+    resumed_plan = migrator.build_plan(source_db, **arguments)
+    assert resumed_plan.migration_id == plan.migration_id
+    assert resumed_plan.tenant_id == plan.tenant_id
+    result = migrator.apply_migration(resumed_plan, password="a-strong-password")
+    assert result.applied is True
+    assert source_db.is_file()
+    assert (result.plan.tenant_paths.vault / "lease.pdf").read_text() == "authoritative source lease"
+    with Session(control_engine) as control:
+        migration = control.get(LegacyMigration, plan.migration_id)
+        tenant = control.get(Tenant, plan.tenant_id)
+        assert migration.state == "ACTIVE"
+        assert tenant.status == "ACTIVE"
+    control_engine.dispose()
+
+
+def test_migration_resumes_after_atomic_publish_before_published_record(tmp_path, monkeypatch):
+    source_dir = tmp_path / "legacy_publish_boundary"
+    source_dir.mkdir()
+    source_db = source_dir / "proptally.db"
+    _seed_legacy_database(source_db)
+    storage_root = tmp_path / "publish_boundary_storage"
+    arguments = {
+        "storage_root": storage_root,
+        "email": "publish-boundary@example.com",
+        "portfolio_name": "Published Boundary",
+    }
+    plan = migrator.build_plan(source_db, **arguments)
+    save_migration = migrator._save_migration
+    injected = {"done": False}
+
+    def fail_before_published_checkpoint(control_engine, migration_id, **changes):
+        if changes.get("stage") == "PUBLISHED" and not injected["done"]:
+            injected["done"] = True
+            assert plan.tenant_paths.root.is_dir(), "atomic publication already completed"
+            raise migrator.MigrationError("injected publication checkpoint failure")
+        save_migration(control_engine, migration_id, **changes)
+
+    monkeypatch.setattr(migrator, "_save_migration", fail_before_published_checkpoint)
+    with pytest.raises(migrator.MigrationError, match="injected publication checkpoint failure"):
+        migrator.apply_migration(plan, password="a-strong-password")
+    control_engine = get_system_engine(f"sqlite:///{plan.system_db}")
+    with Session(control_engine) as control:
+        migration = control.get(LegacyMigration, plan.migration_id)
+        assert migration.state == "FAILED"
+        assert migration.stage == "VERIFIED"
+        assert control.get(Tenant, plan.tenant_id) is None
+        assert not control.exec(select(User)).all()
+    assert plan.tenant_paths.root.is_dir()
+    assert source_db.is_file()
+
+    monkeypatch.setattr(migrator, "_save_migration", save_migration)
+    resumed = migrator.build_plan(source_db, **arguments)
+    assert resumed.migration_id == plan.migration_id
+    result = migrator.apply_migration(resumed, password="a-strong-password")
+    assert result.applied is True
+    with Session(control_engine) as control:
+        assert control.get(Tenant, plan.tenant_id).status == "ACTIVE"
+    assert source_db.is_file()
+    control_engine.dispose()
+def test_migration_refuses_activation_when_source_changes_after_staging(tmp_path, monkeypatch):
+    legacy_dir = tmp_path / "legacy_changed"
+    legacy_dir.mkdir()
+    source_db = legacy_dir / "client-portfolio.db"
+    _seed_legacy_database(source_db)
+    storage_root = tmp_path / "storage_changed"
+    verify = migrator._verify_financial_database
+    calls = {"count": 0}
+    source_connections = []
+    def commit_source_write_after_staging(engine):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            source_connection = sqlite3.connect(str(source_db))
+            source_connection.execute("PRAGMA journal_mode=WAL")
+            source_connection.execute("PRAGMA wal_autocheckpoint=0")
+            main_database_fingerprint = migrator._fingerprint(source_db)
+            source_connection.execute(
+                "INSERT INTO financial_institutions (id, name, created_at) VALUES (?, ?, ?)",
+                ("inst_committed_after_snapshot", "Committed after snapshot", "2026-10-16T00:00:00"),
+            )
+            source_connection.commit()
+            assert Path(f"{source_db}-wal").is_file()
+            assert migrator._fingerprint(source_db) == main_database_fingerprint
+            source_connections.append(source_connection)
+        verify(engine)
+
+    monkeypatch.setattr(migrator, "_verify_financial_database", commit_source_write_after_staging)
+    migration_args = {
+        "storage_root": storage_root,
+        "email": "changed-source@example.com",
+        "password": "a-strong-password",
+        "apply": True,
+    }
+    with pytest.raises(migrator.MigrationError, match="Legacy source changed after"):
+        migrator.migrate_to_multitenant(source_db, **migration_args)
+
+    assert source_db.is_file()
+    assert Path(f"{source_db}-wal").is_file()
+    assert source_connections[0].execute(
+        "SELECT name FROM financial_institutions WHERE id=?",
+        ("inst_committed_after_snapshot",),
+    ).fetchone()[0] == "Committed after snapshot"
+    for connection in source_connections:
+        connection.close()
+
+    control_engine = get_system_engine(f"sqlite:///{storage_root / 'system.db'}")
+    with Session(control_engine) as control:
+        migration = control.exec(select(LegacyMigration)).one()
+        assert migration.state == "FAILED"
+        assert migration.stage == "VERIFIED"
+        assert control.get(Tenant, migration.tenant_id) is None
+        assert not control.exec(select(User)).all()
+    assert not (storage_root / "tenants" / migration.tenant_id).exists()
+
+    # The same command resumes by taking a fresh SQLite backup and re-staging it.
+    result = migrator.migrate_to_multitenant(source_db, **migration_args)
+    assert result.applied is True
+    tenant_engine = get_engine(f"sqlite:///{result.plan.tenant_paths.database}")
+    with Session(tenant_engine) as tenant_session:
+        assert tenant_session.get(
+            FinancialInstitution, "inst_committed_after_snapshot"
+        ) is not None
+    tenant_engine.dispose()
+    control_engine.dispose()
 def test_a_different_legacy_file_with_identical_contents_is_not_blocked(tmp_path):
     """Identity is the file's path, so a copy at a new path migrates cleanly."""
     first = tmp_path / "one"
@@ -406,6 +578,7 @@ def test_a_different_legacy_file_with_identical_contents_is_not_blocked(tmp_path
     (first / "vault").mkdir()
     source_one = first / "client-portfolio.db"
     _seed_legacy_database(source_one)
+
 
     second = tmp_path / "two"
     second.mkdir()
@@ -426,6 +599,54 @@ def test_a_different_legacy_file_with_identical_contents_is_not_blocked(tmp_path
         assert result.applied is True, source
 
 
+def test_migration_retries_with_changed_vault_contents(tmp_path, monkeypatch):
+    legacy_dir = tmp_path / "legacy_vault_changed"
+    vault = legacy_dir / "vault"
+    vault.mkdir(parents=True)
+    source_file = vault / "lease.pdf"
+    source_file.write_bytes(b"version present during first staging")
+    source_db = legacy_dir / "client-portfolio.db"
+    _seed_legacy_database(source_db)
+    storage_root = tmp_path / "vault_storage"
+    verify = migrator._verify_financial_database
+    calls = {"count": 0}
+
+    def fail_once_after_staging(engine):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise migrator.MigrationError("injected schema verification failure")
+        verify(engine)
+
+    monkeypatch.setattr(migrator, "_verify_financial_database", fail_once_after_staging)
+    arguments = {
+        "storage_root": storage_root,
+        "email": "vault-retry@example.com",
+        "password": "a-strong-password",
+        "apply": True,
+    }
+    with pytest.raises(migrator.MigrationError, match="injected schema verification failure"):
+        migrator.migrate_to_multitenant(source_db, **arguments)
+
+    assert source_file.read_bytes() == b"version present during first staging"
+    assert source_db.is_file()
+    control_engine = get_system_engine(f"sqlite:///{storage_root / 'system.db'}")
+    with Session(control_engine) as control:
+        migration = control.exec(select(LegacyMigration)).one()
+        assert migration.state == "FAILED"
+        assert migration.stage == "SCHEMA_MIGRATED"
+        assert control.get(Tenant, migration.tenant_id) is None
+    assert not (storage_root / "tenants" / migration.tenant_id).exists()
+
+    # A source file changed after the failed staged attempt must replace the old copy.
+    source_file.write_bytes(b"newer source file after failed staging")
+    result = migrator.migrate_to_multitenant(source_db, **arguments)
+    assert result.applied is True
+    assert source_file.read_bytes() == b"newer source file after failed staging"
+    assert (result.plan.tenant_paths.vault / "lease.pdf").read_bytes() == (
+        b"newer source file after failed staging"
+    )
+    assert source_db.is_file()
+    control_engine.dispose()
 def test_migration_is_a_dry_run_by_default(tmp_path):
     legacy_dir = tmp_path / "legacy"
     legacy_dir.mkdir()
@@ -443,21 +664,84 @@ def test_migration_is_a_dry_run_by_default(tmp_path):
     assert not (storage_root / "tenants").exists()
 
 
-def test_migration_moves_the_database_by_default(tmp_path):
-    """The default is a move, and the moved data survives even with a live WAL."""
+
+def test_legacy_writer_waiting_at_activation_keeps_its_source_commit(tmp_path, monkeypatch):
+    legacy_dir = tmp_path / "legacy_writer"
+    legacy_dir.mkdir()
+    source_db = legacy_dir / "client-portfolio.db"
+    _seed_legacy_database(source_db)
+    storage_root = tmp_path / "writer_storage"
+    lock_source = migrator._lock_and_verify_source_snapshot
+    writer_ready = threading.Event()
+    writer_committed = threading.Event()
+    writer_errors = []
+    writers = []
+
+    def lock_then_start_writer(plan, stage_root):
+        guard = lock_source(plan, stage_root)
+
+        def write_after_lock():
+            connection = sqlite3.connect(str(source_db), timeout=30)
+            try:
+                writer_ready.set()
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    "INSERT INTO financial_institutions (id, name, created_at) "
+                    "VALUES (?, ?, ?)",
+                    ("inst_waiting_writer", "Waiting legacy writer", "2026-10-16T00:00:00"),
+                )
+                connection.commit()
+                writer_committed.set()
+            except Exception as exc:
+                writer_errors.append(exc)
+            finally:
+                connection.close()
+
+        writer = threading.Thread(target=write_after_lock)
+        writers.append(writer)
+        writer.start()
+        assert writer_ready.wait(timeout=5)
+        assert not writer_committed.is_set()
+        return guard
+
+    monkeypatch.setattr(migrator, "_lock_and_verify_source_snapshot", lock_then_start_writer)
+    result = migrator.migrate_to_multitenant(
+        source_db,
+        storage_root=storage_root,
+        email="waiting-writer@example.com",
+        password="a-strong-password",
+        apply=True,
+    )
+    for writer in writers:
+        writer.join(timeout=10)
+        assert not writer.is_alive()
+    assert writer_committed.is_set()
+    assert not writer_errors
+    assert source_db.is_file(), "the default migration retains the legacy source"
+    source_engine = get_engine(f"sqlite:///{source_db}")
+    with Session(source_engine) as source:
+        assert source.get(FinancialInstitution, "inst_waiting_writer") is not None
+    source_engine.dispose()
+
+    tenant_engine = get_engine(f"sqlite:///{result.plan.tenant_paths.database}")
+    with Session(tenant_engine) as tenant_session:
+        assert tenant_session.get(FinancialInstitution, "inst_waiting_writer") is None
+    tenant_engine.dispose()
+def test_migration_preserves_the_legacy_database_by_default(tmp_path):
+    """A WAL-safe tenant snapshot does not delete the legacy source by default."""
     legacy_dir = tmp_path / "legacy"
     legacy_dir.mkdir()
     source_db = legacy_dir / "proptally.db"
-    # The seeding engine is deliberately left open, so committed pages live in the
-    # write-ahead log: a raw file copy would lose them.
+    # The seeding engine stays open, so committed pages may remain in the WAL.
     _seed_legacy_database(source_db)
 
     result = migrator.migrate_to_multitenant(
         source_db, storage_root=tmp_path / "storage", email="owner@example.com",
-        password="a-strong-password", portfolio_name="Moved", apply=True,
+        password="a-strong-password", portfolio_name="Preserved", apply=True,
     )
     assert result.applied is True
-    assert not source_db.exists(), "the default migration moves the legacy database"
+    assert source_db.is_file(), "the default migration retains the authoritative source"
+    assert result.moved_paths == []
 
     tenant_engine = get_engine(f"sqlite:///{result.plan.tenant_paths.database}")
     with Session(tenant_engine) as session:

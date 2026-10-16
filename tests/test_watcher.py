@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from proptally.db.connection import get_engine
 from proptally.db.models import (
@@ -17,6 +17,12 @@ from proptally.db.models import (
     Statement,
 )
 from proptally.db.schema import init_schema
+from proptally.db.system_models import TenantOperation
+from proptally.db.tenant_manager import (
+    TenantManager,
+    get_system_engine,
+    init_system_schema,
+)
 from proptally.ingestion.watcher import process_inbox_once
 
 # The statement PDFs these tests exercise live outside the repository. Point
@@ -198,32 +204,77 @@ def test_watcher_auto_import_false_moves_to_review(test_env):
     assert (inbox_dir / "review" / "eStmt_2026-02-12.pdf").exists()
 
 
-def test_cli_watch_once_flag(test_env, monkeypatch, capsys):
-    inbox_dir = test_env["inbox_dir"]
-    vault_dir = test_env["vault_dir"]
-    db_file = test_env["db_file"]
+def _tenant_watcher_environment(tmp_path, monkeypatch):
+    from proptally.web.auth import register_portfolio
 
+    storage = tmp_path / "tenant-storage"
+    monkeypatch.setenv("PROPTALLY_STORAGE_ROOT", str(storage))
+    monkeypatch.setenv("PROPTALLY_SYSTEM_DB_PATH", str(storage / "system.db"))
+    control = get_system_engine()
+    init_system_schema(control)
+    manager = TenantManager()
+    _owner, tenant, _ = register_portfolio(
+        control,
+        manager,
+        email="watcher-owner@example.com",
+        password="watcher-owner-password",
+        display_name="Watcher",
+        portfolio_name="Watcher Portfolio",
+    )
+    paths = manager.paths(tenant.id)
+    with Session(manager.engine_for(tenant.id)) as session:
+        session.add(FinancialInstitution(id="inst_bofa", name="Bank of America"))
+        session.flush()
+        session.add(FinancialAccount(
+            id="acct_bofa_chk_9456",
+            institution_id="inst_bofa",
+            account_name="Bank of America Advantage Plus Checking",
+            account_type="CHECKING",
+            account_number_masked="...9456",
+        ))
+        session.commit()
+    return control, manager, tenant, paths
+
+
+def test_cli_watch_once_flag_uses_active_tenant_context(tmp_path, monkeypatch, capsys):
     sample_source = DOCS_BASE / "BOFA Checking" / "eStmt_2026-03-17-1.pdf"
     if not sample_source.exists():
         pytest.skip("Test sample PDF not found")
 
-    shutil.copy2(sample_source, inbox_dir / "stmt3.pdf")
-
+    control, manager, tenant, paths = _tenant_watcher_environment(tmp_path, monkeypatch)
+    paths.inbox.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(sample_source, paths.inbox / "stmt3.pdf")
     from proptally.ingestion.cli import main
 
-    test_args = [
-        "proptally-ingest",
-        "--watch",
-        "--inbox-dir", str(inbox_dir),
-        "--vault-dir", str(vault_dir),
-        "--db", str(db_file),
-        "--once",
-    ]
+    test_args = ["proptally-ingest", "--watch", "--once", "--tenant", tenant.id]
     monkeypatch.setattr(sys, "argv", test_args)
-
     main()
-    captured = capsys.readouterr()
-    data = json.loads(captured.out)
+    data = json.loads(capsys.readouterr().out)
     assert data["processed_count"] == 1
     assert data["results"][0]["status"] == "PROCESSED"
-    assert (inbox_dir / "processed" / "stmt3.pdf").exists()
+    assert (paths.inbox / "processed" / "stmt3.pdf").exists()
+    assert any(paths.vault.iterdir())
+    with Session(control) as session:
+        assert not session.exec(select(TenantOperation)).all()
+
+    override_vault = tmp_path / "other-tenant-vault"
+    monkeypatch.setattr(sys, "argv", test_args + ["--vault-dir", str(override_vault)])
+    with pytest.raises(SystemExit):
+        main()
+    assert not override_vault.exists()
+    for engine in manager._engines.values():
+        engine.dispose()
+    control.dispose()
+
+
+def test_watcher_rejects_global_or_database_fallback(tmp_path, monkeypatch):
+    from proptally.ingestion.cli import main
+
+    for args in (
+        ["proptally-ingest", "--watch", "--once"],
+        ["proptally-ingest", "--watch", "--once", "--db", str(tmp_path / "legacy.db")],
+    ):
+        monkeypatch.setattr(sys, "argv", args)
+        with pytest.raises(SystemExit):
+            main()
+    assert not (tmp_path / "legacy.db").exists()

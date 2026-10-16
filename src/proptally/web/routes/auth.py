@@ -34,6 +34,7 @@ from proptally.web.auth import (
     ROLE_SUMMARIES,
     AuthenticationDependency,
     LoginRateLimiter,
+    NoActivePortfolio,
     MembershipError,
     ROLE_CPA_REVIEWER,
     accept_invite,
@@ -166,9 +167,12 @@ def get_auth_router(
 
     @router.get("/auth/login", response_class=HTMLResponse)
     def login_form(request: Request, next: Optional[str] = None):
-        context = resolve_context(
-            control_engine, tenant_manager, request.cookies.get(cookie_name())
-        )
+        try:
+            context = resolve_context(
+                control_engine, tenant_manager, request.cookies.get(cookie_name())
+            )
+        except NoActivePortfolio:
+            context = None
         if context is not None:
             return RedirectResponse(url=_safe_next(next), status_code=303)
         csrf_token, set_cookie = issue_pre_session_csrf(request)
@@ -246,7 +250,10 @@ def get_auth_router(
     def logout(request: Request, csrf_token: str = Form(None)):
         token = request.cookies.get(cookie_name())
         # Require the token so a hostile page cannot sign the user out silently.
-        context = resolve_context(control_engine, tenant_manager, token)
+        try:
+            context = resolve_context(control_engine, tenant_manager, token)
+        except NoActivePortfolio:
+            context = None
         if context is not None:
             presented = csrf_token or request.headers.get("x-csrf-token")
             if presented and presented == context.csrf_token:

@@ -142,16 +142,27 @@ databases, and the session handed to a route can only reach that file. See
 * **Backups cover every portfolio.** `scripts/backup.sh` snapshots `system.db` and
   each tenant database with `VACUUM INTO`, verifies each with
   `PRAGMA integrity_check`, and archives the vaults; `--tenant <id>` exports one.
-* **Existing single-portfolio data** moves with
-  `python scripts/migrate_to_multitenant.py --db storage/client-portfolio.db` (dry
-  run by default; add `--apply` to write).
+* **Migrating an existing single-portfolio installation.** Stop its server and watcher before migration. Preview first; the dry run writes nothing:
+  ```bash
+  python scripts/migrate_to_multitenant.py --source storage/client-portfolio.db --email owner@example.com --portfolio-name "Family Portfolio"
+  ```
+  After reviewing the plan, apply with the owner password supplied through a local
+  secret mechanism (for example, `--password "$OWNER_PASSWORD"`):
+  ```bash
+  python scripts/migrate_to_multitenant.py --source storage/client-portfolio.db --email owner@example.com --portfolio-name "Family Portfolio" --password "$OWNER_PASSWORD" --apply
+  ```
+  The original database, vault and photos are retained by default. If apply fails,
+  rerun the same command to resume; do not remove `.migration-staging`. `--remove-source`
+  is an explicit destructive opt-in: stop every legacy writer and verify a separate
+  backup before using it.
 
 ### Roles
 | Role | Can |
 | :--- | :--- |
-| `OWNER` | Everything in the portfolio: setup, import, post, invite, export, remove. |
-| `CPA_REVIEWER` | Read, and record the external review a Schedule E deduction requires. |
-| `READ_ONLY` | Read only. |
+| `OWNER` | Administer people and roles; do setup/bookkeeping, confirm for the client, export, and remove. |
+| `MANAGER` | Do setup and bookkeeping; cannot administer people, export/remove, or confirm for the client. |
+| `CPA_REVIEWER` | Do bookkeeping as needed and record a verified external review; no people administration or client confirmation. |
+| `READ_ONLY` | Read portfolio data only; cannot change or export it. |
 
 ### Running more than one worker
 
@@ -309,9 +320,10 @@ than pointing the app at it:
 
 ```bash
 PYTHONPATH=src python scripts/migrate_to_multitenant.py \
-  --source storage/client-portfolio.db --email you@example.com --keep-source
-# add --apply once the dry run looks right
+  --source storage/client-portfolio.db --email you@example.com
+# add --apply once the dry run looks right; the legacy source is kept by default
 ```
+Use `--remove-source` only after stopping all legacy writers and taking a verified backup.
 
 The dry-run parses against an in-memory database and does not write to the
 source folder, selected database, or vault. Duplicate detection runs at commit

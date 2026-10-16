@@ -30,6 +30,8 @@ from proptally.web.auth import (
     AuthorizationError,
     LoginRateLimiter,
     current_context,
+    retry_incomplete_provisioning,
+    NoActivePortfolio,
 )
 from proptally.web.helpers import (
     asset_version,
@@ -66,6 +68,8 @@ def create_app(
     ``db_url`` points every portfolio at one database file and exists for the test
     harness; production leaves it unset so each portfolio gets its own file.
     """
+    if system_db_url is None and storage_root is not None:
+        system_db_url = f"sqlite:///{Path(storage_root).expanduser() / 'system.db'}"
     control_engine = get_system_engine(system_db_url)
     tenant_manager = TenantManager(db_url=db_url, storage_root_path=storage_root)
     rate_limiter = LoginRateLimiter()
@@ -73,6 +77,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         init_system_schema(control_engine)
+        retry_incomplete_provisioning(control_engine, tenant_manager)
         yield
 
     app = FastAPI(
@@ -156,6 +161,12 @@ def create_app(
                 target = f"{target}?{request.url.query}"
             return RedirectResponse(url=f"/auth/login?next={target}", status_code=303)
         return RedirectResponse(url="/auth/login", status_code=303)
+
+    @app.exception_handler(NoActivePortfolio)
+    async def _no_active_portfolio(request, exc):
+        from fastapi.responses import PlainTextResponse
+
+        return PlainTextResponse(str(exc), status_code=503)
 
     @app.exception_handler(AuthorizationError)
     async def _forbidden(request, exc):

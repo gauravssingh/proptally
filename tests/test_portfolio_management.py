@@ -268,8 +268,8 @@ def _owner_who_can_remove_their_portfolio(owner, monkeypatch, *, keep_name="Keep
     return keeper, doomed
 
 
-def test_deleting_a_portfolio_removes_its_files_and_its_rows(owner, monkeypatch):
-    """Removal takes the portfolio's database and its control-plane rows with it."""
+def test_deleting_a_portfolio_removes_its_files_and_tombstones_control_state(owner, monkeypatch):
+    """Removal keeps a DELETED lifecycle tombstone after files and memberships go."""
     alice, doomed = _owner_who_can_remove_their_portfolio(owner, monkeypatch)
     _add_property(doomed, "Doomed Duplex")
 
@@ -308,7 +308,9 @@ def test_deleting_a_portfolio_removes_its_files_and_its_rows(owner, monkeypatch)
     with Session(doomed.control_engine) as session:
         from proptally.db.system_models import Tenant, TenantMembership
 
-        assert session.get(Tenant, doomed.tenant_id) is None
+        deleted = session.get(Tenant, doomed.tenant_id)
+        assert deleted is not None
+        assert deleted.status == "DELETED"
         assert not session.exec(
             select(TenantMembership).where(TenantMembership.tenant_id == doomed.tenant_id)
         ).all()
@@ -360,10 +362,10 @@ def test_a_read_only_member_cannot_remove_a_portfolio(owner, monkeypatch):
     assert alice.app.state.tenant_manager.paths(alice.tenant_id).root.is_dir()
 
 
-def test_deleting_a_portfolio_repaints_the_sessions_looking_at_it(owner, monkeypatch):
-    """The member's session moves to a portfolio they still have, not into a broken state."""
-    keeper, doomed = _owner_who_can_remove_their_portfolio(owner, monkeypatch)
+def test_deleting_a_portfolio_revokes_sessions_looking_at_it(owner, monkeypatch):
+    """A session whose active tenant is removed is revoked instead of repointed."""
 
+    keeper, doomed = _owner_who_can_remove_their_portfolio(owner, monkeypatch)
     # Their session is now looking at the keeper's portfolio; switch back to their own
     # and delete it while it is the active one.
     back = doomed.post(f"/portfolios/{doomed.tenant_id}/open", {}, follow_redirects=False)
@@ -376,7 +378,8 @@ def test_deleting_a_portfolio_repaints_the_sessions_looking_at_it(owner, monkeyp
     )
     assert removed.status_code == 303 and removed.headers["location"] == "/portfolios"
 
-    # The active portfolio was the one removed, so the session was repointed and the
-    # next page load works rather than failing.
-    assert doomed.client.get("/").status_code == 200
-    assert doomed.client.get("/portfolios").status_code == 200
+    # The active portfolio was removed, so that browser session must sign in again.
+    after = doomed.client.get("/", follow_redirects=False)
+    assert after.status_code == 303
+    assert after.headers["location"].startswith("/auth/login")
+    assert doomed.client.get("/portfolios", follow_redirects=False).status_code == 303

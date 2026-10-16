@@ -15,22 +15,11 @@
 ) %}{% endcall %}
 
 {{ ui.section_open("Nothing to report on yet",
-                   "Two ways to start, and neither one needs a command line.") }}
+                   "Add a property, then its accounts and mortgage details; you can edit them later.") }}
 <div class="pt-stack">
-    {{ ui.alert(
-        variant="info",
-        title="This portfolio has no properties",
-        text="Add your first door on the portfolio setup screen, then its accounts and any mortgage on it. Everything is editable there afterwards."
-    ) }}
     <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-3">
         {{ ui.btn("Set up your portfolio", variant="primary", href="/settings", icon_name="sliders") }}
-        {% if can_work %}
-                {% endif %}
     </div>
-    <p class="pt-fs-caption pt-text-secondary">
-        The sample is written into this portfolio only. Every figure in it is synthetic, and it can be
-        replaced with your own data at any time.
-    </p>
 </div>
 {{ ui.section_close() }}
 {% else %}

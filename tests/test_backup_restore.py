@@ -223,6 +223,30 @@ def test_hot_backup_during_active_wal_transaction(disaster_recovery_env):
         res = subprocess.run(cmd, capture_output=True, text=True)
         assert res.returncode == 0
         assert "Database integrity verified: ok" in res.stdout
+
+        archive_file = next(backup_dir.glob("proptally_backup_*.tar.gz"))
+        with tarfile.open(archive_file, "r:gz") as archive:
+            database_member = next(
+                member for member in archive.getmembers()
+                if member.name.removeprefix("./") == "database.sqlite"
+            )
+            snapshot = archive.extractfile(database_member)
+            assert snapshot is not None
+            assert snapshot.read()
+
+        restored_db = disaster_recovery_env["target_dir"] / "wal-snapshot.db"
+        restore = subprocess.run(
+            [str(RESTORE_SCRIPT), "--archive", str(archive_file), "--target-db", str(restored_db)],
+            capture_output=True,
+            text=True,
+        )
+        assert restore.returncode == 0, restore.stderr
+        restored_engine = get_engine(f"sqlite:///{restored_db}")
+        with Session(restored_engine) as session:
+            account = session.get(FinancialAccount, "acct_test_01")
+            assert account is not None
+            assert account.account_name == "Test Checking"
+        restored_engine.dispose()
     finally:
         conn.rollback()
         conn.close()

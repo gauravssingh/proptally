@@ -28,6 +28,18 @@ def _start_worker(storage):
     return client, app
 
 
+def test_explicit_storage_root_places_control_and_tenant_paths_together(tmp_path, monkeypatch):
+    monkeypatch.delenv("PROPTALLY_SYSTEM_DB_PATH", raising=False)
+    storage = tmp_path / "explicit-storage"
+
+    app = create_app(storage_root=str(storage))
+    try:
+        assert app.state.control_engine.url.database == str(storage / "system.db")
+        assert app.state.tenant_manager.paths("tnt_probe").root == storage / "tenants" / "tnt_probe"
+    finally:
+        app.state.control_engine.dispose()
+
+
 def _csrf(client, path="/settings"):
     match = re.search(r'name="csrf_token" value="([^"]+)"', client.get(path).text)
     assert match, f"no csrf token on {path}"

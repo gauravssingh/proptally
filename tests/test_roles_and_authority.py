@@ -282,6 +282,7 @@ def test_the_control_plane_accepts_the_new_role_on_an_existing_database(tmp_path
             created_at TIMESTAMP NOT NULL,
             CONSTRAINT check_membership_role CHECK (role IN ('OWNER', 'CPA_REVIEWER', 'READ_ONLY')))""")
         conn.exec_driver_sql("INSERT INTO users VALUES ('u1','a@b.c','x','A',1,1,NULL,'2026-01-01')")
+        conn.exec_driver_sql("INSERT INTO users VALUES ('u2','c@d.e','x','C',0,1,NULL,'2026-01-01')")
         conn.exec_driver_sql("INSERT INTO tenants VALUES ('t1','Existing Portfolio','existing','2026-01-01')")
         conn.exec_driver_sql("INSERT INTO tenant_memberships VALUES ('m1','u1','t1','OWNER','2026-01-01')")
 
@@ -291,7 +292,7 @@ def test_the_control_plane_accepts_the_new_role_on_an_existing_database(tmp_path
         # The pre-existing membership survived the rebuild...
         assert len(session.exec(select(TenantMembership)).all()) == 1
         # ...and the new role is accepted.
-        session.add(TenantMembership(id="m2", user_id="u1", tenant_id="t1", role=ROLE_MANAGER))
+        session.add(TenantMembership(id="m2", user_id="u2", tenant_id="t1", role=ROLE_MANAGER))
         session.commit()
         roles = sorted(m.role for m in session.exec(select(TenantMembership)).all())
     assert roles == [ROLE_MANAGER, ROLE_OWNER]

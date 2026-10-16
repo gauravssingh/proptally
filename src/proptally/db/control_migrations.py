@@ -101,8 +101,105 @@ def _applied_versions(conn) -> set:
     return {row[0] for row in conn.execute(text(f"SELECT version FROM {CONTROL_MIGRATIONS_TABLE}"))}
 
 
+
+def _install_lifecycle_and_membership_constraints(engine) -> int:
+    """Add tenant lifecycle state and enforce one membership per user/tenant."""
+    from sqlalchemy import inspect
+    from sqlmodel import SQLModel
+
+    from proptally.db.schema import _rebuild_table_for_constraints
+
+    with engine.begin() as conn:
+        columns = {column["name"] for column in inspect(conn).get_columns("tenants")}
+        if "status" not in columns:
+            conn.execute(text(
+                "ALTER TABLE tenants ADD COLUMN status VARCHAR NOT NULL "
+                "DEFAULT 'ACTIVE' CHECK (status IN "
+                "('PENDING', 'PROVISIONING', 'ACTIVE', 'FAILED', 'DELETING', 'DELETED'))"
+            ))
+        if "deletion_token" not in columns:
+            conn.execute(text("ALTER TABLE tenants ADD COLUMN deletion_token VARCHAR"))
+        if "deletion_started_at" not in columns:
+            conn.execute(text("ALTER TABLE tenants ADD COLUMN deletion_started_at TIMESTAMP"))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_tenants_status ON tenants (status)"
+        ))
+        duplicates = conn.execute(text(
+            "SELECT user_id, tenant_id, COUNT(*) AS n FROM tenant_memberships "
+            "GROUP BY user_id, tenant_id HAVING COUNT(*) > 1 LIMIT 1"
+        )).first()
+        if duplicates:
+            raise RuntimeError(
+                "Cannot enforce unique tenant membership: duplicate user/tenant rows "
+                f"exist for {duplicates[0]!r}/{duplicates[1]!r}. Resolve duplicates "
+                "before retrying the control-plane migration."
+            )
+
+    indexes = inspect(engine).get_unique_constraints("tenant_memberships")
+    if not any(
+        tuple(index.get("column_names") or ()) == ("user_id", "tenant_id")
+        for index in indexes
+    ):
+        tables = {table.name: table for table in SQLModel.metadata.sorted_tables}
+        _rebuild_table_for_constraints(engine, tables["tenant_memberships"])
+    return 1
+
+
+
+def _add_legacy_store_fingerprints(engine) -> int:
+    """Add durable vault/photos fingerprints to resumable migration records."""
+    from sqlalchemy import inspect
+
+    with engine.begin() as conn:
+        if not _table_exists(conn, "legacy_migrations"):
+            return 0
+        columns = {
+            column["name"] for column in inspect(conn).get_columns("legacy_migrations")
+        }
+        if "vault_fingerprint" not in columns:
+            conn.execute(text(
+                "ALTER TABLE legacy_migrations ADD COLUMN vault_fingerprint "
+                "VARCHAR NOT NULL DEFAULT ''"
+            ))
+        if "photos_fingerprint" not in columns:
+            conn.execute(text(
+                "ALTER TABLE legacy_migrations ADD COLUMN photos_fingerprint "
+                "VARCHAR NOT NULL DEFAULT ''"
+            ))
+    return 1
+
+def _add_staged_database_fingerprint(engine) -> int:
+    from sqlalchemy import inspect
+
+    with engine.begin() as conn:
+        if not _table_exists(conn, "legacy_migrations"):
+            return 0
+        columns = {
+            column["name"] for column in inspect(conn).get_columns("legacy_migrations")
+        }
+        if "staged_database_fingerprint" not in columns:
+            conn.execute(text(
+                "ALTER TABLE legacy_migrations ADD COLUMN staged_database_fingerprint "
+                "VARCHAR NOT NULL DEFAULT ''"
+            ))
+    return 1
+
+def _add_deletion_owner_metadata(engine) -> int:
+    from sqlalchemy import inspect
+
+    with engine.begin() as conn:
+        columns = {column["name"] for column in inspect(conn).get_columns("tenants")}
+        if "deletion_process_id" not in columns:
+            conn.execute(text("ALTER TABLE tenants ADD COLUMN deletion_process_id INTEGER"))
+        if "deletion_host_name" not in columns:
+            conn.execute(text("ALTER TABLE tenants ADD COLUMN deletion_host_name VARCHAR"))
+    return 1
 CONTROL_MIGRATIONS = (
     (1, "widen role constraints to include MANAGER", _widen_role_constraints),
+    (2, "tenant lifecycle states and unique memberships", _install_lifecycle_and_membership_constraints),
+    (3, "legacy vault and photo migration fingerprints", _add_legacy_store_fingerprints),
+    (4, "staged tenant database fingerprint", _add_staged_database_fingerprint),
+    (5, "deletion owner process metadata", _add_deletion_owner_metadata),
 )
 
 

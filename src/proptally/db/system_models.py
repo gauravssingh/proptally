@@ -14,7 +14,7 @@ empty copies of every ledger table.
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import CheckConstraint
+from sqlalchemy import CheckConstraint, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 #: Portfolio roles. They answer three separate questions, and keeping them separate is
@@ -25,9 +25,9 @@ from sqlmodel import Field, SQLModel
 #: * MANAGER   -- does the work: imports statements, allocates and posts, maintains the
 #:                portfolio's setup. Cannot administer people, export or delete, and
 #:                cannot give the client's authorization.
-#: * CPA_REVIEWER -- an accountant. Reads everything and can record the external review a
-#:                Schedule E deduction requires. Does not do the bookkeeping.
-#: * READ_ONLY -- sees everything, changes nothing.
+#: * CPA_REVIEWER -- does bookkeeping as needed and records a verified external review.
+#:                Cannot administer people or authorize on the client's behalf.
+#: * READ_ONLY -- may read portfolio data but cannot change or export it.
 ROLE_OWNER = "OWNER"
 ROLE_MANAGER = "MANAGER"
 ROLE_CPA_REVIEWER = "CPA_REVIEWER"
@@ -91,14 +91,34 @@ class User(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+TENANT_PENDING = "PENDING"
+TENANT_PROVISIONING = "PROVISIONING"
+TENANT_ACTIVE = "ACTIVE"
+TENANT_FAILED = "FAILED"
+TENANT_DELETING = "DELETING"
+TENANT_DELETED = "DELETED"
+TENANT_STATES = (TENANT_PENDING, TENANT_PROVISIONING, TENANT_ACTIVE, TENANT_FAILED, TENANT_DELETING, TENANT_DELETED)
+
+
 class Tenant(SQLModel, table=True):
     """One portfolio: the unit of data isolation."""
 
     __tablename__ = "tenants"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PENDING', 'PROVISIONING', 'ACTIVE', 'FAILED', 'DELETING', 'DELETED')",
+            name="check_tenant_status",
+        ),
+    )
 
     id: str = Field(primary_key=True)  # e.g. "tnt_5c81..."
     name: str
     slug: str = Field(unique=True, index=True)
+    status: str = Field(default=TENANT_ACTIVE, index=True)
+    deletion_token: Optional[str] = Field(default=None, index=True)
+    deletion_started_at: Optional[datetime] = Field(default=None)
+    deletion_process_id: Optional[int] = Field(default=None)
+    deletion_host_name: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -111,6 +131,7 @@ class TenantMembership(SQLModel, table=True):
             "role IN ('OWNER', 'MANAGER', 'CPA_REVIEWER', 'READ_ONLY')",
             name="check_membership_role",
         ),
+        UniqueConstraint("user_id", "tenant_id", name="uq_membership_user_tenant"),
     )
 
     id: str = Field(primary_key=True)
@@ -139,6 +160,20 @@ class UserSession(SQLModel, table=True):
     expires_at: datetime
     revoked_at: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
+
+class TenantOperation(SQLModel, table=True):
+    """Durable request or job lease preventing deletion from unlinking live work."""
+
+    __tablename__ = "tenant_operations"
+
+    id: str = Field(primary_key=True)
+    tenant_id: str = Field(foreign_key="tenants.id", index=True)
+    actor_id: str
+    user_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True)
+    session_id: Optional[str] = Field(default=None, foreign_key="user_sessions.id", index=True)
+    process_id: int
+    host_name: str
+    started_at: datetime = Field(default_factory=utc_now)
 
 
 class UserInvite(SQLModel, table=True):
@@ -203,6 +238,31 @@ class AccessEvent(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+
+class LegacyMigration(SQLModel, table=True):
+    """Durable, resumable state for moving a legacy database into a tenant."""
+
+    __tablename__ = "legacy_migrations"
+
+    id: str = Field(primary_key=True)
+    source_path: str = Field(index=True)
+    source_fingerprint: str = Field(default="")
+    tenant_id: str = Field(index=True)
+    state: str = Field(default="IN_PROGRESS")
+    stage: str = Field(default="VALIDATED")
+    email: str
+    display_name: str
+    portfolio_name: str
+    vault_path: Optional[str] = Field(default=None)
+    photos_path: Optional[str] = Field(default=None)
+    vault_fingerprint: str = Field(default="")
+    photos_fingerprint: str = Field(default="")
+    staged_database_fingerprint: str = Field(default="")
+    keep_source: bool
+    last_error: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
 #: Control-plane tables, in dependency order. ``init_system_schema`` creates only
 #: these, so a portfolio's ledger tables never appear in the control plane.
 SYSTEM_TABLES = (
@@ -210,7 +270,9 @@ SYSTEM_TABLES = (
     Tenant.__table__,
     TenantMembership.__table__,
     UserSession.__table__,
+    TenantOperation.__table__,
     UserInvite.__table__,
     PasswordResetToken.__table__,
     AccessEvent.__table__,
+    LegacyMigration.__table__,
 )

@@ -5,8 +5,8 @@ deliberately narrow:
 
 * it is described before it happens (:func:`portfolio_summary`), so the owner sees
   what would be lost and can export a copy first;
-* it is refused when it would leave *any* member with no portfolio at all, because
-  an account with no membership cannot get back in through the UI; and
+* it is refused when it would leave any member without another active, usable portfolio;
+  an account with no usable membership cannot reach the portfolio chooser; and
 * it removes the control-plane rows and the files together, in an order that
   respects the foreign keys, so no half-deleted portfolio is left behind.
 
@@ -18,11 +18,17 @@ retention should keep a backup (``scripts/backup.sh``) or export first.
 from __future__ import annotations
 
 import logging
+import os
+import socket
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
 from proptally.db.models import (
@@ -33,13 +39,22 @@ from proptally.db.models import (
     Transaction,
 )
 from proptally.db.system_models import (
+    TENANT_ACTIVE,
+    TENANT_DELETED,
+    TENANT_DELETING,
+    TENANT_PROVISIONING,
     Tenant,
     TenantMembership,
-    User,
+    TenantOperation,
     UserInvite,
     UserSession,
+    utc_now,
 )
-from proptally.db.tenant_manager import TenantManager, system_db_path
+from proptally.db.tenant_manager import (
+    TenantManager,
+    TenantStorageError,
+    system_db_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,20 +90,21 @@ class DeletedPortfolio:
 
 
 def portfolio_summary(
-    control_engine, tenant_manager: TenantManager, tenant_id: str
+    control_engine,
+    tenant_manager: TenantManager,
+    tenant_id: str,
+    *,
+    allow_deleting: bool = False,
 ) -> Optional[PortfolioSummary]:
-    """Counts what the portfolio holds. ``None`` when no such portfolio exists.
-
-    A portfolio whose database cannot be opened is still summarised, with
-    ``readable=False``: the owner is deciding whether to remove something, and
-    "we cannot read it" is itself information.
-    """
+    """Count one portfolio, or report it unavailable without creating storage."""
     with Session(control_engine) as session:
         tenant = session.get(Tenant, tenant_id)
-    if tenant is None:
+    if tenant is None or tenant.status == TENANT_DELETED:
         return None
 
     summary = PortfolioSummary(tenant_id=tenant.id, name=tenant.name, slug=tenant.slug)
+    if tenant.status == TENANT_DELETING and not allow_deleting:
+        return replace(summary, readable=False)
     try:
         with Session(tenant_manager.engine_for(tenant.id)) as session:
             def count(model):
@@ -196,79 +212,222 @@ def portfolio_status(
     )
 
 
+
+
+def _local_process_is_alive(process_id: int) -> bool:
+    try:
+        os.kill(process_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+def _reap_dead_local_operations(control_engine, tenant_id: str) -> None:
+    """Remove lease rows only when their recorded local worker process is gone."""
+    with Session(control_engine) as session:
+        operations = session.exec(
+            select(TenantOperation).where(TenantOperation.tenant_id == tenant_id)
+        ).all()
+        stale = []
+        for operation in operations:
+            if operation.host_name != socket.gethostname():
+                continue
+            if not _local_process_is_alive(operation.process_id):
+                stale.append(operation)
+        for operation in stale:
+            session.delete(operation)
+        if stale:
+            session.commit()
+
 def delete_portfolio(
     control_engine,
     tenant_manager: TenantManager,
     *,
     tenant_id: str,
     actor_user_id: str,
+    operation_id: Optional[str] = None,
 ) -> DeletedPortfolio:
-    """Removes a portfolio: its files and its control-plane rows.
-
-    Raises :class:`PortfolioDeletionError` when the portfolio does not exist or when
-    deleting it would leave a member without any portfolio.
-
-    The acting user is recorded by id. Their email address is deliberately not logged:
-    application logs carry no personal data (06_SECURITY_AND_DEPLOYMENT.md §4.2).
-    """
-    summary = portfolio_summary(control_engine, tenant_manager, tenant_id)
-    if summary is None:
-        raise PortfolioDeletionError("Portfolio not found.")
-
-    with Session(control_engine) as session:
-        memberships = session.exec(
-            select(TenantMembership).where(TenantMembership.tenant_id == tenant_id)
-        ).all()
-
-        # An account with no membership cannot get back into the application, so a
-        # deletion that would cause that is refused rather than performed.
-        for membership in memberships:
-            remaining = session.exec(
-                select(TenantMembership).where(
-                    TenantMembership.user_id == membership.user_id,
-                    TenantMembership.tenant_id != tenant_id,
-                )
-            ).all()
-            if not remaining:
-                member = session.get(User, membership.user_id)
-                who = member.email if member else membership.user_id
+    """Retire storage first, then finalize its control-plane tombstone."""
+    deletion_token = uuid4().hex
+    now = utc_now()
+    connection = control_engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+    transaction_active = False
+    try:
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        transaction_active = True
+        tenant = connection.execute(
+            text(
+                "SELECT name, slug, status, deletion_token, deletion_process_id, "
+                "deletion_host_name FROM tenants WHERE id=:tenant_id"
+            ),
+            {"tenant_id": tenant_id},
+        ).first()
+        if tenant is None or tenant.status == TENANT_DELETED:
+            raise PortfolioDeletionError("Portfolio not found.")
+        if tenant.status == TENANT_PROVISIONING:
+            raise PortfolioDeletionError(
+                "Portfolio provisioning is in progress; retry deletion after it finishes."
+            )
+        name, slug = tenant.name, tenant.slug
+        if tenant.status == TENANT_DELETING and tenant.deletion_token is not None:
+            if (
+                tenant.deletion_host_name != socket.gethostname()
+                or tenant.deletion_process_id is None
+                or _local_process_is_alive(tenant.deletion_process_id)
+            ):
                 raise PortfolioDeletionError(
-                    f"{who} is a member of no other portfolio, so removing this one would "
-                    "leave that account with nothing to sign in to. Delete the account, or "
-                    "move the portfolio, as an operator instead."
+                    "Portfolio deletion is still owned by a live or unverifiable worker. "
+                    "Do not retry until that worker has stopped."
                 )
+            cleared = connection.execute(text(
+                "UPDATE tenants SET deletion_token=NULL, deletion_started_at=NULL, "
+                "deletion_process_id=NULL, deletion_host_name=NULL "
+                "WHERE id=:tenant_id AND status=:deleting AND deletion_token=:token"
+            ), {"tenant_id": tenant_id, "deleting": TENANT_DELETING,
+                "token": tenant.deletion_token})
+            if cleared.rowcount != 1:
+                raise PortfolioDeletionError("Stale deletion claim could not be recovered safely.")
 
-        # Sessions looking at this portfolio move to one the member still has, so the
-        # next page load works rather than failing on a portfolio that no longer is.
-        for row in session.exec(
-            select(UserSession).where(UserSession.active_tenant_id == tenant_id)
-        ).all():
-            fallback = session.exec(
-                select(TenantMembership)
-                .where(
-                    TenantMembership.user_id == row.user_id,
-                    TenantMembership.tenant_id != tenant_id,
+        if tenant.status != TENANT_DELETING:
+            memberships = connection.execute(text(
+                "SELECT membership.user_id, users.email FROM tenant_memberships AS membership "
+                "LEFT JOIN users ON users.id=membership.user_id "
+                "WHERE membership.tenant_id=:tenant_id"
+            ), {"tenant_id": tenant_id}).all()
+            for membership in memberships:
+                candidates = connection.execute(text(
+                    "SELECT candidate.id FROM tenant_memberships AS membership "
+                    "JOIN tenants AS candidate ON candidate.id=membership.tenant_id "
+                    "WHERE membership.user_id=:user_id "
+                    "AND membership.tenant_id!=:tenant_id AND candidate.status=:active"
+                ), {"user_id": membership.user_id, "tenant_id": tenant_id,
+                    "active": TENANT_ACTIVE}).scalars().all()
+                has_usable_fallback = False
+                for candidate_id in candidates:
+                    try:
+                        tenant_manager.ensure_tenant_storage(candidate_id)
+                        with Session(tenant_manager.engine_for(candidate_id)) as candidate_session:
+                            candidate_session.exec(select(Property.id).limit(1)).first()
+                    except (TenantStorageError, SQLAlchemyError, OSError):
+                        continue
+                    has_usable_fallback = True
+                    break
+                if not has_usable_fallback:
+                    who = membership.email or membership.user_id
+                    raise PortfolioDeletionError(
+                        f"{who} has no other active portfolio with usable storage, so removing "
+                        "this one would leave that account without a portfolio to open. "
+                        "Restore another portfolio or transfer membership before retrying."
+                    )
+
+        claimed = connection.execute(text(
+            "UPDATE tenants SET status=:deleting, deletion_token=:token, "
+            "deletion_started_at=:started, deletion_process_id=:process_id, "
+            "deletion_host_name=:host_name WHERE id=:tenant_id "
+            "AND status IN (:active, :pending, :failed, :deleting) "
+            "AND deletion_token IS NULL"
+        ), {"deleting": TENANT_DELETING, "token": deletion_token,
+            "started": now.isoformat(), "process_id": os.getpid(),
+            "host_name": socket.gethostname(), "tenant_id": tenant_id,
+            "active": TENANT_ACTIVE, "pending": "PENDING", "failed": "FAILED"})
+        if claimed.rowcount != 1:
+            raise PortfolioDeletionError(
+                "Portfolio deletion is already in progress. Retry after it finishes."
+            )
+        connection.execute(text(
+            "UPDATE user_sessions SET revoked_at=:now "
+            "WHERE active_tenant_id=:tenant_id AND revoked_at IS NULL"
+        ), {"now": now.isoformat(), "tenant_id": tenant_id})
+        connection.exec_driver_sql("COMMIT")
+        transaction_active = False
+    except Exception:
+        if transaction_active:
+            connection.exec_driver_sql("ROLLBACK")
+        raise
+    finally:
+        connection.close()
+
+    completed = False
+    try:
+        if operation_id:
+            with Session(control_engine) as session:
+                released = session.execute(text(
+                    "DELETE FROM tenant_operations WHERE id=:id AND tenant_id=:tenant_id"
+                ), {"id": operation_id, "tenant_id": tenant_id})
+                if released.rowcount != 1:
+                    raise PortfolioDeletionError(
+                        "The deletion request lease could not be released safely. Retry deletion."
+                    )
+                session.commit()
+            tenant_manager.end_operation(tenant_id, operation_id)
+            operation_id = None
+
+        deadline = time.monotonic() + 30.0
+        while True:
+            _reap_dead_local_operations(control_engine, tenant_id)
+            with Session(control_engine) as session:
+                operations = session.exec(
+                    select(TenantOperation).where(TenantOperation.tenant_id == tenant_id)
+                ).all()
+            if not operations:
+                break
+            if time.monotonic() >= deadline:
+                raise PortfolioDeletionError(
+                    "Portfolio is marked for deletion but active requests have not drained. "
+                    "Retry the deletion; no files or memberships were removed."
                 )
-                .order_by(TenantMembership.created_at)
-            ).first()
-            row.active_tenant_id = fallback.tenant_id if fallback else None
-            session.add(row)
+            time.sleep(0.01)
+        summary = portfolio_summary(
+            control_engine, tenant_manager, tenant_id, allow_deleting=True
+        )
+        if summary is None:
+            raise PortfolioDeletionError("Portfolio not found.")
 
-        for invite in session.exec(
-            select(UserInvite).where(UserInvite.tenant_id == tenant_id)
-        ).all():
-            session.delete(invite)
-        for membership in memberships:
-            session.delete(membership)
-        session.flush()
+        try:
+            removed_files = tenant_manager.drop_tenant_storage(tenant_id)
+        except (OSError, TenantStorageError) as exc:
+            raise PortfolioDeletionError(
+                f"Portfolio is marked for deletion but storage cleanup failed: {exc}. Retry deletion."
+            ) from exc
 
-        tenant = session.get(Tenant, tenant_id)
-        name, slug = (tenant.name, tenant.slug) if tenant else (summary.name, summary.slug)
-        if tenant is not None:
-            session.delete(tenant)
-        session.commit()
-
-    removed_files = tenant_manager.drop_tenant_storage(tenant_id)
+        with Session(control_engine) as session:
+            tenant = session.get(Tenant, tenant_id)
+            if tenant is None or tenant.status != TENANT_DELETING or tenant.deletion_token != deletion_token:
+                raise PortfolioDeletionError(
+                    "Portfolio storage was removed, but its lifecycle state changed unexpectedly."
+                )
+            for invite in session.exec(
+                select(UserInvite).where(UserInvite.tenant_id == tenant_id)
+            ).all():
+                session.delete(invite)
+            for membership in session.exec(
+                select(TenantMembership).where(TenantMembership.tenant_id == tenant_id)
+            ).all():
+                session.delete(membership)
+            for row in session.exec(
+                select(UserSession).where(UserSession.active_tenant_id == tenant_id)
+            ).all():
+                row.active_tenant_id = None
+                row.revoked_at = row.revoked_at or now
+                session.add(row)
+            tenant.status = TENANT_DELETED
+            tenant.deletion_token = None
+            tenant.deletion_started_at = None
+            tenant.deletion_process_id = None
+            tenant.deletion_host_name = None
+            session.add(tenant)
+            session.commit()
+        completed = True
+    finally:
+        if not completed:
+            with Session(control_engine) as session:
+                session.execute(text(
+                    "UPDATE tenants SET deletion_token=NULL, deletion_started_at=NULL, "
+                    "deletion_process_id=NULL, deletion_host_name=NULL "
+                    "WHERE id=:tenant_id AND status=:deleting AND deletion_token=:token"
+                ), {"tenant_id": tenant_id, "deleting": TENANT_DELETING,
+                    "token": deletion_token})
+                session.commit()
 
     logger.warning(
         "Portfolio deleted: tenant=%s slug=%s by_user=%s files_removed=%s "
@@ -280,7 +439,6 @@ def delete_portfolio(
         summary.properties,
         summary.documents,
     )
-
     return DeletedPortfolio(
         tenant_id=tenant_id,
         name=name,

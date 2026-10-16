@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -27,7 +28,10 @@ from proptally.db.connection import configure_sqlite_connection
 from proptally.db.schema import init_schema
 from proptally.db.system_models import SYSTEM_TABLES
 
-#: Default storage root: the repository's ``storage/`` directory.
+
+class TenantStorageError(RuntimeError):
+    """The tenant's existing storage is missing or cannot be safely opened."""
+
 DEFAULT_STORAGE_ROOT = Path(__file__).resolve().parents[3] / "storage"
 
 #: Per-portfolio directories created for every tenant.
@@ -136,8 +140,10 @@ class TenantManager:
         # control plane and tenant directories somewhere other than the default.
         self._explicit_db_url = db_url
         self.root = Path(storage_root_path) if storage_root_path else storage_root()
-        self._engines: dict[str, Engine] = {}
-        self._lock = threading.Lock()
+        self._engines: OrderedDict[str, Engine] = OrderedDict()
+        self._active_operations: dict[str, int] = {}
+        self._operation_ids: dict[str, set[str]] = {}
+        self._lock = threading.RLock()
 
     def paths(self, tenant_id: str) -> TenantPaths:
         """Filesystem locations for a portfolio under this manager's root."""
@@ -155,17 +161,64 @@ class TenantManager:
     # --- engine resolution -------------------------------------------------
 
     def engine_for(self, tenant_id: str) -> Engine:
-        """The portfolio's engine, created on first use."""
+        """Resolve an existing tenant database without creating missing storage."""
+        if not self._explicit_db_url and not self.paths(tenant_id).database.is_file():
+            raise TenantStorageError(
+                f"Tenant {tenant_id!r} is active but its database is missing. "
+                "Restore the database or repair provisioning before retrying."
+            )
+        if self._explicit_db_url and self._explicit_db_url.startswith("sqlite:///"):
+            if self._explicit_db_url not in {"sqlite:///", "sqlite:///:memory:"}:
+                db_path = Path(self._explicit_db_url.removeprefix("sqlite:///"))
+                if not db_path.is_file():
+                    raise TenantStorageError(
+                        f"Tenant {tenant_id!r} database is missing at {db_path}."
+                    )
         with self._lock:
             engine = self._engines.get(tenant_id)
             if engine is not None:
+                self._engines.move_to_end(tenant_id)
                 return engine
             engine = self._build_engine(tenant_id)
-            if len(self._engines) >= ENGINE_CACHE_SIZE:
-                # Drop the oldest handle; its database stays on disk untouched.
-                self._engines.pop(next(iter(self._engines)))
+            self._evict_idle_engines(make_room=True)
             self._engines[tenant_id] = engine
             return engine
+
+    def _evict_idle_engines(self, *, make_room: bool = False) -> None:
+        limit = max(0, ENGINE_CACHE_SIZE - 1) if make_room else ENGINE_CACHE_SIZE
+        while len(self._engines) > limit:
+            evicted_id = next(
+                (key for key in self._engines if not self._active_operations.get(key)), None
+            )
+            if evicted_id is None:
+                return
+            self._engines.pop(evicted_id).dispose()
+
+    def begin_operation(self, tenant_id: str, operation_id: Optional[str] = None) -> None:
+        """Protect a tenant engine while one uniquely identified operation uses it."""
+        with self._lock:
+            if operation_id is not None:
+                operation_ids = self._operation_ids.setdefault(tenant_id, set())
+                if operation_id in operation_ids:
+                    return
+                operation_ids.add(operation_id)
+            self._active_operations[tenant_id] = self._active_operations.get(tenant_id, 0) + 1
+
+    def end_operation(self, tenant_id: str, operation_id: Optional[str] = None) -> None:
+        with self._lock:
+            if operation_id is not None:
+                operation_ids = self._operation_ids.get(tenant_id)
+                if operation_ids is None or operation_id not in operation_ids:
+                    return
+                operation_ids.remove(operation_id)
+                if not operation_ids:
+                    self._operation_ids.pop(tenant_id, None)
+            active = self._active_operations.get(tenant_id, 0)
+            if active <= 1:
+                self._active_operations.pop(tenant_id, None)
+            else:
+                self._active_operations[tenant_id] = active - 1
+            self._evict_idle_engines()
 
     def _build_engine(self, tenant_id: str) -> Engine:
         if self._explicit_db_url:
@@ -173,10 +226,10 @@ class TenantManager:
             # test suite uses this, and it never runs a two-tenant isolation check.
             db_url = self._explicit_db_url
             if db_url.startswith("sqlite:///"):
-                Path(db_url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
+                database_path = db_url.removeprefix("sqlite:///")
+                Path(database_path).parent.mkdir(parents=True, exist_ok=True)
         else:
             database = self.paths(tenant_id).database
-            database.parent.mkdir(parents=True, exist_ok=True)
             db_url = f"sqlite:///{database}"
 
         connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
@@ -187,26 +240,57 @@ class TenantManager:
 
     # --- provisioning ------------------------------------------------------
 
-    def ensure_tenant_storage(self, tenant_id: str) -> TenantPaths:
-        """Creates the portfolio's directories and brings its schema up to date.
-
-        ``init_schema`` seeds the standard chart of accounts and the generic vendor
-        rules, so a new portfolio starts usable and portfolio-independent. It is
-        idempotent, so this is safe on every request that needs the directories.
-        """
+    def provision_tenant_storage(self, tenant_id: str) -> TenantPaths:
+        """Explicitly create or resume provisioning a tenant's own storage."""
         paths = self.paths(tenant_id)
+        paths.root.mkdir(parents=True, exist_ok=True)
         for subdir in TENANT_SUBDIRS:
             (paths.root / subdir).mkdir(parents=True, exist_ok=True)
-        init_schema(self.engine_for(tenant_id))
+        engine = self._provisioning_engine(tenant_id)
+        init_schema(engine)
+        with engine.connect() as connection:
+            integrity = connection.exec_driver_sql("PRAGMA integrity_check").scalar_one()
+            if integrity != "ok":
+                raise TenantStorageError(
+                    f"Tenant {tenant_id!r} failed SQLite integrity verification: {integrity}."
+                )
+            foreign_keys = connection.exec_driver_sql("PRAGMA foreign_key_check").all()
+            if foreign_keys:
+                raise TenantStorageError(
+                    f"Tenant {tenant_id!r} failed foreign-key verification: {foreign_keys!r}."
+                )
+        return paths
+
+    def _provisioning_engine(self, tenant_id: str) -> Engine:
+        """Engine constructor used only by the explicit fresh-storage path."""
+        with self._lock:
+            engine = self._engines.get(tenant_id)
+            if engine is not None:
+                self._engines.move_to_end(tenant_id)
+                return engine
+            engine = self._build_engine(tenant_id)
+            self._evict_idle_engines(make_room=True)
+            self._engines[tenant_id] = engine
+            return engine
+
+    def ensure_tenant_storage(self, tenant_id: str) -> TenantPaths:
+        """Verify provisioned storage exists without creating an empty database."""
+        paths = self.paths(tenant_id)
+        if not self._explicit_db_url and not paths.database.is_file():
+            raise TenantStorageError(
+                f"Tenant {tenant_id!r} database is missing; storage was not recreated."
+            )
+        self.engine_for(tenant_id)
         return paths
 
     def drop_tenant_storage(self, tenant_id: str) -> bool:
-        """Disposes of one portfolio's engine handle and its files.
-
-        Returns whether anything was removed. Used by tests and by an operator
-        decommissioning a portfolio; the application has no route that calls it.
-        """
+        """Dispose and remove one tenant only after every local operation has ended."""
         with self._lock:
+            active = self._active_operations.get(tenant_id, 0)
+            if active:
+                raise TenantStorageError(
+                    f"Tenant {tenant_id!r} still has {active} active operation(s)."
+                )
             engine = self._engines.pop(tenant_id, None)
         if engine is not None:
             engine.dispose()
@@ -215,6 +299,7 @@ class TenantManager:
             return False
         shutil.rmtree(directory)
         return True
+
 
     # --- helpers -----------------------------------------------------------
 
