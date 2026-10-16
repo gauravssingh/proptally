@@ -12,8 +12,66 @@
     .pin-anim-2 { animation: ptPinPulse 4.6s ease-in-out infinite 0.6s; }
     .pin-anim-3 { animation: ptPinPulse 4.6s ease-in-out infinite 1.2s; }
 
+    /* The sun's bloom breathes very slowly; opacity only, because scaling a
+       circle would move it away from its own centre. */
+    @keyframes ptSunBreathe { 0%, 100% { opacity: 0.86; } 50% { opacity: 1; } }
+    .sun-breathe { animation: ptSunBreathe 26s ease-in-out infinite; }
+
+    /* A kite drifting and turning on the thermals. Origin pinned to its own centre:
+       the kite sits inside a placement wrapper, so the default transform-origin
+       would spin it around the viewBox corner instead. */
+    @keyframes ptKite {
+      0%, 100% { transform: translate(0, 0) rotate(-7deg); }
+      30%      { transform: translate(16px, -12px) rotate(5deg); }
+      60%      { transform: translate(-10px, -21px) rotate(-4deg); }
+      80%      { transform: translate(-16px, -6px) rotate(6deg); }
+    }
+    .kite { animation: ptKite 27s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+
+    /* Birds cross the whole sky once a minute and a half; no flapping, since at
+       this size the silhouette is what reads. */
+    @keyframes ptBirds { from { transform: translate(-90px, 0); } to { transform: translate(1560px, -20px); } }
+    .bird-flock { animation: ptBirds 96s linear infinite; }
+
+    /* Traffic on the road, in the near lane. Sampled from the asphalt's own outer
+       kerb plus the lane offset, because eyeballed values drift off the road at the
+       flanks where the curve is steepest. The 0% and 8% pair is a held pause at the
+       left so pass-bys land minutes apart, not on a metronome. */
+    @keyframes ptDrive {
+      0%    { transform: translate(-60px, 1006px) rotate(-24deg); }
+      8%    { transform: translate(-60px, 1006px) rotate(-24deg); }
+      16%   { transform: translate(96px, 820px) rotate(-24deg); }
+      28%   { transform: translate(252px, 729px) rotate(-20deg); }
+      40%   { transform: translate(408px, 685px) rotate(-13deg); }
+      52%   { transform: translate(564px, 672px) rotate(-2deg); }
+      64%   { transform: translate(720px, 689px) rotate(6deg); }
+      76%   { transform: translate(876px, 743px) rotate(15deg); }
+      88%   { transform: translate(1032px, 837px) rotate(22deg); }
+      100%  { transform: translate(1188px, 966px) rotate(26deg); }
+    }
+    .road-car { animation: ptDrive 50s linear infinite; }
+
+    /* Leaves coming down. Each leaf is its own element with its own delay, so they
+       arrive one at a time instead of as a single falling sheet. Origin at each
+       leaf's own centre so the spin reads as tumbling. */
+    @keyframes ptLeafFall {
+      0%   { transform: translate(-6px, -40px) rotate(0deg); }
+      25%  { transform: translate(8px, 205px) rotate(140deg); }
+      50%  { transform: translate(-7px, 445px) rotate(285deg); }
+      75%  { transform: translate(9px, 685px) rotate(430deg); }
+      100% { transform: translate(-4px, 965px) rotate(560deg); }
+    }
+    .leaf { animation: ptLeafFall 58s linear infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+
+    /* CSS transforms on SVG elements default to rotating about the middle of the
+       viewBox, which would slide these off their keyframes. Anchor them to the
+       user-space origin so the translate values mean what they say. Safe for the
+       road car because it is not inside a translated wrapper. */
+    .bird-flock, .road-car { transform-box: view-box; transform-origin: 0 0; }
+
     @media (prefers-reduced-motion: reduce) {
-      .cloud-drift-slow, .pin-anim-1, .pin-anim-2, .pin-anim-3 { animation: none; }
+      .cloud-drift-slow, .pin-anim-1, .pin-anim-2, .pin-anim-3,
+      .sun-breathe, .kite, .bird-flock, .road-car, .leaf { animation: none; }
     }
   </style>
 
@@ -113,7 +171,7 @@
   <rect width="1440" height="900" fill="url(#skyGradient)"/>
 
   <!-- Warm Morning Sun (Top Right) -->
-  <circle cx="1210" cy="185" r="310" fill="url(#sunBloom)"/>
+  <circle class="sun-breathe" cx="1210" cy="185" r="310" fill="url(#sunBloom)"/>
   <circle cx="1210" cy="185" r="105" fill="#FEF9C3" opacity="0.35"/>
   <circle cx="1210" cy="185" r="56" fill="#FFFBEB" opacity="0.92"/>
 
@@ -121,6 +179,35 @@
   <g class="cloud-drift-slow" fill="#FFFFFF" opacity="0.42">
     <path d="M190,140 Q210,120 238,128 Q262,108 294,122 Q320,120 332,138 Q348,140 348,154 L175,154 Q162,154 168,142 Z"/>
     <path d="M880,115 Q902,94 932,104 Q958,86 990,100 Q1015,98 1028,118 L865,118 Q854,118 862,110 Z"/>
+  </g>
+
+  <!-- A kite riding the thermals over the left-hand roofs. The wrapper carries the
+       placement and the inner group the animation, because a CSS transform would
+       otherwise overwrite the transform attribute. -->
+  <g transform="translate(330 176)">
+    <g class="kite">
+      <polygon points="0,-17 12,0 0,19 -12,0" fill="#D97706"/>
+      <polygon points="0,-9 6,0 0,10 -6,0" fill="#FCD34D"/>
+      <path d="M0,19 q7,12 2,24 q-5,12 3,22" fill="none" stroke="#94A3B8" stroke-width="1.6" opacity="0.9"/>
+      <polygon points="2,26 8,29 2,32" fill="#DC2626" opacity="0.85"/>
+      <polygon points="1,44 7,47 1,50" fill="#DC2626" opacity="0.85"/>
+      <polygon points="4,58 10,61 4,64" fill="#DC2626" opacity="0.85"/>
+    </g>
+  </g>
+
+  <!-- Birds, crossing the sky once a minute. Silhouettes only: at this size the
+       shape is what reads, so they do not flap. -->
+  <g class="bird-flock" fill="none" stroke="#475569" stroke-width="2" stroke-linecap="round" opacity="0.75">
+    <g transform="translate(0 200)"><path d="M0,0 q4,-4 8,0 q4,-4 8,0"/></g>
+    <g transform="translate(24 210) scale(0.85)"><path d="M0,0 q4,-4 8,0 q4,-4 8,0"/></g>
+    <g transform="translate(44 196) scale(0.75)"><path d="M0,0 q4,-4 8,0 q4,-4 8,0"/></g>
+  </g>
+
+  <!-- Leaves coming down on the breeze, one at a time rather than as a sheet. -->
+  <g opacity="0.9">
+    <g transform="translate(262 0)"><g class="leaf"><path d="M0,-7 C5,-4 6,2 0,7 C-6,2 -5,-4 0,-7 Z" fill="#D97706"/></g></g>
+    <g transform="translate(452 0)"><g class="leaf" style="animation-delay:-24s"><path d="M-6,-5 C0,-8 6,-4 6,2 C6,6 0,7 -3,3 C-6,-1 -6,-3 -6,-5 Z" fill="#F59E0B"/></g></g>
+    <g transform="translate(1186 0)"><g class="leaf" style="animation-delay:-41s"><path d="M0,-6 C6,-3 7,3 1,7 C-5,4 -6,-2 0,-6 Z" fill="#D97706"/></g></g>
   </g>
 
   <!-- Distant Rolling Hills -->
@@ -208,16 +295,26 @@
     <path d="M1042,562 L1076,562 C1045,615 995,665 955,705 L915,695 C965,650 1015,605 1042,562 Z" fill="url(#concreteGrad)" opacity="0.92"/>
   </g>
 
-  <!-- A car parked in the first house's driveway. Seen from behind, because that
-       drive runs away from the viewer: roof, rear screen, plate and both rear
-       tyres. The tilt follows the drive, which recedes up and to the left. -->
-  <g id="driveway-car" transform="translate(178 618) rotate(-7)">
-    <ellipse cx="0" cy="3" rx="40" ry="8" fill="#0F172A" opacity="0.12"/>
-    <rect x="-32" y="-12" width="12" height="22" rx="5" fill="#334155"/>
-    <rect x="20" y="-12" width="12" height="22" rx="5" fill="#334155"/>
+  <!-- A car in the first house's driveway, given depth the way the houses are: the
+       rear silhouette repeated once more, offset up the drive and one shade darker,
+       so the car shows its left side and roof. The offset follows the drive's own
+       recede, (-9,-18), which is the same direction the houses' visible left-hand
+       side walls take. Deliberately not a rotated rear view: rotating one in plane
+       reads as the car tipping on two wheels, not as pointing up the drive. -->
+  <g id="driveway-car" transform="translate(184 656)">
+    <!-- Tyre shadow, stretched along the car's axis rather than across it. -->
+    <ellipse cx="-8" cy="-6" rx="24" ry="42" transform="rotate(64 -8 -6)" fill="#0F172A" opacity="0.11"/>
+    <!-- The car's own thickness: same silhouette, offset, in shade. -->
+    <g transform="translate(-9 -18)">
+      <rect x="-32" y="-12" width="12" height="22" rx="5" fill="#334155"/>
+      <rect x="20" y="-12" width="12" height="22" rx="5" fill="#334155"/>
+      <rect x="-32" y="-32" width="64" height="26" rx="7" fill="#94A3B8"/>
+      <polygon points="-30,-30 -24,-54 24,-54 30,-30" fill="#64748B"/>
+    </g>
+    <!-- The rear face, upright. -->
+    <rect x="-32" y="-32" width="64" height="26" rx="7" fill="#CBD5E1"/>
     <polygon points="-30,-30 -24,-54 24,-54 30,-30" fill="#94A3B8"/>
     <polygon points="-25,-31 -20,-51 20,-51 25,-31" fill="#475569"/>
-    <rect x="-32" y="-32" width="64" height="26" rx="7" fill="#CBD5E1"/>
     <rect x="-32" y="-16" width="64" height="10" rx="4" fill="#94A3B8"/>
     <rect x="-9" y="-13" width="18" height="8" rx="2" fill="#E2E8F0"/>
     <rect x="-30" y="-30" width="9" height="6" rx="2" fill="#DC2626" opacity="0.8"/>
@@ -231,6 +328,21 @@
   <path d="M65,900 C130,805 250,710 430,702 C590,695 730,775 860,900" fill="none" stroke="#CBD5E1" stroke-width="6"/>
 
   <path d="M65,900 C130,805 250,710 430,702 C590,695 730,775 860,900 Z" fill="url(#lawnLeftGrad)"/>
+
+  <!-- Traffic on the crescent, in the near lane and drawn at 1.4x because it is the
+       closest vehicle in the scene. Filled shapes only: line art this size
+       dissolves. The keyframes trace the asphalt's own kerb. -->
+  <g class="road-car">
+    <g transform="scale(1.4)">
+      <ellipse cx="0" cy="1" rx="27" ry="4" fill="#0F172A" opacity="0.13"/>
+      <rect x="-27" y="-16" width="54" height="15" rx="5" fill="#64748B"/>
+      <polygon points="-14,-16 -9,-27 8,-27 15,-16" fill="#94A3B8"/>
+      <polygon points="-11,-17 -7,-25 5,-25 11,-17" fill="#334155"/>
+      <rect x="23" y="-12" width="5" height="5" rx="1.5" fill="#FDE047" opacity="0.9"/>
+      <circle cx="-16" cy="-1" r="5.5" fill="#1E293B"/>
+      <circle cx="16" cy="-1" r="5.5" fill="#1E293B"/>
+    </g>
+  </g>
 
   <!-- ========================================================================= -->
   <!-- 4. HIGHLIGHTED PORTFOLIO PROPERTY 1: 2-STORY SINGLE-FAMILY HOME (LEFT)    -->
