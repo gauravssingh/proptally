@@ -28,7 +28,15 @@ STYLESHEETS = [
     REPO_ROOT / "src" / "proptally" / "web" / "static" / "css" / "tokens.css",
     REPO_ROOT / "src" / "proptally" / "web" / "static" / "css" / "base.css",
     REPO_ROOT / "src" / "proptally" / "web" / "static" / "css" / "components.css",
+    # The embedded sign-in page's own sheet. Linked from auth_base.html, not
+    # base.html, so the application shell never loads it — but its classes are
+    # part of the design system and must be checked like the rest.
+    REPO_ROOT / "src" / "proptally" / "web" / "static" / "css" / "auth.css",
 ]
+
+#: The subset base.html must link, in this order. Everything in STYLESHEETS is
+#: checked for defined classes; only these are required in the application shell.
+SHELL_STYLESHEETS = STYLESHEETS[:3]
 
 JINJA = re.compile(r"\{#.*?#\}|\{%.*?%\}|\{\{.*?\}\}", re.DOTALL)
 CLASS_ATTR = re.compile(r'class="([^"]*)"')
@@ -157,12 +165,14 @@ def main() -> int:
                 f"{rel}:{line}: inline event handler — bind by data attribute in a script"
             )
 
-    # The shell must load exactly the three design-system stylesheets, in order. A version
+    # The shell must load exactly the shared design-system stylesheets, in order. A version
     # query on the URL is expected (it is how a changed stylesheet defeats a stale cache),
-    # so the filename is what is compared.
+    # so the filename is what is compared. Page-scoped sheets (auth.css) are deliberately
+    # not in that list: they are linked by the layout that needs them, and their classes
+    # are still checked because they are part of STYLESHEETS.
     base = (TEMPLATES / "base.html").read_text()
     linked = re.findall(r'href="/static/css/([^"?]+)', base)
-    expected = [sheet.name for sheet in STYLESHEETS]
+    expected = [sheet.name for sheet in SHELL_STYLESHEETS]
     if linked != expected:
         failures.append(
             f"base.html: stylesheets are {linked!r}, expected {expected!r}"

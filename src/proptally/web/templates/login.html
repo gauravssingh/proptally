@@ -2,81 +2,93 @@
 {% block title %}Sign in — PropTally{% endblock %}
 
 {# ---------------------------------------------------------------------------
-   Split sign-in: the workspace on the left, the form on a white column at the
-   right. The layout is defined here rather than in auth_base because the other
-   unauthenticated screens (register, invite, reset) carry no artwork and stay
-   centred; only this one is the front door.
+   Embedded single-screen sign-in.
 
-   The artwork is a CSS background (tokens.css: --pt-login-photo), so it costs
-   no markup and stays decorative to assistive technology. The brand block over
-   it is aria-hidden for the same reason: the card below states the same
-   identity, and a signed-out visitor has no home page to link to.
+   The whole viewport is one continuous scene; the form is a glass card that
+   sits inside it rather than beside it. Below lg the scene is dropped and the
+   card is centred on an ambient gradient (auth.css), so a phone gets a plain
+   high-contrast form instead of a cropped illustration.
+
+   Positioning lives in `.auth-panel`'s lg rule rather than in the markup:
+   `absolute right-12 top-1/2` would offset a static card on mobile, so the
+   breakpoint has to own it.
    --------------------------------------------------------------------------- #}
 
 {% block shell %}
-<main class="pt-auth-split">
-    <aside class="pt-auth-split__media">
-        <div class="pt-auth-split__brand" aria-hidden="true">
-            <span class="pt-brand__mark">P</span>
-            <span>
-                <span class="pt-auth-split__brandname">PropTally</span>
-                {% if instance_name != "PropTally" %}
-                <span class="pt-auth-split__instance">{{ instance_name }}</span>
-                {% endif %}
-            </span>
-        </div>
-    </aside>
-    <section class="pt-auth-split__panel">
-        <div class="pt-auth__card">
-            {{ self.card() }}
-        </div>
-    </section>
-</main>
-{% endblock %}
+<div class="auth-root relative h-screen w-full overflow-hidden">
+    <img class="auth-scene absolute inset-0 w-full h-full object-cover z-0"
+         src="/static/img/login-neighborhood.svg" alt="">
 
-{% block card %}
-{{ ui.card_open() }}
-<div class="pt-auth__brand">
-    <span class="pt-brand__mark" aria-hidden="true">P</span>
-    <span class="pt-auth__wordmark">PropTally</span>
-</div>
+    <div class="auth-panel w-full max-w-md z-10">
+        <div class="auth-card bg-white/80 backdrop-blur-md rounded-2xl border border-white/50 shadow-2xl shadow-slate-900/10 p-8">
 
-<h1 class="pt-auth__title">Welcome back</h1>
-<p class="pt-fs-supporting pt-text-secondary">
-    Your portfolio is isolated on this host.
-</p>
-{% if error %}{{ ui.alert(variant="error", title="Could not sign in", text=error) }}{% endif %}
-
-<form method="post" action="/auth/login">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <input type="hidden" name="next" value="{{ next_url }}">
-    <div class="pt-stack pt-gap-4">
-        {{ ui.text_field("email", "Email", value=email or "", type="email", required=true,
-                         placeholder="name@company.com",
-                         extra='autocomplete="username" autofocus') }}
-        <div>
-            <div class="pt-auth__assist-row">
-                <a class="pt-auth__assist" href="/auth/reset">Forgot password?</a>
+            <div class="flex items-center gap-3">
+                <span class="auth-mark">P</span>
+                <span>
+                    <span class="block text-xl font-bold tracking-tight text-slate-900">PropTally</span>
+                    <span class="auth-instance">
+                        <span class="auth-instance__dot" aria-hidden="true"></span>
+                        {{ instance_name if instance_name != "PropTally" else "Local instance" }}
+                    </span>
+                </span>
             </div>
-            {{ ui.text_field("password", "Password", type="password", required=true,
-                             extra='autocomplete="current-password"') }}
-        </div>
-        <div class="pt-form-actions">
-            {{ ui.btn("Sign in", variant="primary", type="submit", block=true) }}
+
+            <h1 class="mt-6 text-2xl font-bold tracking-tight text-slate-900">Welcome back</h1>
+            <p class="mt-1 text-sm text-slate-500">Your portfolio is isolated on this host.</p>
+
+            {% if error %}
+            <div class="mt-6">{{ ui.alert(variant="error", title="Could not sign in", text=error) }}</div>
+            {% endif %}
+
+            <form method="post" action="/auth/login" class="mt-6" data-loading-form>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="next" value="{{ next_url }}">
+
+                <div class="flex flex-col gap-4">
+                    {{ ui.text_field("email", "Email", value=email or "", type="email", required=true,
+                                     placeholder="name@company.com",
+                                     extra='autocomplete="email" autofocus') }}
+
+                    {# Written out rather than composed from text_field(): the
+                       reveal control has to sit inside the field, and "Forgot
+                       password?" shares the label's row. #}
+                    <div class="pt-field">
+                        <div class="auth-row">
+                            <label class="pt-field__label" for="password">Password<span class="pt-field__required" aria-hidden="true">*</span></label>
+                            <a class="auth-link" href="/auth/reset">Forgot password?</a>
+                        </div>
+                        <div class="auth-password">
+                            <input type="password" id="password" name="password"
+                                   required aria-required="true" autocomplete="current-password">
+                            <button type="button" class="auth-toggle"
+                                    data-password-toggle="password"
+                                    aria-controls="password" aria-pressed="false"
+                                    aria-label="Show password">
+                                <span class="auth-toggle__icon auth-toggle__icon--off">{{ ui.icon("eye", "md") }}</span>
+                                <span class="auth-toggle__icon auth-toggle__icon--on">{{ ui.icon("eye-off", "md") }}</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="auth-cta" data-loading="false">
+                        <button type="submit" class="pt-btn pt-btn--primary pt-btn--block">
+                            <span class="auth-spinner" aria-hidden="true"></span>
+                            <span data-loading-label>Sign in</span>
+                        </button>
+                    </div>
+                </div>
+            </form>
+
+            <div class="auth-notice">
+                <span class="auth-notice__icon" aria-hidden="true">🔒</span>
+                {% if registration_open %}
+                <span>No account yet? <a href="/auth/register">Create a portfolio</a>.</span>
+                {% else %}
+                <span>This installation is invite-only. Ask a portfolio owner for an invitation link.</span>
+                {% endif %}
+            </div>
+
         </div>
     </div>
-</form>
-
-{% if registration_open %}
-{{ ui.alert(
-    variant="neutral",
-    text="No account yet? <a href='/auth/register'>Create a portfolio</a>."
-) }}
-{% else %}
-{{ ui.alert(
-    variant="neutral",
-    text="This installation is invite-only. Ask a portfolio owner for an invitation link."
-) }}
-{% endif %}
-{{ ui.card_close() }}
+</div>
 {% endblock %}

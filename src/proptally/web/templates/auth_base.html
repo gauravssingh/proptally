@@ -2,6 +2,9 @@
    Shared layout for the unauthenticated screens (sign in, register, invite,
    reset). Deliberately not the application shell: these pages have no portfolio
    context, so they must not render navigation, door lists or portfolio counts.
+
+   auth.css is linked here rather than in base.html: it styles the embedded
+   sign-in page only, and the authenticated shell must not load it.
    =========================================================================== #}
 <!DOCTYPE html>
 {% import "components/ui.html" as ui with context %}
@@ -15,6 +18,7 @@
     <link rel="stylesheet" href="/static/css/tokens.css?v={{ asset_version() }}">
     <link rel="stylesheet" href="/static/css/base.css?v={{ asset_version() }}">
     <link rel="stylesheet" href="/static/css/components.css?v={{ asset_version() }}">
+    <link rel="stylesheet" href="/static/css/auth.css?v={{ asset_version() }}">
 </head>
 <body>
 {% block shell %}
@@ -28,5 +32,39 @@
     </div>
 </main>
 {% endblock %}
+
+<script>
+(function () {
+    "use strict";
+
+    // Reveal/hide the password. The control carries aria-pressed and its own
+    // label, so the state is announced rather than only drawn.
+    document.querySelectorAll("[data-password-toggle]").forEach(function (button) {
+        button.addEventListener("click", function () {
+            var input = document.getElementById(button.getAttribute("data-password-toggle"));
+            if (!input) { return; }
+            var revealed = input.type === "text";
+            input.type = revealed ? "password" : "text";
+            button.setAttribute("aria-pressed", revealed ? "false" : "true");
+            button.setAttribute("aria-label", revealed ? "Show password" : "Hide password");
+            input.focus();
+        });
+    });
+
+    // Loading state: the form posts and the browser navigates, so the only job
+    // here is to say that work has started and refuse a second submission.
+    document.querySelectorAll("form[data-loading-form]").forEach(function (form) {
+        form.addEventListener("submit", function () {
+            var action = form.querySelector("[data-loading]");
+            var label = form.querySelector("[data-loading-label]");
+            if (action) { action.setAttribute("data-loading", "true"); }
+            if (label) { label.textContent = "Signing in…"; }
+            form.querySelectorAll("button[type=submit]").forEach(function (button) {
+                button.disabled = true;
+            });
+        });
+    });
+})();
+</script>
 </body>
 </html>
