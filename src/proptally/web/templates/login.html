@@ -135,7 +135,7 @@
                 {% include "components/reset_help.html" %}
 
                 {% if reset_error %}
-                <div class="mt-6">{{ ui.alert(variant="error", title="Token not accepted", text=reset_error) }}</div>
+                <div class="auth-reveal mt-6">{{ ui.alert(variant="error", title="Token not accepted", text=reset_error) }}</div>
                 {% endif %}
 
                 {# The token is checked here, then the holder is sent on to set a

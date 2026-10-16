@@ -58,10 +58,10 @@
     var reduceMotion = window.matchMedia
         && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    // Leaving a step clears it: no half-typed password survives a step change, a
-    // password revealed with the eye toggle is hidden again, and the previous
-    // verdict goes with it. Hidden inputs (the CSRF token) are left alone.
-    function resetStep(pane) {
+    // Leaving a step clears it: typed values go, a password revealed with the eye
+    // toggle is hidden again, and the last verdict is cleared. Whatever step you
+    // arrive at shows its own state, never the previous attempt's complaint.
+    function clearStep(pane) {
         pane.querySelectorAll("input").forEach(function (input) {
             if (input.type === "hidden") { return; }
             input.value = "";
@@ -85,8 +85,11 @@
             var wanted = control.getAttribute("data-pane-toggle");
             event.preventDefault();
 
-            var leaving = host.querySelector("[data-pane]:not([hidden])");
-            if (leaving) { resetStep(leaving); }
+            host.querySelectorAll("[data-pane]").forEach(function (pane) {
+                var isLeaving = !pane.hidden && pane.getAttribute("data-pane") !== wanted;
+                var isArriving = pane.getAttribute("data-pane") === wanted;
+                if (isLeaving || isArriving) { clearStep(pane); }
+            });
 
             var from = host.offsetHeight;
             host.querySelectorAll("[data-pane]").forEach(function (pane) {
