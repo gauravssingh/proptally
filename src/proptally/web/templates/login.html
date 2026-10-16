@@ -1,8 +1,47 @@
 {% extends "auth_base.html" %}
 {% block title %}Sign in — PropTally{% endblock %}
+
+{# ---------------------------------------------------------------------------
+   Split sign-in: the workspace on the left, the form on a white column at the
+   right. The layout is defined here rather than in auth_base because the other
+   unauthenticated screens (register, invite, reset) carry no artwork and stay
+   centred; only this one is the front door.
+
+   The artwork is a CSS background (tokens.css: --pt-login-photo), so it costs
+   no markup and stays decorative to assistive technology. The brand block over
+   it is aria-hidden for the same reason: the card below states the same
+   identity, and a signed-out visitor has no home page to link to.
+   --------------------------------------------------------------------------- #}
+
+{% block shell %}
+<main class="pt-auth-split">
+    <aside class="pt-auth-split__media">
+        <div class="pt-auth-split__brand" aria-hidden="true">
+            <span class="pt-brand__mark">P</span>
+            <span>
+                <span class="pt-auth-split__brandname">PropTally</span>
+                {% if instance_name != "PropTally" %}
+                <span class="pt-auth-split__instance">{{ instance_name }}</span>
+                {% endif %}
+            </span>
+        </div>
+    </aside>
+    <section class="pt-auth-split__panel">
+        <div class="pt-auth__card">
+            {{ self.card() }}
+        </div>
+    </section>
+</main>
+{% endblock %}
+
 {% block card %}
 {{ ui.card_open() }}
-<h1>Sign in</h1>
+<div class="pt-auth__brand">
+    <span class="pt-brand__mark" aria-hidden="true">P</span>
+    <span class="pt-auth__wordmark">PropTally</span>
+</div>
+
+<h1 class="pt-auth__title">Welcome back</h1>
 <p class="pt-fs-supporting pt-text-secondary">
     Your portfolio is isolated on this host.
 </p>
@@ -13,22 +52,31 @@
     <input type="hidden" name="next" value="{{ next_url }}">
     <div class="pt-stack pt-gap-4">
         {{ ui.text_field("email", "Email", value=email or "", type="email", required=true,
+                         placeholder="name@company.com",
                          extra='autocomplete="username" autofocus') }}
-        {{ ui.text_field("password", "Password", type="password", required=true,
-                         extra='autocomplete="current-password"') }}
+        <div>
+            <div class="pt-auth__assist-row">
+                <a class="pt-auth__assist" href="/auth/reset">Forgot password?</a>
+            </div>
+            {{ ui.text_field("password", "Password", type="password", required=true,
+                             extra='autocomplete="current-password"') }}
+        </div>
         <div class="pt-form-actions">
             {{ ui.btn("Sign in", variant="primary", type="submit", block=true) }}
         </div>
     </div>
 </form>
 
-<div class="pt-auth__footer">
-    {% if registration_open %}
-    <span>No account yet? <a href="/auth/register">Create a portfolio</a>.</span>
-    {% else %}
-    <span>This installation is invite-only. Ask a portfolio owner for an invitation link.</span>
-    {% endif %}
-    <a href="/auth/reset">Forgot your password?</a>
-</div>
+{% if registration_open %}
+{{ ui.alert(
+    variant="neutral",
+    text="No account yet? <a href='/auth/register'>Create a portfolio</a>."
+) }}
+{% else %}
+{{ ui.alert(
+    variant="neutral",
+    text="This installation is invite-only. Ask a portfolio owner for an invitation link."
+) }}
+{% endif %}
 {{ ui.card_close() }}
 {% endblock %}

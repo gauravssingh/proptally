@@ -618,6 +618,102 @@
     font-size: var(--pt-fs-caption);
 }
 
+/* --- A8b. Split sign-in (lg and up) ------------------------------------ */
+/* Two panes: the workspace on the left, the form on a white column at the
+   right. Below lg it collapses to the centred card, because the artwork is
+   decoration and the form is not. */
+.pt-auth-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 100dvh;
+    background-color: var(--pt-bg);
+}
+
+.pt-auth-split__media {
+    display: none;
+    flex-direction: column;
+    padding: var(--pt-space-8);
+    background-color: var(--pt-surface-sunken);
+    background-image:
+        linear-gradient(var(--pt-white-alpha-12), var(--pt-white-alpha-08)),
+        var(--pt-login-photo);
+    background-size: cover;
+    background-position: center;
+}
+
+/* The mark sits on the brightest corner of the scene, so the dark green
+   wordmark keeps its contrast without a plate behind it. */
+.pt-auth-split__brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--pt-space-3);
+    color: var(--pt-accent);
+    text-decoration: none;
+}
+
+.pt-auth-split__brandname {
+    font-size: var(--pt-fs-section);
+    font-weight: var(--pt-fw-bold);
+    letter-spacing: var(--pt-tracking-tight);
+}
+
+.pt-auth-split__instance {
+    display: block;
+    font-size: var(--pt-fs-caption);
+    font-weight: var(--pt-fw-medium);
+    color: var(--pt-text-secondary);
+}
+
+.pt-auth-split__panel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--pt-space-8) var(--pt-space-4);
+}
+
+.pt-auth__brand {
+    display: flex;
+    align-items: center;
+    gap: var(--pt-space-3);
+    margin-bottom: var(--pt-space-6);
+}
+
+.pt-auth__wordmark {
+    font-size: var(--pt-fs-section);
+    font-weight: var(--pt-fw-bold);
+    letter-spacing: var(--pt-tracking-tight);
+}
+
+.pt-auth__title {
+    margin-bottom: var(--pt-space-2);
+    font-size: var(--pt-fs-title);
+    font-weight: var(--pt-fw-bold);
+    letter-spacing: var(--pt-tracking-tight);
+}
+
+/* "Forgot password?" belongs to the password field, not the email one. */
+.pt-auth__assist-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: var(--pt-space-1);
+}
+
+.pt-auth__assist {
+    font-size: var(--pt-fs-caption);
+    font-weight: var(--pt-fw-medium);
+    color: var(--pt-accent-text);
+}
+
+@media (min-width: 1024px) {
+    .pt-auth-split {
+        grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    }
+
+    .pt-auth-split__media {
+        display: flex;
+    }
+}
+
 /* --- A9. Role legend (administration) ---------------------------------- */
 /* One row per role: the role, then what it may do, in the same words the
    application enforces. Replaces a capabilities grid that made the reader

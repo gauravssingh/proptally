@@ -17,14 +17,16 @@
     <link rel="stylesheet" href="/static/css/components.css?v={{ asset_version() }}">
 </head>
 <body>
+{% block shell %}
 <main class="pt-auth">
     <div class="pt-auth__lockup">
         <span class="pt-brand__mark" aria-hidden="true">P</span>
         <span class="pt-auth__instance">{{ instance_name }}</span>
     </div>
     <div class="pt-auth__card">
-        {% block card %}{% endblock %}
+        {{ self.card() }}
     </div>
 </main>
+{% endblock %}
 </body>
 </html>
