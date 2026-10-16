@@ -145,7 +145,7 @@ def client_fixture(owner, tmp_path):
     """
     db_path = tmp_path / "auth.db"
     db_url = f"sqlite:///{db_path}"
-    signed_in = owner(db_url=db_url, demo_seed=True)
+    signed_in = owner(db_url=db_url, reference_portfolio=True)
     signed_in.db_url = db_url
     return signed_in
 

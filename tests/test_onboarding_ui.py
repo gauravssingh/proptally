@@ -118,12 +118,11 @@ def test_fresh_portfolio_offers_onboarding_and_the_settings_screen(owner):
 
     dashboard = signed_in.client.get("/")
     assert dashboard.status_code == 200
-    # A clear "set up your portfolio" panel: a link to the setup screen, and the
-    # sample action that seeds this portfolio only.
+    # A clear "set up your portfolio" panel: a link to the setup screen, and no
+    # synthetic content on offer -- a live portfolio is built by its owner.
     assert "Set up your portfolio" in dashboard.text
     assert 'href="/settings"' in dashboard.text
-    assert 'action="/settings/sample-portfolio"' in dashboard.text
-    assert 'name="csrf_token"' in dashboard.text
+    assert "sample-portfolio" not in dashboard.text
     # The populated dashboard is not what an empty portfolio sees.
     assert "Portfolio Financial Overview" not in dashboard.text
 
@@ -192,6 +191,7 @@ def test_creating_entities_through_the_browser_allocates_ledger_accounts(owner):
 
         accounts = {a.account_type: a for a in session.exec(select(FinancialAccount)).all()}
         checking = accounts["CHECKING"]
+        checking_id = checking.id
         card = accounts["CREDIT_CARD"]
         assert checking.ledger_account_code is not None
         assert card.ledger_account_code is not None
@@ -252,7 +252,14 @@ def test_creating_entities_through_the_browser_allocates_ledger_accounts(owner):
         str(principal_code),
     ):
         assert expected in populated.text, expected
-    assert f'name="principal_{loan_id}"' in populated.text
+
+    # The dated baseline offers the portfolio's own balances, and deliberately not the
+    # loan's: a loan states its principal and escrow on the loan, so neither figure has
+    # two homes and neither can be counted twice.
+    assert f'name="asset_{property_id}"' in populated.text
+    assert f'name="amount_{checking_id}"' in populated.text
+    assert f'name="principal_{loan_id}"' not in populated.text
+    assert f'name="escrow_{loan_id}"' not in populated.text
 
 
 def test_editing_a_declared_property_and_managing_a_vendor_rule(owner):
@@ -384,40 +391,6 @@ def test_read_only_member_is_refused_and_anonymous_post_is_redirected(owner):
 
     with Session(signed_in.engine) as session:
         assert session.exec(select(Property)).all() == []
-
-
-def test_sample_portfolio_lands_in_this_portfolio_only(owner):
-    first = owner(email="first@example.com", portfolio_name="First Portfolio")
-    second = owner(email="second@example.com", portfolio_name="Second Portfolio")
-    assert str(first.engine.url) != str(second.engine.url)
-
-    _saved(_post(first, "/settings/sample-portfolio"))
-
-    with Session(first.engine) as session:
-        doors = session.exec(select(Property)).all()
-        assert "prop_tinsley_huntley" in {p.id for p in doors}
-        assert all(p.asset_ledger_code is not None for p in doors)
-        rules = {r.id for r in session.exec(select(VendorRule)).all()}
-        assert "vrule_tenant_saxsma" in rules
-        assert "OPENING_BALANCE:2026-01-01" in {
-            entry.idempotency_key for entry in session.exec(select(JournalEntry)).all()
-        }
-
-    # The same screens now render a populated portfolio: the setup screen lists the
-    # sample's doors, and the dashboard renders its figures.
-    assert first.client.get("/settings").status_code == 200
-    dashboard = first.client.get("/")
-    assert dashboard.status_code == 200
-    assert "Portfolio Financial Overview" in dashboard.text
-
-    with Session(second.engine) as session:
-        assert session.exec(select(Property)).all() == []
-        assert session.exec(select(FinancialAccount)).all() == []
-        # The generic merchant rules are portfolio-independent and exist in every
-        # portfolio; the sample's own rules never appear in another one.
-        assert "vrule_tenant_saxsma" not in {
-            rule.id for rule in session.exec(select(VendorRule)).all()
-        }
 
 
 def _read_only_client(signed_in) -> TestClient:

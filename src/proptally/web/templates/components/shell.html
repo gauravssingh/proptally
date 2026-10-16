@@ -35,23 +35,23 @@
 {%- endmacro %}
 
 
-{% macro chrome_status(is_demo) -%}
+{% macro chrome_status() -%}
 {%- endmacro %}
 
 
-{% macro brand(is_demo, version=None) -%}
+{% macro brand(version=None) -%}
 <a class="pt-brand" href="/">
     <span class="pt-brand__mark" aria-hidden="true">P</span>
     <span>
         <span class="pt-brand__name">PropTally</span>
-        <span class="pt-brand__meta">Self-hosted · {{ "demo data" if is_demo else "local vault" }}</span>
+        <span class="pt-brand__meta">Self-hosted · local vault</span>
     </span>
 </a>
 {%- endmacro %}
 
 
-{% macro mode_badge(is_demo) -%}
-{{ ui.badge("DEMO" if is_demo else "LIVE", variant=("warning" if is_demo else "accent"), upper=true, title="Synthetic demo fixtures — not client data" if is_demo else "Client portfolio data on this host") }}
+{% macro mode_badge() -%}
+{{ ui.badge("LIVE", variant="accent", upper=true, title="Real portfolio data on this host") }}
 {%- endmacro %}
 
 
@@ -64,11 +64,11 @@
 {# ---------------------------------------------------------------------------
    A1. Desktop sidebar
    --------------------------------------------------------------------------- #}
-{% macro sidebar(doors, active_page, active_property, review_count, is_demo) -%}
+{% macro sidebar(doors, active_page, active_property, review_count) -%}
 <aside class="pt-sidebar" aria-label="Primary navigation">
     <div class="pt-sidebar__brand">
-        {{ brand(is_demo) }}
-        {{ mode_badge(is_demo) }}
+        {{ brand() }}
+        {{ mode_badge() }}
     </div>
 
     <nav class="pt-nav">
@@ -90,7 +90,7 @@
 {# ---------------------------------------------------------------------------
    A4. Mobile top app bar
    --------------------------------------------------------------------------- #}
-{% macro appbar(doors, active_property, review_count, is_demo) -%}
+{% macro appbar(doors, active_property, review_count) -%}
 <header class="pt-appbar">
     <div class="pt-flex pt-items-center pt-gap-3">
         <button type="button" class="pt-btn pt-btn--ghost pt-btn--icon" id="mobileMenuBtn"
@@ -98,8 +98,8 @@
                 aria-label="Open navigation menu">
             {{ ui.icon("menu", "xl") }}
         </button>
-        {{ brand(is_demo) }}
-        {{ mode_badge(is_demo) }}
+        {{ brand() }}
+        {{ mode_badge() }}
     </div>
 
     <div class="pt-flex pt-items-center pt-gap-2">
@@ -125,13 +125,13 @@
 {# ---------------------------------------------------------------------------
    A6. Mobile/tablet drawer — same navigation, one markup source
    --------------------------------------------------------------------------- #}
-{% macro drawer(doors, active_page, active_property, review_count, is_demo) -%}
+{% macro drawer(doors, active_page, active_property, review_count) -%}
 <div id="mobileDrawer" class="pt-drawer" hidden>
     <button type="button" class="pt-drawer__scrim" id="mobileDrawerOverlay"
             data-drawer-close aria-label="Close navigation"></button>
     <div class="pt-drawer__panel" role="dialog" aria-modal="true" aria-label="Navigation">
         <div class="pt-drawer__header">
-            {{ brand(is_demo) }}
+            {{ brand() }}
             <button type="button" class="pt-btn pt-btn--ghost pt-btn--icon" id="mobileDrawerClose"
                     data-drawer-close aria-label="Close navigation">
                 {{ ui.icon("close", "lg") }}
@@ -185,12 +185,12 @@
 {# ---------------------------------------------------------------------------
    A7. Desktop environment strip
    --------------------------------------------------------------------------- #}
-{% macro topbar(is_demo) -%}
+{% macro topbar() -%}
 <div class="pt-topbar">
-    <div class="pt-topbar__env pt-topbar__env--{{ 'demo' if is_demo else 'live' }}">
-        <span class="pt-dot{{ ' pt-dot--warning' if is_demo else ' pt-dot--accent' }}"></span>
+    <div class="pt-topbar__env pt-topbar__env--live">
+        <span class="pt-dot pt-dot--accent"></span>
         <span>ENVIRONMENT:
-            <strong>{{ "DEMO MODE (SYNTHETIC FIXTURES)" if is_demo else "CLIENT PORTFOLIO (LOCAL VAULT)" }}</strong>
+            <strong>PROPTALLY · SELF-HOSTED (LOCAL VAULT)</strong>
         </span>
     </div>
     <span>Zero external APIs · localhost 127.0.0.1</span>

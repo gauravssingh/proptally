@@ -19,7 +19,7 @@ from proptally.db.models import (
 )
 from proptally.db.schema import init_schema
 from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
-from proptally.domain.fixtures.demo_seed import DEMO_VENDOR_RULES
+from reference_portfolio import REFERENCE_VENDOR_RULES
 from proptally.domain.transactions.suggest import (
     seed_vendor_rules,
     suggest_split_for_transaction,
@@ -79,7 +79,6 @@ def test_repeat_vendor_classification_model():
 
 @pytest.fixture
 def queue_env(tmp_path, monkeypatch, owner):
-    monkeypatch.setenv("PROPTALLY_DEMO_SEED", "false")
     db_file = tmp_path / "test_queue.db"
     db_uri = f"sqlite:///{db_file}"
     engine = get_engine(db_uri)
@@ -87,7 +86,7 @@ def queue_env(tmp_path, monkeypatch, owner):
 
     with Session(engine) as session:
         ensure_entity_ledger_accounts(session)
-        seed_vendor_rules(session, DEMO_VENDOR_RULES)
+        seed_vendor_rules(session, REFERENCE_VENDOR_RULES)
 
         # Base document & institution
         doc = Document(id="doc_1", file_sha256="sha_abc", original_filename="test.pdf", storage_path="/tmp/test.pdf", file_size_bytes=100)

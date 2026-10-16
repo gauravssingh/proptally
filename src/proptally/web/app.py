@@ -52,23 +52,11 @@ from proptally.web.routes.transactions import get_transactions_router
 logger = logging.getLogger(__name__)
 
 
-def _demo_mode() -> bool:
-    """Whether to create a demo account and portfolio on startup.
-
-    Off unless explicitly requested. The previous default was on, which meant a fresh
-    deployment shipped an account with a well-known password -- unacceptable for an
-    instance that holds real financial records, and exactly what ADR-010 says the
-    bootstrap path avoids.
-    """
-    return os.environ.get("PROPTALLY_DEMO_SEED", "false").lower() in {"1", "true", "yes"}
-
-
 def create_app(
     db_url: str | None = None,
     *,
     system_db_url: str | None = None,
     storage_root: str | None = None,
-    demo_seed: bool | None = None,
 ) -> FastAPI:
     """Creates and configures the PropTally web application.
 
@@ -78,15 +66,10 @@ def create_app(
     control_engine = get_system_engine(system_db_url)
     tenant_manager = TenantManager(db_url=db_url, storage_root_path=storage_root)
     rate_limiter = LoginRateLimiter()
-    seed_demo = _demo_mode() if demo_seed is None else demo_seed
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         init_system_schema(control_engine)
-        if seed_demo:
-            # Seeds a demo account and portfolio, into its own database. Never
-            # writes synthetic fixtures into a real owner's portfolio.
-            _seed_demo_portfolio(control_engine, tenant_manager)
         yield
 
     app = FastAPI(
@@ -104,7 +87,6 @@ def create_app(
     templates.env.filters["format_cents_sign"] = format_cents_sign
     templates.env.filters["format_bps"] = format_bps
     templates.env.filters["format_date"] = format_date
-    templates.env.globals["is_demo_mode"] = seed_demo
     # Shell navigation: static structure plus the doors of the portfolio this
     # request is allowed to see. Read from the request context, never from a
     # process-wide engine, so one portfolio's doors can never appear in another's
@@ -233,83 +215,6 @@ def create_app(
     app.state.login_rate_limiter = rate_limiter
 
     return app
-
-
-def _seed_demo_portfolio(control_engine, tenant_manager: TenantManager) -> None:
-    """Creates a demo account and portfolio on a fresh instance, if none exists.
-
-    Safe to run simultaneously in several processes, which is what happens when the
-    instance is started with more than one worker: the existence check below is
-    check-then-act, so two workers can both conclude the instance is empty. The loser
-    of that race loses on the unique email and is treated as "already seeded" rather
-    than being allowed to fail startup, and it finishes the part that may still be
-    missing (the demo data itself) so a crash between the two steps self-heals.
-
-    The password must be supplied explicitly. It is never defaulted to a known value,
-    and never generated-and-logged: writing a credential to the application log would
-    break the zero-PII logging rule in 06_SECURITY_AND_DEPLOYMENT.md §4.2. Enabling the
-    demo without a password is an operator error, so it is reported and skipped.
-    """
-    from sqlmodel import select
-
-    from proptally.db.models import Property
-    from proptally.domain.fixtures.demo_seed import seed_demo_data
-
-    email = os.environ.get("PROPTALLY_DEMO_EMAIL", "demo@proptally.local")
-    password = os.environ.get("PROPTALLY_DEMO_PASSWORD")
-    if not password:
-        logger.error(
-            "PROPTALLY_DEMO_SEED is enabled but PROPTALLY_DEMO_PASSWORD is not set, so no "
-            "demo portfolio was created. Set PROPTALLY_DEMO_PASSWORD to a password of at "
-            "least 10 characters, or disable PROPTALLY_DEMO_SEED and register at /auth/register."
-        )
-        return
-
-    tenant_id = _existing_demo_tenant(control_engine, email)
-    if tenant_id is None:
-        from proptally.web.auth import register_portfolio
-
-        try:
-            _user, tenant, _ = register_portfolio(
-                control_engine, tenant_manager,
-                email=email,
-                password=password,
-                display_name="Demo Owner",
-                portfolio_name="Demo Portfolio",
-            )
-            tenant_id = tenant.id
-        except ValueError as exc:
-            # Another process created the account between the check and the insert, or
-            # the instance was already seeded. Find whatever it created and finish the
-            # remaining step if it is still missing.
-            tenant_id = _existing_demo_tenant(control_engine, email)
-            if tenant_id is None:
-                logger.info("Demo portfolio not seeded by this process: %s", exc)
-                return
-
-    with Session(tenant_manager.engine_for(tenant_id)) as session:
-        if session.exec(select(Property)).first() is None:
-            seed_demo_data(session)
-        else:
-            logger.info("Demo portfolio already present in tenant %s", tenant_id)
-
-
-def _existing_demo_tenant(control_engine, email: str):
-    """The demo account's portfolio id, when the account already exists."""
-    from sqlmodel import select
-
-    from proptally.db.system_models import TenantMembership, User
-
-    with Session(control_engine) as session:
-        user = session.exec(select(User).where(User.email == email.lower())).first()
-        if user is None:
-            return None
-        membership = session.exec(
-            select(TenantMembership)
-            .where(TenantMembership.user_id == user.id)
-            .order_by(TenantMembership.created_at)
-        ).first()
-        return membership.tenant_id if membership else None
 
 
 # Default app instance for uvicorn. Real deployments should set PROPTALLY_* env

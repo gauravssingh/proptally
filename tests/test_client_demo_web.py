@@ -7,7 +7,7 @@ from starlette.testclient import TestClient
 @pytest.fixture(name="signed_in")
 def signed_in_fixture(owner):
     """A signed-in owner whose portfolio holds the synthetic demo data."""
-    return owner(demo_seed=True)
+    return owner(reference_portfolio=True)
 
 
 @pytest.fixture(name="client")

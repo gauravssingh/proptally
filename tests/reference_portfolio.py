@@ -1,7 +1,12 @@
-"""Synthetic demo fixtures seeder for Client Demo MVP.
+"""A synthetic portfolio, for tests only.
 
-Populates realistic portfolio entities, opening balances, loans, escrow ledgers,
-and review queue items without fabricating client balances or resolving CBD-1/CBD-2 silently.
+This is test fixture data, not product code: it builds one populated portfolio (three
+doors, three mortgages, cards, opening balances, a rent deposit, a split card purchase
+and two review-queue items) so that tests about rendering, metrics and posting run
+against realistic content.
+
+The application itself ships no sample portfolio. A new tenant starts empty and is
+expected to be built up by its owner, so nothing in ``src/`` imports this module.
 """
 
 from datetime import date
@@ -35,12 +40,12 @@ from proptally.domain.transactions.splits import apply_transaction_splits, Split
 from proptally.domain.transactions.suggest import seed_vendor_rules
 
 
-#: Vendor rules that belong to THIS portfolio rather than to the platform: they
-#: name one owner's tenant, and attribute a municipal utility or county tax bill to
-#: one specific door. A new portfolio is seeded with the generic merchant rules only
-#: (``suggest.DEFAULT_VENDOR_RULES``); these live with the rest of the demo fixture,
-#: and a real owner configures their equivalents through the vendor-rule editor.
-DEMO_VENDOR_RULES = [
+#: Vendor rules that belong to this reference portfolio rather than to the platform:
+#: they name one owner's tenant and attribute a municipal utility or county tax bill to
+#: one specific door. A real portfolio is seeded with the generic merchant rules only
+#: (``suggest.DEFAULT_VENDOR_RULES``); an owner configures their equivalents through the
+#: vendor-rule editor.
+REFERENCE_VENDOR_RULES = [
     {
         "id": "vrule_tenant_saxsma",
         "pattern": "SAXSMA",
@@ -99,13 +104,13 @@ DEMO_VENDOR_RULES = [
 ]
 
 
-def seed_demo_data(session: Session) -> None:
-    """Populates complete synthetic demo environment."""
+def seed_reference_portfolio(session: Session) -> None:
+    """Populates the reference portfolio: full entities, balances and review items."""
     # 1. Seed the fixed standard Chart of Accounts and this portfolio's own
     #    vendor rules (the generic merchant rules are seeded separately, by the
     #    schema migration that creates the table).
     ensure_entity_ledger_accounts(session)
-    seed_vendor_rules(session, DEMO_VENDOR_RULES)
+    seed_vendor_rules(session, REFERENCE_VENDOR_RULES)
 
     # Check if already seeded
     existing_prop = session.get(Property, "prop_tinsley_huntley")

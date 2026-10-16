@@ -71,12 +71,17 @@ class SignedInOwner:
         """POSTs with the session's CSRF token attached."""
         return self.client.post(url, data={**data, "csrf_token": self.csrf()}, **kwargs)
 
-    def seed_demo_portfolio(self) -> None:
-        """Puts the synthetic demo portfolio into this owner's database."""
-        from proptally.domain.fixtures.demo_seed import seed_demo_data
+    def seed_reference_portfolio(self) -> None:
+        """Puts the synthetic reference portfolio into this owner's database.
+
+        Fixture data for tests that need realistic content to render or measure.
+        The application ships no sample portfolio, so nothing under ``src/`` can
+        populate a tenant.
+        """
+        from reference_portfolio import seed_reference_portfolio
 
         with Session(self.engine) as session:
-            seed_demo_data(session)
+            seed_reference_portfolio(session)
 
 
 @pytest.fixture(name="owner")
@@ -102,7 +107,7 @@ def owner_fixture(tmp_path, monkeypatch) -> Iterator[Callable[..., SignedInOwner
         db_url: Optional[str] = None,
         *,
         app=None,
-        demo_seed: bool = False,
+        reference_portfolio: bool = False,
         email: str = "owner@example.com",
         password: str = "owner-password-1",
         display_name: str = "Owner",
@@ -115,8 +120,7 @@ def owner_fixture(tmp_path, monkeypatch) -> Iterator[Callable[..., SignedInOwner
                 db_url=db_url,
                 system_db_url=f"sqlite:///{storage / 'system.db'}",
                 storage_root=str(storage),
-                demo_seed=False,
-            )
+                )
         client = TestClient(app)
         client.__enter__()
         started.append(client)
@@ -150,8 +154,8 @@ def owner_fixture(tmp_path, monkeypatch) -> Iterator[Callable[..., SignedInOwner
             email=email,
             password=password,
         )
-        if demo_seed:
-            signed_in.seed_demo_portfolio()
+        if reference_portfolio:
+            signed_in.seed_reference_portfolio()
         return signed_in
 
     yield _make

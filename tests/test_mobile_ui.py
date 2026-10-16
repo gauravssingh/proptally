@@ -6,7 +6,7 @@ import pytest
 @pytest.fixture
 def client(owner):
     """A signed-in owner's client; every page below requires a session."""
-    return owner(demo_seed=True).client
+    return owner(reference_portfolio=True).client
 
 
 def test_manifest_json_endpoint(client):

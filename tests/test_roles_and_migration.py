@@ -59,7 +59,7 @@ from proptally.domain.accounting.metrics import (  # noqa: E402
     calculate_portfolio_equity,
     calculate_property_financials,
 )
-from proptally.domain.fixtures.demo_seed import seed_demo_data  # noqa: E402
+from reference_portfolio import seed_reference_portfolio  # noqa: E402
 from proptally.domain.transactions.splits import (  # noqa: E402
     SplitItem,
     apply_transaction_splits,
@@ -212,7 +212,7 @@ def test_record_without_attestation_carries_no_reviewer_identity(cbd2_env):
 
 def test_web_request_threads_the_authenticated_role(owner):
     """The request's membership role reaches the record: an owner self-attestation."""
-    signed_in = owner(demo_seed=True)
+    signed_in = owner(reference_portfolio=True)
     response = signed_in.post(
         "/transactions/split",
         data={
@@ -274,7 +274,7 @@ def _seed_legacy_database(db_path: Path) -> None:
     engine = get_engine(f"sqlite:///{db_path}")
     init_schema(engine)
     with Session(engine) as session:
-        seed_demo_data(session)
+        seed_reference_portfolio(session)
 
 
 def _make_pre_m5(db_path: Path) -> None:

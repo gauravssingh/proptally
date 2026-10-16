@@ -396,7 +396,6 @@ def test_failed_persistence_cleans_up_or_reports_vault_file(tmp_path):
 
 def test_real_data_app_mode_skips_synthetic_demo_seed(tmp_path, monkeypatch, owner):
     database_url = f"sqlite:///{tmp_path / 'real-data.db'}"
-    monkeypatch.setenv("PROPTALLY_DEMO_SEED", "false")
     signed_in = owner(db_url=database_url)
     assert signed_in.client.get("/mortgages").status_code == 200
 

@@ -42,7 +42,7 @@ from proptally.domain.transactions.splits import (
     reclassify_and_repost_transaction,
     SplitItem,
 )
-from proptally.domain.fixtures.demo_seed import seed_demo_data
+from reference_portfolio import seed_reference_portfolio
 
 # Ledger codes owned by the entities this fixture declares. They are allocated
 # from the entity rows on every run (checking, the Visa liability, and each
@@ -586,7 +586,7 @@ def test_10_dashboard_totals_reconciling_to_posted_ledger_balances(session: Sess
     """10. Dashboard totals reconciling to posted ledger balances:
     All metrics on dashboard reconcile to the exact cent with the double-entry general ledger."""
     # Seed complete demo data
-    seed_demo_data(session)
+    seed_reference_portfolio(session)
 
     equity = calculate_portfolio_equity(session)
     fin = calculate_property_financials(session)

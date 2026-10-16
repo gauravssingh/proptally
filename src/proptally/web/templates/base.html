@@ -42,9 +42,9 @@
 
 <a class="pt-skip-link" href="#main-content">Skip to content</a>
 
-{{ shell.appbar(doors, active_property, review_count, is_demo_mode) }}
-{{ shell.drawer(doors, active_page, active_property, review_count, is_demo_mode) }}
-{{ shell.sidebar(doors, active_page, active_property, review_count, is_demo_mode) }}
+{{ shell.appbar(doors, active_property, review_count) }}
+{{ shell.drawer(doors, active_page, active_property, review_count) }}
+{{ shell.sidebar(doors, active_page, active_property, review_count) }}
 
 <main class="pt-main" id="main-content">
     {% if review_count and review_count > 0 %}

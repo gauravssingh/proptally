@@ -59,7 +59,6 @@ class Tenant(SQLModel, table=True):
     id: str = Field(primary_key=True)  # e.g. "tnt_5c81..."
     name: str
     slug: str = Field(unique=True, index=True)
-    is_demo: bool = Field(default=False)
     created_at: datetime = Field(default_factory=utc_now)
 
 

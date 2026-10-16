@@ -6,11 +6,7 @@
 {% block content %}
 {% set header_actions %}
     {% if not properties %}
-    <form method="post" action="/settings/sample-portfolio" class="pt-inline-flex">
-        {{ csrf_field() }}
-        {{ ui.btn("Load a sample portfolio", variant="secondary", size="sm", type="submit", icon_name="sparkline") }}
-    </form>
-    {% endif %}
+        {% endif %}
     {% if can_mutate %}
     {{ ui.btn("Add property", variant="primary", size="sm", icon_name="plus", attrs='data-modal-open="create-property-modal"') }}
     {% endif %}
@@ -38,11 +34,11 @@
     {{ ui.alert(
         variant="info",
         title="This portfolio has no doors yet",
-        text="Add your first property below, then its deposit or card accounts, then any mortgage on it. If you would rather look around first, load the synthetic sample portfolio — it is written into this portfolio only, and can be replaced with your own data at any time."
+        text="Add your first property below, then its deposit or card accounts, then any mortgage on it."
     ) }}
     {{ ui.empty_state(
         "No properties declared",
-        "The dashboard reports on nothing until a door exists. Add one, or load the sample portfolio to see a fully worked example.",
+        "The dashboard reports on nothing until a door exists.",
         action_label=("Add your first property" if can_mutate else none),
         action_href="#",
         action_attrs='data-modal-open="create-property-modal"',

@@ -15,8 +15,10 @@ Usage:
         --source /path/to/phase1.db \
         --out /tmp/migration_validation
 
-The source is expected to be a database created by Phase 1 code. Reproduce one
-with the Phase 1 commit in a worktree:
+The source is expected to be a database created by Phase 1 code, or any real
+single-portfolio database from before the multi-tenant change. Reproduce a Phase 1
+database with that commit in a worktree, and populate it however you like — the
+validator only reads it:
 
     git worktree add /tmp/p1worktree <phase1-commit>
     cd /tmp/p1worktree
@@ -24,12 +26,14 @@ with the Phase 1 commit in a worktree:
         /path/to/repo/.venv/bin/python -c "
 from proptally.db.connection import get_engine
 from proptally.db.schema import init_schema
-from sqlmodel import Session
 from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
-from proptally.domain.fixtures.demo_seed import seed_demo_data
+from sqlmodel import Session
 e = get_engine(); init_schema(e)
 with Session(e) as s:
-    ensure_entity_ledger_accounts(s); seed_demo_data(s)"
+    ensure_entity_ledger_accounts(s)"
+
+The application ships no sample portfolio: a portfolio is built by its owner, so
+populate a validation database through the application or from your own records.
 """
 
 import argparse

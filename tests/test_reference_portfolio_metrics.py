@@ -1,14 +1,20 @@
-"""Tests verifying demo seed integrity and financial metrics accuracy."""
+"""Financial metrics measured on the synthetic reference portfolio.
+
+The reference portfolio lives in the test suite (tests/reference_portfolio.py) because
+the application ships no sample data: a tenant starts empty and is built by its owner.
+This keeps a whole-portfolio check that the hand-computed figures in
+tests/test_custom_portfolio.py complement.
+"""
 
 from sqlmodel import Session, select
 from proptally.db.models import Property, LoanAccount, Transaction, TransactionProcessingState
-from proptally.domain.fixtures.demo_seed import seed_demo_data
+from reference_portfolio import seed_reference_portfolio
 from proptally.domain.accounting.metrics import calculate_portfolio_equity, calculate_property_financials
 
 
-def test_demo_seed_and_metrics(session: Session):
-    """Verifies that demo seeding creates all entities and metrics calculate correctly."""
-    seed_demo_data(session)
+def test_reference_portfolio_metrics(session: Session):
+    """The reference portfolio's entities are created and its metrics compute."""
+    seed_reference_portfolio(session)
 
     # 1. Properties
     props = session.exec(select(Property)).all()

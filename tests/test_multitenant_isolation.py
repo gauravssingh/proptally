@@ -33,7 +33,6 @@ def instance_fixture(tmp_path, monkeypatch):
     app = create_app(
         system_db_url=f"sqlite:///{storage / 'system.db'}",
         storage_root=str(storage),
-        demo_seed=False,
     )
     return app
 

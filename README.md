@@ -86,6 +86,10 @@ owner has their own login and their own portfolio, and no portfolio's data is
 reachable from another's.
 
 ### First run
+A new account starts with an empty portfolio: the standard chart of accounts and the
+generic vendor rules, and nothing else. There is no sample data to clear out — doors,
+accounts, mortgages and opening balances are entered on the setup screen.
+
 The server refuses to bind every interface by default. It listens on
 `127.0.0.1:8080`; to serve a LAN or Tailscale address, set one explicitly:
 
@@ -155,7 +159,6 @@ What is safe to share, and what is not:
 | :--- | :--- |
 | Accounts, portfolios, memberships, invitations, **sessions** | Shared. They live in `storage/system.db`, so a session issued by one worker is honoured by every other, and signing out or changing a password applies everywhere. |
 | Portfolio databases | Shared safely. Each is SQLite in WAL mode, which supports concurrent processes; connections use a 10-second `busy_timeout`, so a writer waits rather than failing. |
-| Start-up demo seeding | Race-safe. If several processes start at once, one seeds and the rest treat it as done (and finish it if it was interrupted). |
 | **Login throttling** | **Per process.** The 5-attempts-per-15-minutes limit is an in-memory counter, so N workers effectively allow N× the attempts. It is a speed bump, not an authorization control; if you need a hard limit under multiple workers, that counter has to move into `system.db` first. |
 | Per-process caches | Multiplied. Each worker keeps its own database handles and caches, so file handles and memory grow with the worker count. |
 | Write throughput | Unchanged. SQLite allows one writer at a time, so extra workers add concurrency for reads and for requests that do not write, not write capacity. |
@@ -188,7 +191,6 @@ proptally/
 │   │   └── tenant_manager.py  # Per-portfolio engine, paths and provisioning
 │   ├── domain/
 │   │   ├── accounting/        # Chart of accounts + allocation, ledger, opening balances, metrics
-│   │   ├── fixtures/          # Synthetic demo portfolio data seeder
 │   │   ├── tax/               # Schedule E workpapers and depreciation
 │   │   └── transactions/      # Splitting, validation and posting-authorization policy
 │   ├── ingestion/             # Statement parsers, ingestion service, hot-folder watcher, CLI
@@ -295,10 +297,13 @@ extracted rate values included 4.990% and 2.500%; these are parser outputs, not
 verified loan terms. Do not approve an extraction solely because its amounts
 appear arithmetically consistent.
 
-Run the web app against that database without synthetic demo fixtures:
+That database predates multi-tenancy. Bring it into the multi-portfolio layout rather
+than pointing the app at it:
 
 ```bash
-PROPTALLY_DB_PATH=storage/client-portfolio.db PROPTALLY_DEMO_SEED=false python main.py
+PYTHONPATH=src python scripts/migrate_to_multitenant.py \
+  --source storage/client-portfolio.db --email you@example.com --keep-source
+# add --apply once the dry run looks right
 ```
 
 The dry-run parses against an in-memory database and does not write to the

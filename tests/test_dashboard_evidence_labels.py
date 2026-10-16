@@ -17,7 +17,7 @@ def client_fixture(owner, tmp_path):
     """A signed-in owner's client, with ``db_url`` for direct database reads."""
     db_path = tmp_path / "labels.db"
     db_url = f"sqlite:///{db_path}"
-    signed_in = owner(db_url=db_url, demo_seed=True)
+    signed_in = owner(db_url=db_url, reference_portfolio=True)
     signed_in.client.db_url = db_url
     return signed_in.client
 

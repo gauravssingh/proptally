@@ -92,7 +92,7 @@ Before multiple users can manage their own portfolios, every hardcoded reference
 | `src/proptally/ingestion/parsers.py:40-53`, `bank_parsers.py:78,145-151,170-171,202,293,346-347,437-438,487-490,521-526`, `service.py:44-53,317-349` | Parsers reject PDFs unless they contain literal account/loan strings (`"0029 1385 9456"`, `"0700000001"`), and `service.py` auto-creates the 3 hardcoded properties. | Parameterize parsers to extract whatever loan number / masked account digits appear in the statement and match against the tenant's registered `LoanAccount` and `FinancialAccount` records. |
 | `src/proptally/domain/transactions/suggest.py:23-46,179-180,247-248,258-259,269-270,483-497` | `DEFAULT_VENDOR_RULES` and `suggest_split_for_transaction` seed tenant-specific rules and hardcode `default_property_id` (`SAXSMA` $\rightarrow$ `prop_tinsley_huntley`, `CARPENTERSVILLE ATM` $\rightarrow$ `prop_cimmaron_pingree`). | Keep client-specific rules in `demo_seed.py` only; seed new tenants exclusively with generic merchant rules (`HOME DEPOT`, `LOWES`, `MENARDS`, `UBER`, `HERTZ`, etc.). |
 | `src/proptally/web/templates/transactions.html:284-343` | Hardcodes account `<option>` values (`acct_bofa_chk_9456`, `acct_bofa_cc_9306`, `acct_apple_card`) and property `<option>` fallbacks rendered when the route supplies no options. | Populate every option list from the tenant's `FinancialAccount` / `Property` rows; delete the static fallback lists so a template can never present another tenant's accounts. |
-| `src/proptally/domain/fixtures/demo_seed.py:36-230` | `seed_demo_data()` writes the three client properties, institutions, accounts, loans, leases, and opening balances with fixed IDs, and `web/app.py:39-41` runs it on every startup by default (`PROPTALLY_DEMO_SEED` default `"true"`). | Convert to an opt-in, tenant-scoped sample portfolio seeded only on explicit request; startup seeding of synthetic fixtures must never run in a multi-tenant deployment. |
+| `src/proptally/domain/fixtures/demo_seed.py:36-230` | `seed_demo_data()` writes the three client properties, institutions, accounts, loans, leases, and opening balances with fixed IDs, and `web/app.py:39-41` runs it on every startup by default (`PROPTALLY_DEMO_SEED` default `"true"`). | Convert to an opt-in, tenant-scoped sample portfolio seeded only on explicit request; startup seeding of synthetic fixtures must never run in a multi-tenant deployment. **Final state: the module left `src/` entirely** — it is `tests/reference_portfolio.py`, test fixture data, and the application ships no sample portfolio at all. |
 | `src/proptally/web/app.py:30-32,80,99` + `src/proptally/db/connection.py:10-13` + `main.py:7-8` | One process-wide engine from `PROPTALLY_DB_PATH` (default `storage/client-portfolio.db`), bound into the module-level `app = create_app()` (`app.py:99`) and the `nav_doors` template global; `main.py` also sets that env default. | Introduce the control-plane engine plus per-tenant engine resolution; remove the module-level default app from the request path. |
 | `src/proptally/domain/accounting/ledger.py:142,227` + `src/proptally/domain/transactions/splits.py:153` | Write `AuditLog.changed_by="system"` inside domain services, so the acting user is not recorded. | Add an explicit `actor_id` parameter to the posting/splitting/reversal service signatures and pass the authenticated user from the route; never let a route set actor implicitly. |
 
@@ -132,7 +132,7 @@ flowchart LR
    * Update `src/proptally/domain/accounting/metrics.py` to query the tenant's active deposit, escrow, card liability, mortgage debt, and clearing codes from `LedgerAccount` / `LoanAccount` / `FinancialAccount` (with fallback to the standard code ranges) instead of `LOAN_PRINCIPAL_CODE`.
    * Update `src/proptally/domain/transactions/splits.py` (`_ledger_code_for_account`, `_resolve_split_account_code`) to read `account.ledger_account_code` and map all rental income to `4010` (retaining `4020` compatibility in `RENTAL_REVENUE_CODES`).
    * Update `src/proptally/web/routes/mortgages.py` and `src/proptally/web/routes/properties.py` to use `loan.principal_ledger_code` and `loan.clearing_ledger_code`, and remove the hardcoded `Tyler J. Saxsma` / `ATM Cash Deposits` dict in `properties.py:187-215` (moving it to data-driven detection from unallocated/posted transactions).
-   * Separate client-specific vendor rules (`vrule_tenant_saxsma`, `vrule_carpentersville_atm`) out of `DEFAULT_VENDOR_RULES` in `suggest.py` into `demo_seed.py`.
+   * Separate client-specific vendor rules (`vrule_tenant_saxsma`, `vrule_carpentersville_atm`) out of `DEFAULT_VENDOR_RULES` in `suggest.py`. They ended up in the test fixture (`tests/reference_portfolio.py`), not in product code: a real owner configures their own through the vendor-rule editor.
 
 #### Verification Gate (M1)
 * **Test-suite impact must be accounted for, not assumed away.** **23 of 29 test files** (`tests/test_*.py`) bind to the hardcoded IDs or static ledger codes being removed, so M1 cannot pass "unchanged". Measured dependencies:
@@ -285,6 +285,19 @@ property, an account and opening balances through the real forms; a POST without
 CSRF token returns 403; a second owner receives 404 for the first owner's property and
 sees only their own portfolio; sign-out revokes the session; two tenant databases exist
 on disk; and the listener is bound to `127.0.0.1` only.
+
+### A brand-new tenant (no sample data)
+Since the application ships no sample portfolio, the empty state *is* the first-run
+experience, so it is verified as one. `tests/test_empty_tenant.py` (7 tests) asserts
+that every screen renders for an empty portfolio, that the figures are zero rather than
+an error, that a new tenant contains no doors, transactions, documents or
+portfolio-specific rules, and then walks the first real workflow — door, operating
+account, card, mortgage with its principal and escrow, dated baseline, first rent
+allocated and posted — through to a Schedule E figure.
+
+The same run against a live server (22 checks) confirmed it end to end, including that
+a new tenant's database holds exactly the standard chart of accounts and nothing else,
+and that the ledger reports the mortgage debt as the principal **once**.
 
 ### Defects found and fixed during end-to-end verification
 
@@ -451,11 +464,13 @@ to reversal.
   in to anything. Sessions pointing at the removed portfolio are moved to one the
   member still has. Nothing is retained, so an owner who wants a copy must export or
   restore from `scripts/backup.sh`.
-* **`PROPTALLY_DEMO_SEED` posture — decided.** Demo seeding defaults off and requires an
-  explicit `PROPTALLY_DEMO_PASSWORD`; enabling it without one reports the mistake and
-  seeds nothing rather than minting a guessable credential. Demo data is also per
-  portfolio and opt-in from the UI, so the global flag has no place in a production
-  deployment and can be dropped whenever it is convenient to remove the code path.
+* **Sample data — removed entirely.** This is a live deployment, so nothing synthetic
+  ships: a new account gets the standard chart of accounts and the generic vendor rules,
+  and an empty portfolio otherwise. Deleted: the start-up seeder and its
+  `PROPTALLY_DEMO_*` variables, the "load a sample portfolio" action on the dashboard
+  and setup screens, the `src/proptally/domain/fixtures/` package, and the DEMO/LIVE
+  chrome in the shell (there is only one mode now). The synthetic portfolio moved to
+  `tests/reference_portfolio.py`, where the tests that need realistic content render it.
 
 * **Multi-worker deployment — decided: supported, single process recommended.**
   Several processes against one storage root work, because the state that must be

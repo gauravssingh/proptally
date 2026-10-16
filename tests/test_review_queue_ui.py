@@ -17,7 +17,7 @@ from proptally.db.models import (
 )
 from proptally.db.schema import init_schema
 from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
-from proptally.domain.fixtures.demo_seed import DEMO_VENDOR_RULES
+from reference_portfolio import REFERENCE_VENDOR_RULES
 from proptally.domain.transactions.suggest import (
     seed_vendor_rules,
     suggest_split_for_transaction,
@@ -28,11 +28,11 @@ def test_auto_suggestion_rules(engine):
     """A portfolio's own rules route its rent deposits; generic merchants stay generic.
 
     A named tenant and a branch-deposit pattern are portfolio data, so they come
-    from the portfolio's rule set (DEMO_VENDOR_RULES) rather than from the engine.
+    from the portfolio's rule set (REFERENCE_VENDOR_RULES) rather than from the engine.
     """
     with Session(engine) as session:
         ensure_entity_ledger_accounts(session)
-        seed_vendor_rules(session, DEMO_VENDOR_RULES)
+        seed_vendor_rules(session, REFERENCE_VENDOR_RULES)
 
         # Tyler Saxsma Zelle rent
         s1 = suggest_split_for_transaction("Zelle payment from TYLER J SAXSMA for rent", 48300, session=session)

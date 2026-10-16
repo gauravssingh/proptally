@@ -20,16 +20,12 @@
     {{ ui.alert(
         variant="info",
         title="This portfolio has no properties",
-        text="Add your own doors, accounts, mortgage loans and opening balances on the portfolio setup screen — everything is editable there afterwards. Or load a synthetic sample portfolio to see a fully worked example with the same screens."
+        text="Add your first door on the portfolio setup screen, then its accounts and any mortgage on it. Everything is editable there afterwards."
     ) }}
     <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-3">
         {{ ui.btn("Set up your portfolio", variant="primary", href="/settings", icon_name="sliders") }}
         {% if can_mutate %}
-        <form method="post" action="/settings/sample-portfolio" class="pt-inline-flex">
-            {{ csrf_field() }}
-            {{ ui.btn("Load a sample portfolio", variant="secondary", type="submit", icon_name="sparkline") }}
-        </form>
-        {% endif %}
+                {% endif %}
     </div>
     <p class="pt-fs-caption pt-text-secondary">
         The sample is written into this portfolio only. Every figure in it is synthetic, and it can be

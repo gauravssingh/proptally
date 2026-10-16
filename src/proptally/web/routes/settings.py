@@ -58,7 +58,6 @@ from proptally.domain.accounting.opening_balances import (
     OpeningAccountBalance,
     record_opening_balances,
 )
-from proptally.domain.fixtures.demo_seed import seed_demo_data
 from proptally.domain.transactions.suggest import seed_vendor_rules
 from proptally.web.auth import AuthorizationError, current_context
 
@@ -279,55 +278,70 @@ def _opening_balance_targets(session: Session) -> list[dict]:
             "property_id": None,
         })
 
-    for loan in session.exec(select(LoanAccount).order_by(LoanAccount.created_at)).all():
-        if loan.principal_ledger_code is not None:
-            targets.append({
-                "field": f"principal_{loan.id}",
-                "label": f"Loan {loan.loan_number} — principal owed",
-                "side": "CREDIT",
-                "code": loan.principal_ledger_code,
-                "property_id": loan.property_id,
-            })
-        if loan.escrow_ledger_code is not None:
-            targets.append({
-                "field": f"escrow_{loan.id}",
-                "label": f"Loan {loan.loan_number} — escrow reserve held",
-                "side": "DEBIT",
-                "code": loan.escrow_ledger_code,
-                "property_id": loan.property_id,
-            })
+    # A loan's principal and escrow reserve are deliberately absent from this dated
+    # baseline: they are stated on the loan itself (see _post_loan_opening_balances),
+    # and a figure with two homes is a figure that can be counted twice.
     return targets
 
 
-def _post_loan_opening_principal(session: Session, loan: LoanAccount, amount_cents: int) -> None:
-    """Records a loan's opening principal as its own opening-balance entry.
+def _post_loan_opening_balances(
+    session: Session,
+    loan: LoanAccount,
+    principal_cents: Optional[int],
+    escrow_cents: Optional[int],
+) -> None:
+    """Records a loan's opening principal and escrow reserve as one opening-balance entry.
 
-    The portfolio's opening balances are one baseline entry keyed by date; a loan
-    declared later cannot share that key, so it gets a key of its own. The balancing
-    difference goes to owner equity exactly as ``record_opening_balances`` plugs it
-    for a whole portfolio.
+    A loan declared after the portfolio's dated baseline cannot share that entry's date
+    key, so it gets a key of its own, and the difference between the liability assumed
+    and the escrow asset acquired goes to owner equity exactly as
+    ``record_opening_balances`` plugs the difference for a whole portfolio.
+
+    Both of the loan's opening figures belong here rather than in the dated baseline.
+    Offering the same balance in two forms is how it gets counted twice: an owner who
+    filled in their mortgage on this screen *and* listed the principal in the baseline
+    would report twice the debt they owe.
     """
+    principal_cents = principal_cents or 0
+    escrow_cents = escrow_cents or 0
+    if principal_cents <= 0 and escrow_cents <= 0:
+        return
+
     entry = create_journal_entry(
         session,
         entry_date=loan.origination_date or date.today(),
         entry_type="OPENING_BALANCE",
-        description=f"Opening principal declared for loan {loan.loan_number}",
+        description=f"Opening balances declared for loan {loan.loan_number}",
         idempotency_key=f"MORTGAGE_OPENING:{loan.id}",
     )
-    add_journal_line(
-        session,
-        entry.id,
-        loan.principal_ledger_code,
-        credit_cents=amount_cents,
-        property_id=loan.property_id,
-    )
-    add_journal_line(
-        session,
-        entry.id,
-        OWNER_EQUITY_CODE,
-        debit_cents=amount_cents,
-        description="Opening mortgage liability assumed",
-    )
+    if principal_cents:
+        add_journal_line(
+            session,
+            entry.id,
+            loan.principal_ledger_code,
+            credit_cents=principal_cents,
+            property_id=loan.property_id,
+        )
+    if escrow_cents:
+        add_journal_line(
+            session,
+            entry.id,
+            loan.escrow_ledger_code,
+            debit_cents=escrow_cents,
+            property_id=loan.property_id,
+        )
+
+    difference = principal_cents - escrow_cents
+    if difference > 0:
+        add_journal_line(
+            session, entry.id, OWNER_EQUITY_CODE,
+            debit_cents=difference, description="Opening mortgage liability assumed",
+        )
+    elif difference < 0:
+        add_journal_line(
+            session, entry.id, OWNER_EQUITY_CODE,
+            credit_cents=-difference, description="Opening escrow reserve acquired",
+        )
     post_journal_entry(session, entry.id)
 
 
@@ -666,8 +680,7 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
             session.flush()
             # Principal, clearing and escrow codes for this loan, allocated as a set.
             ensure_entity_ledger_accounts(session)
-            if opening_principal_cents:
-                _post_loan_opening_principal(session, loan, opening_principal_cents)
+            _post_loan_opening_balances(session, loan, opening_principal_cents, escrow_cents)
             session.commit()
         except _FormError as exc:
             session.rollback()
@@ -794,26 +807,5 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
         session.commit()
         state = "active" if rule.is_active else "paused"
         return _redirect(message=f"Vendor rule {rule.pattern} is now {state}.")
-
-    # --- Sample portfolio -------------------------------------------------
-
-    @router.post("/settings/sample-portfolio", dependencies=mounted)
-    def load_sample_portfolio(session: Session = Depends(get_session_dep)):
-        """Loads the synthetic sample into this portfolio, and only this one.
-
-        The generic, portfolio-independent rules are (re)asserted first, then the
-        sample fixture adds its own portfolio-specific rows. The session is bound to
-        the authenticated portfolio, so the sample can never land anywhere else.
-        """
-        _require_mutation()
-        try:
-            seed_vendor_rules(session)
-            seed_demo_data(session)
-        except PropTallyError as exc:
-            session.rollback()
-            return _redirect(error=f"The sample portfolio could not be loaded: {exc}")
-        return _redirect(
-            message="Sample portfolio loaded. Every figure is synthetic; replace it with your own data."
-        )
 
     return router

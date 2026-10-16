@@ -14,7 +14,7 @@ from proptally.web.routes.properties import get_google_maps_url
 def custom_env(tmp_path, monkeypatch, owner):
     db_file = tmp_path / "test_customizations.db"
     db_url = f"sqlite:///{db_file}"
-    signed_in = owner(db_url=db_url, demo_seed=True)
+    signed_in = owner(db_url=db_url, reference_portfolio=True)
     # Photos live in the portfolio's own store, not a process-wide directory.
     photos_dir = signed_in.app.state.tenant_manager.paths(signed_in.tenant_id).photos
     yield signed_in, db_url, photos_dir

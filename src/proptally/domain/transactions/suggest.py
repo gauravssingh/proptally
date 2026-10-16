@@ -380,7 +380,7 @@ def seed_vendor_rules(session: Session, rules: Optional[List[dict]] = None) -> i
     """Idempotently seeds vendor classification rules.
 
     Defaults to the portfolio-independent merchant rules. A caller seeding a
-    particular portfolio (the demo fixture, or a future portfolio template) passes
+    particular portfolio (a test fixture, or a future portfolio template) passes
     its own list, so no owner's tenant names or door attributions live in the engine.
     """
     rules = DEFAULT_VENDOR_RULES if rules is None else rules

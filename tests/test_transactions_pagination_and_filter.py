@@ -4,7 +4,7 @@
 
 def test_unverified_tenant_presentation_on_property_detail(owner):
     """Test that Tyler J. Saxsma is presented as an unverified tenant when no lease is vaulted."""
-    client = owner(demo_seed=True).client
+    client = owner(reference_portfolio=True).client
     # Note: in demo mode or live, test property_detail for Alder
     resp = client.get("/properties/prop_tinsley_huntley")
     assert resp.status_code == 200
@@ -15,7 +15,7 @@ def test_unverified_tenant_presentation_on_property_detail(owner):
 
 def test_transactions_pagination_and_filtering(owner):
     """Test pagination, search, status, and flow filtering on /transactions."""
-    signed_in = owner(demo_seed=True)
+    signed_in = owner(reference_portfolio=True)
     client = signed_in.client
     # 1. Base register
     resp = client.get("/transactions")
