@@ -234,6 +234,8 @@ proptally/
   * [07. Product & UI/UX Specification](docs/architecture/v2/07_PRODUCT_AND_UI_SPECIFICATION.md)
   * [08. Phased Implementation Roadmap](docs/architecture/v2/08_IMPLEMENTATION_ROADMAP.md)
   * [09. Multi-Tenant Self-Hosted Execution Plan](docs/architecture/v2/09_MULTI_TENANT_EXECUTION_PLAN.md)
+  * [10. Multi-Tenant Principles](docs/architecture/v2/10_MULTI_TENANT_PRINCIPLES.md)
+  * [11. Authentication & Sign-In Flow](docs/architecture/v2/11_AUTHENTICATION_AND_SIGNIN_FLOW.md)
   * [Architecture Decision Records (ADR 001–010)](docs/architecture/v2/adr/)
     * [ADR-009: Database-per-Portfolio Isolation](docs/architecture/v2/adr/ADR-009-database-per-portfolio-isolation.md)
     * [ADR-010: Local, Zero-Egress Authentication](docs/architecture/v2/adr/ADR-010-local-zero-egress-authentication.md)

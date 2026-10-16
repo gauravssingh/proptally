@@ -2,7 +2,7 @@
 
 **Document:** `docs/architecture/v2/09_MULTI_TENANT_EXECUTION_PLAN.md`  
 **Author:** Principal Systems & Financial Architecture  
-**Status:** Draft for Review  
+**Status:** Implemented (Milestones 1–5) — see §5 for implementation status, §8 for decisions taken  
 **Date:** October 2026  
 **Context:** End-to-end technical specification and phased execution plan to transform PropTally from a bespoke single-portfolio deployment into a self-hosted, multi-tenant platform supporting multiple independent users, accounts, logins, and isolated real estate portfolios.
 
@@ -422,7 +422,7 @@ Every file/line citation in §3 was checked against the working tree at the time
 | Missing coupling — process-wide engine | absent | `web/app.py:30-32,80,99`, `db/connection.py:10-13`, `main.py:7-8` | single `PROPTALLY_DB_PATH` engine bound to module-level app |
 | Missing coupling — audit actor | mentioned only as routing concern | `ledger.py:142,227`, `splits.py:153` | `changed_by="system"` written inside domain services |
 | False verification claim | M1: "all existing tests pass without modification" | Explicit 23/29-file impact analysis + rewrite rule | `grep -l` over `tests/*.py` matched 23 files |
-| Unstated dependency | none | M2 now names the missing Argon2/CSRF dependencies | no `argon|passlib|bcrypt|itsdangerous|pwdlib` in `pyproject.toml` |
+| Unstated dependency | none | M2 now names the missing Argon2/CSRF dependencies | none of `argon2`, `passlib`, `bcrypt`, `itsdangerous`, `pwdlib` appear in `pyproject.toml` |
 | Unaddressed network posture | none | M2 deliverable 5 | `main.py:42` defaults `HOST=0.0.0.0`, contradicting `06_SECURITY_AND_DEPLOYMENT.md §2.1` |
 
 ### Decisions taken during implementation

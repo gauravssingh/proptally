@@ -162,3 +162,12 @@ Every action available by pointer is available by keyboard: overlays are opened 
 buttons, closed by Escape and by a named close control, and focus returns to the opener.
 No action is bound to `hover` only — hover reveals, focus reveals equally
 (`.pt-gallery__item:hover, .pt-gallery__item:focus-within`).
+
+**Order follows the task, not the layout.** Focusable controls appear in the document in
+the order somebody completes them, and layout never reorders what the keyboard does: no
+positive `tabindex`, and no link parked inside a label row. On the sign-in form the reset
+link sits *after* the submit — it used to sit beside the password label, which put an escape
+hatch between the two fields the reader actually has to fill in. Where a control is placed
+visually by something other than document order, fix the position in CSS rather than moving
+the control; `tests/` and the live check both read the order as
+`email → password → show-password → Sign in → reset link`.

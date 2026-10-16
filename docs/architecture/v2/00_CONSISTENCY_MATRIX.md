@@ -25,14 +25,14 @@
 | **Escrow Disbursement (Taxes/Ins)** | `03_FINANCIAL_DOMAIN_MODEL.md` §2, §7 | `escrow_movements` ($<0$) & Debit `5020`/`5030`, Credit `1120` | `domain.accounting.ledger.post_journal_entry()` | **Implemented** (Phase 1) | Property P&L & Schedule E Line 16/9 |
 | **Double-Entry Equilibrium & DDL Triggers** | `04_DATABASE_DESIGN.md` §3.4; `ADR-003` | `journal_entries`, `journal_entry_lines` + SQLite triggers | `domain.accounting.ledger.post_journal_entry()` | **Implemented** (Phase 1) | Verified Ledger Invariants |
 | **Reversal Immutability (Compensating Entries)** | `03_FINANCIAL_DOMAIN_MODEL.md` §5 | `journal_entries.reversal_of_id` (Original Header Untouched) | `domain.accounting.ledger.reverse_journal_entry()` | **Implemented** (Phase 1 & 2.1) | Reclassification History & Audit Log |
-| **Transaction Splitting & Validation** | `04_DATABASE_DESIGN.md` §3.3; `ADR-004` | `transaction_splits` ($\sum \text{splits} == |\text{transaction}|$) | `domain.transactions.splits.apply_transaction_splits()` | **Implemented** (Phase 1) | Split Transaction Interactive Modal |
+| **Transaction Splitting & Validation** | `04_DATABASE_DESIGN.md` §3.3; `ADR-004` | `transaction_splits` ($\sum \text{splits} == \lvert\text{transaction}\rvert$) | `domain.transactions.splits.apply_transaction_splits()` | **Implemented** (Phase 1) | Split Transaction Interactive Modal |
 | **Transaction-to-Ledger Posting Engine** | `03_FINANCIAL_DOMAIN_MODEL.md` §5 | `transaction_processing_states.posting_status` | `domain.transactions.splits.post_transaction_to_ledger()` | **Implemented** (Phase 2.1) | Transaction Register & Review Queue |
 | **Client & CPA Governance Gates (CBD-1/CBD-2)**| `05_INGESTION_AND_RECONCILIATION.md` §2.2 | `transactions.requires_client_confirmation` / `requires_cpa_review`; `financial_accounts.mixed_use_status` | `domain.transactions.policy.evaluate_posting_policy()`, enforced by `domain.transactions.splits.post_transaction_to_ledger()` | **Implemented** (Phase 2.1) | Reconciliation Queue & Transaction Register |
 | **Credit-Card Settlement (Transfer Posting)** | `03_FINANCIAL_DOMAIN_MODEL.md` §3 (card funding) | `transactions.counter_account_id`; entry debits card liability `2010`/`2020`, credits the deposit account | `domain.transactions.splits.post_transaction_to_ledger()` (`CARD_SETTLEMENT`) | **Implemented** (Phase 2.1) | Transaction Register (transfer target) & Cash Flow Waterfall |
 | **Posting Authorization Evidence** | `05_INGESTION_AND_RECONCILIATION.md` §2.2 | `posting_authorizations` (per-gate required/supplied flags + timestamps, journal entry, allocation snapshot); append-only via DDL triggers | `domain.transactions.splits.post_transaction_to_ledger()` | **Implemented** (Phase 2.1) | Reconciliation Queue & Transaction Register |
 | **Schema Versioning & Migration Parity** | `04_DATABASE_DESIGN.md` §3.4 | `schema_migrations`; column additions and CHECK-constraint table rebuilds | `db.schema.run_migrations()` | **Implemented** (Phase 2.1) | Verified Ledger Invariants |
 | **Client Demo Web Application** | `07_PRODUCT_AND_UI_SPECIFICATION.md` | FastAPI + Jinja2 + Local Bundled CSS (Zero-Egress) | `proptally.web.*` | **Implemented** (Phase 2.1) | Navigable Web Dashboard |
-| **Multi-Allocation Reconciliation Matcher**| `05_INGESTION_AND_RECONCILIATION.md` §2 | `reconciliation_allocations` ($\sum \text{alloc} \le |\text{source}|$) | `domain.reconciliation.engine.*` | **Planned** (Phase 3) | Multi-Allocation Center |
+| **Multi-Allocation Reconciliation Matcher**| `05_INGESTION_AND_RECONCILIATION.md` §2 | `reconciliation_allocations` ($\sum \text{alloc} \le \lvert\text{source}\rvert$) | `domain.reconciliation.engine.*` | **Planned** (Phase 3) | Multi-Allocation Center |
 | **Document Vault & SHA-256 Deduplication**| `06_SECURITY_AND_DEPLOYMENT.md` §4; `ADR-007` | `documents.file_sha256`, storage vault | `domain.vault.storage.*` | **Planned** (Phase 3) | Ingestion Zone & Provenance Audit |
 | **De Minimis Safe Harbor Gate ($2,500)**| `02_REQUIREMENTS_AND_AMBIGUITIES.md` §2.3 | `transaction_splits.tax_review_status` = `CAPEX_REVIEW` | `domain.tax.rules.evaluate_capex()` | **Planned** (Phase 3) | Tax Center Review Queue |
 | **Deterministic Statement Parsers** | `05_INGESTION_AND_RECONCILIATION.md` §1 | Native parsers for Rocket, PNC, CCM, BoA, Apple Card | `domain.ingestion.parsers.*` | **Planned** (Phase 4) | Ingestion Pipeline |
@@ -44,7 +44,8 @@
 ## 1.1 Platform & Multi-Tenancy Matrix
 
 Authoritative specification for the platform layer introduced by the multi-tenant
-work: `09_MULTI_TENANT_EXECUTION_PLAN.md`, `ADR-009` and `ADR-010`.
+work: `09_MULTI_TENANT_EXECUTION_PLAN.md`, `10_MULTI_TENANT_PRINCIPLES.md`,
+`11_AUTHENTICATION_AND_SIGNIN_FLOW.md`, `ADR-009` and `ADR-010`.
 
 | Platform Concept | Authoritative Definition Document | Database Implementation (Table & Column) | Domain Service & Code Package | Status | User Interface View |
 | :--- | :--- | :--- | :--- | :---: | :--- |
@@ -60,6 +61,9 @@ work: `09_MULTI_TENANT_EXECUTION_PLAN.md`, `ADR-009` and `ADR-010`.
 | **Single-Portfolio → Multi-Tenant Migration** | `09_MULTI_TENANT_EXECUTION_PLAN.md` M5 | Creates the first owner and tenant, relocates the database and vault | `scripts/migrate_to_multitenant.py` | **Implemented** (M5) | Operator CLI (dry-run by default) |
 | **Multi-Portfolio Backup & Restore** | `ADR-008` (consistent backup/DR) | `VACUUM INTO` per database + integrity check, all tenants or one | `scripts/backup.sh`, `scripts/restore.sh` | **Implemented** (M5) | Operator CLI |
 | **Loopback-by-Default Binding** | `06_SECURITY_AND_DEPLOYMENT.md` §2 | — | `main.py` (`_resolve_host()`, `PROPTALLY_ALLOW_WIDE_BIND`) | **Implemented** (M2) | — |
+| **Multi-Tenant Principles (normative rules)** | `10_MULTI_TENANT_PRINCIPLES.md` | Storage topology: control plane for identity, one database per portfolio for ledgers | `web.auth`, `db.tenant_manager`, `db.system_models.SYSTEM_TABLES` | **Implemented** — gaps recorded in its §9 | — |
+| **Invitation Lifecycle (single-use, expiring, withdrawable)** | `10_MULTI_TENANT_PRINCIPLES.md` P20; `11_AUTHENTICATION_AND_SIGNIN_FLOW.md` §3 | `user_invites` (`token_hash`, `expires_at`, `accepted_at`) | `web.auth.create_invite` / `find_invite` / `accept_invite` / `revoke_invite` | **Implemented** — G1–G3 open | `/auth/invite/<token>`; pending list on `/account` |
+| **Sign-In, Reset & First-Run Flow** | `11_AUTHENTICATION_AND_SIGNIN_FLOW.md`; `ADR-010` | `users`, `user_sessions`, `user_invites`, `password_reset_tokens` | `web.routes.auth` (sections at `:166`, `:274`, `:329`, `:409`, `:490`) | **Implemented** | Sign-in, register, invitation, reset, `/account` |
 
 ---
 
