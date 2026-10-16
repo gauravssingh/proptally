@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from uuid import uuid4
@@ -336,8 +337,8 @@ def _prepare_entities(session: Session, data: dict) -> None:
     session.flush()
 
 
-def _copy_to_vault(source: Path, digest: str, vault_dir: Path) -> tuple[Path, bool]:
-    stored_path = vault_dir / digest[:2] / f"{digest}.pdf"
+def _copy_to_vault(source: Path, digest: str, vault_dir: Path, suffix: str = ".pdf") -> tuple[Path, bool]:
+    stored_path = vault_dir / digest[:2] / f"{digest}{suffix}"
     stored_path.parent.mkdir(parents=True, exist_ok=True)
     if stored_path.exists():
         if _sha256(stored_path) != digest:
@@ -367,11 +368,15 @@ def _persist_document(
     extraction: MortgageExtraction | BankStatementExtraction | None,
     *,
     original_filename: str | None = None,
+    document_type: str | None = None,
+    property_id: str | None = None,
+    suffix: str = ".pdf",
 ) -> tuple[Document, str | None]:
-    stored_path, created_vault_file = _copy_to_vault(path, digest, vault_dir)
+    stored_path, created_vault_file = _copy_to_vault(path, digest, vault_dir, suffix)
     document = Document(
         id=str(uuid4()), file_sha256=digest, original_filename=original_filename or path.name,
         storage_path=str(stored_path), file_size_bytes=path.stat().st_size,
+        document_type=document_type, property_id=property_id,
     )
     extraction_id = str(uuid4()) if extraction else None
     try:
@@ -449,6 +454,90 @@ def ingest_folder(folder: Path, session: Session, vault_dir: Path, *, commit: bo
                 item["orphaned_vault_file"] = str(exc.orphaned_vault_file)
             report["items"].append(item)
     return report
+
+
+#: One upload's limit, shared by every screen that accepts a file.
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+#: What the vault will accept, and the media type each suffix is served as.
+VAULT_SUFFIX_TYPES = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+}
+
+
+@dataclass
+class StoredDocument:
+    """The outcome of putting one uploaded file into the vault."""
+
+    document: Document
+    created: bool
+    extraction_id: str | None = None
+    note: str | None = None
+
+
+def store_document(
+    session: Session,
+    vault_dir: Path,
+    *,
+    payload: bytes,
+    original_filename: str,
+    document_type: str | None = None,
+    property_id: str | None = None,
+    parse: bool = True,
+) -> StoredDocument:
+    """Put an uploaded file in this portfolio's vault, and record it.
+
+    Unlike the statement path, this needs no parser to succeed: a lease, an insurance
+    policy or a photograph of a receipt has no extraction, and the vault is where it
+    belongs either way. Content already stored is recognised by its SHA-256 and its
+    existing row comes back with ``created=False`` rather than being written twice.
+
+    A PDF a parser recognises is staged for review, so an upload from the vault and an
+    upload from the statements screen behave the same way.
+    """
+    name = Path(original_filename or "document").name
+    suffix = Path(name).suffix.lower()
+    if suffix not in VAULT_SUFFIX_TYPES:
+        raise ValueError(
+            f"{name}: only PDF and image documents can be stored "
+            f"({', '.join(sorted(VAULT_SUFFIX_TYPES))})."
+        )
+    if not payload:
+        raise ValueError(f"{name}: the file is empty.")
+
+    digest = hashlib.sha256(payload).hexdigest()
+    existing = session.exec(select(Document).where(Document.file_sha256 == digest)).first()
+    if existing is not None:
+        return StoredDocument(document=existing, created=False, note="already in the vault")
+
+    vault_dir.mkdir(parents=True, exist_ok=True)
+    staging = vault_dir / f".upload-{uuid4().hex}{suffix}"
+    staging.write_bytes(payload)
+    try:
+        extraction: MortgageExtraction | BankStatementExtraction | None = None
+        note: str | None = None
+        if parse and suffix == ".pdf":
+            try:
+                extraction = extract_and_resolve(staging, session)
+            except Exception as exc:  # noqa: BLE001 - an unreadable PDF is the uploader's file
+                note = f"stored without extraction: {exc}"
+        document, extraction_id = _persist_document(
+            staging,
+            digest,
+            vault_dir,
+            session,
+            extraction,
+            original_filename=name,
+            document_type=document_type,
+            property_id=property_id,
+            suffix=suffix,
+        )
+    finally:
+        staging.unlink(missing_ok=True)
+    return StoredDocument(document=document, created=True, extraction_id=extraction_id, note=note)
 
 
 def update_extraction(session: Session, extraction_id: str, updates: dict, *, commit: bool = False) -> DocumentExtraction:

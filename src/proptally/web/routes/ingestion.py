@@ -34,6 +34,7 @@ from proptally.db.models import (
 )
 from proptally.ingestion.service import (
     BANK_STATEMENT_TYPES,
+    MAX_UPLOAD_BYTES,
     _persist_document,
     approve_extraction,
     extract_and_resolve,
@@ -43,9 +44,7 @@ from proptally.ingestion.service import (
 )
 from proptally.web.auth import current_context
 
-#: A statement is a PDF, and 50 MB is the limit the deployment plan states for
-#: document uploads (the property-document upload uses the same one).
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+#: A statement is a PDF; the size limit is shared with the document vault.
 PDF_MAGIC = b"%PDF-"
 
 #: Fields an operator may correct. Amounts are entered in dollars and rates in

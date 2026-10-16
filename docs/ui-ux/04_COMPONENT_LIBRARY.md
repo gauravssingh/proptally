@@ -380,7 +380,50 @@ See §E.
 
 ---
 
-## H. Adding a component
+## H. Document navigation (folder explorer)
+
+The vault is navigated rather than filtered. Four components carry that, and they are
+deliberately JS-free: the tree is `<details>`, the breadcrumb is links, and the folder cards
+are links, so a folder can be opened with scripting switched off entirely.
+
+### H1. Explorer — `.pt-explorer`
+
+Two panes as a grid: the folder tree, then the contents of the open folder. One column
+below `900px`, so on a phone the tree sits above the pane it navigates. Panes are ordinary
+`.pt-card` / `.pt-card__body`, so nothing new is styled by this class beyond the columns.
+
+### H2. Folder tree — `.pt-tree`, `.pt-tree__node`, `.pt-tree__summary`, `.pt-tree__link`, `.pt-tree__icon`, `.pt-tree__name`, `.pt-tree__count`, `.pt-tree__group`
+
+* `.pt-tree__node` is a real `<details>`, opened (`open`) when it is the branch you are in;
+  its `<summary>` carries the disclosure triangle, so expansion needs no script.
+* `.pt-tree__link` is one row — icon, name, count — used for the root row, the folder row
+  inside a `<summary>`, and each leaf folder. `.pt-tree__group` indents a node's children
+  behind a divider so depth is visible without a second colour.
+* `.pt-tree__count` is the number of documents the row holds. It follows the active search,
+  the root row included, so the tree never claims more documents than the pane can show.
+* The row for the open folder is marked `is-active` **and** `aria-current="page"`.
+* **Branded for the vault only.** Any screen with a two-level identity (a property, then a
+  kind of thing within it) can reuse it: the row content is a name and a count, nothing
+  document-specific.
+
+### H3. Folder card — `.pt-folders`, `.pt-folder`, `.pt-folder__top`, `.pt-folder__icon`, `.pt-folder__name`, `.pt-folder__meta`
+
+Auto-filling grid of the subfolders of the open folder, each a link showing name plus
+`N documents · size`. Folders come before the file table, the way a file manager lists a
+folder's own subfolders ahead of its files. There is no "current" variant: the card grid
+lists what is *inside* a folder, so the current folder is marked in the tree and breadcrumb.
+
+### H4. Breadcrumb — `.pt-breadcrumb`, `.pt-breadcrumb__link`, `.pt-breadcrumb__here`, `.pt-breadcrumb__sep`
+
+The path back up, one crumb per level of the tree. Every crumb but the last is a link
+(`__link`); the last is the folder you are standing in, so it is text marked `__here` with
+`aria-current="page"` — a link to the page you are on is noise for a keyboard user.
+Separators are `aria-hidden="true"`. Wrapped in `<nav aria-label="Folder path">` so it
+appears in the landmark list as what it is.
+
+---
+
+## I. Adding a component
 
 1. Confirm no existing component covers the pattern; extend a variant instead.
 2. Add the class rules to `components.css` using tokens only (`03`).

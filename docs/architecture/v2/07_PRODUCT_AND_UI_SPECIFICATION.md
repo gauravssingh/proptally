@@ -42,6 +42,9 @@ PropTally
         ├── Transactions Register
         ├── Review Queue   (Badge: Pending count)
         └── Tax & Schedule E
+    └── Documents
+        ├── Document Vault          (folders, search, upload, download)
+        └── Statements & Ingestion  (extraction review, approval and import)
 
 The sidebar and mobile drawer share one navigation source. When the account belongs to
 multiple portfolios, the shell's workspace selector changes only that browser session; a
@@ -117,15 +120,39 @@ new sign-in presents a portfolio chooser rather than silently opening the oldest
 
 ---
 
-### 3.6 Document Vault & In-App Uploader (`/documents`)
-* **Upload Dropzone (Modal & Full Page):**
-  * Supports drag-and-drop of single or batch PDF statements.
-  * Real-time progress bar: Uploading $\rightarrow$ Fingerprinting $\rightarrow$ Extracting $\rightarrow$ Validating.
-  * Ingestion Results Card: Displays detected institution, statement period, total extracted transactions, and status (`COMMITTED` or `NEEDS_REVIEW`).
-* **Vault Document Table:**
-  * List of all archived PDFs, organized by Institution, Account, and Year.
-  * Download button and inline preview viewer.
-  * Re-run extraction or view raw JSON extraction provenance.
+### 3.6 Document Vault (`/documents`)
+Navigated the way a file manager is, not read like a report.
+
+* **Folders are opened, not filtered.** The tree down the left is the model: the vault,
+  then one folder per property (with `Unfiled` for documents not yet assigned to one),
+  then one folder per document type inside it (with `Unclassified` when the type is
+  unknown). Every node shows how many documents it holds. Opening a folder fills the pane
+  on the right with that folder's subfolders *and* its documents — so nothing is hidden a
+  level deeper than the level you are reading, and drilling in is a choice, not a
+  requirement. The open branch is expanded and marked `aria-current="page"`.
+* **The path is the way back up.** A breadcrumb states the open folder and links each
+  parent; the last crumb is the folder you are standing in and is not a link. The tree is
+  plain `<details>`/`<summary>`, so it opens and closes with no script at all.
+* **Search looks across every folder**, deliberately: finding a file should not depend on
+  guessing which folder somebody filed it in. Opening a folder leaves the search behind and
+  searching leaves the folder behind, so neither silently overrides the other. The tree's
+  counts follow the search — the root row included — which makes the tree itself the answer
+  to "where is it?".
+* **Upload is filed by the folder you are in.** The drop zone accepts several files at once
+  (PDF, PNG, JPG, WEBP; 50 MB each) and its Property and Document-type selects arrive
+  pre-filled from the open folder. Content already stored is recognised by its SHA-256 and
+  is never written twice; re-uploading known content still files it against a property or
+  gives it a type, and never overwrites a classification that already exists. The verdict is
+  per file — stored, already in the vault, or rejected with the reason — because those are
+  different outcomes and one summary sentence would hide which happened.
+* **Each file row** offers open (inline PDF or image), download (with the original
+  filename), and — when the parser staged an extraction for it — a link straight to that
+  extraction on the statements screen. Files sit in the portfolio's own vault,
+  content-addressed as `<vault>/<sha[:2]>/<sha><ext>`.
+* **Paging** is per folder, 25/50/100/all, and the folder's count and size are stated above
+  the list so the size of what you are looking at is never a guess.
+* A statement the parser recognises is staged for review exactly as if it had been uploaded
+  on the statements screen, so there is one ingestion path rather than two.
 
 ---
 

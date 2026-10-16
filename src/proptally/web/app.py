@@ -52,6 +52,7 @@ from proptally.web.routes.reconciliation import get_reconciliation_router
 from proptally.web.routes.settings import get_settings_router
 from proptally.web.routes.tax import get_tax_router
 from proptally.web.routes.transactions import get_transactions_router
+from proptally.web.routes.vault import get_vault_router
 
 
 logger = logging.getLogger(__name__)
@@ -233,6 +234,7 @@ def create_app(
         get_tax_router(templates, get_session),
         get_settings_router(templates, get_session),
         get_ingestion_router(templates, get_session),
+        get_vault_router(templates, get_session),
     ]
     for router in protected:
         app.include_router(router, dependencies=[Depends(auth_dep)])

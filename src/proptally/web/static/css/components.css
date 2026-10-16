@@ -2809,3 +2809,266 @@
     border-bottom: var(--pt-border-w) solid var(--pt-divider);
     font-size: var(--pt-fs-supporting);
 }
+
+/* ==========================================================================
+   H. DOCUMENT VAULT
+   --------------------------------------------------------------------------
+   The vault reads as folders first and files second: a folder grid to navigate
+   by, a breadcrumb so the current folder is never in doubt, and a drop zone so
+   upload does not begin with a hidden file input.
+   ========================================================================== */
+
+.pt-breadcrumb {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--pt-space-2);
+    margin-bottom: var(--pt-space-3);
+    font-size: var(--pt-fs-caption);
+    color: var(--pt-text-muted);
+}
+
+.pt-breadcrumb__link {
+    color: var(--pt-text-secondary);
+    text-decoration: none;
+}
+
+.pt-breadcrumb__link:hover {
+    color: var(--pt-accent);
+    text-decoration: underline;
+}
+
+.pt-breadcrumb__link:focus-visible {
+    outline: var(--pt-focus-ring);
+    outline-offset: var(--pt-focus-offset);
+    border-radius: var(--pt-radius-sm);
+}
+
+.pt-breadcrumb__here {
+    color: var(--pt-text);
+    font-weight: var(--pt-fw-semibold);
+}
+
+.pt-breadcrumb__sep {
+    color: var(--pt-text-muted);
+    user-select: none;
+}
+
+.pt-folders {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    gap: var(--pt-space-3);
+}
+
+.pt-folder {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pt-space-1);
+    padding: var(--pt-card-pad);
+    color: inherit;
+    text-decoration: none;
+    background-color: var(--pt-surface);
+    border: var(--pt-border-w) solid var(--pt-border);
+    border-radius: var(--pt-radius-lg);
+    box-shadow: var(--pt-shadow-xs);
+    transition: border-color var(--pt-transition-fast) var(--pt-ease),
+        box-shadow var(--pt-transition-fast) var(--pt-ease);
+}
+
+.pt-folder:hover {
+    border-color: var(--pt-border-strong);
+    box-shadow: var(--pt-shadow-sm);
+}
+
+.pt-folder:focus-visible {
+    outline: var(--pt-focus-ring);
+    outline-offset: var(--pt-focus-offset);
+}
+
+.pt-folder__top {
+    display: flex;
+    align-items: center;
+    gap: var(--pt-space-2);
+}
+
+.pt-folder__icon {
+    display: flex;
+    color: var(--pt-accent);
+}
+
+.pt-folder__name {
+    min-width: 0;
+    font-weight: var(--pt-fw-semibold);
+    color: var(--pt-text);
+    overflow-wrap: anywhere;
+}
+
+.pt-folder__meta {
+    font-size: var(--pt-fs-caption);
+    color: var(--pt-text-muted);
+}
+
+.pt-dropzone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--pt-space-2);
+    padding: var(--pt-space-5);
+    text-align: center;
+    color: var(--pt-text-secondary);
+    background-color: var(--pt-surface-sunken);
+    border: 2px dashed var(--pt-border-strong);
+    border-radius: var(--pt-radius-lg);
+    transition: border-color var(--pt-transition-fast) var(--pt-ease),
+        background-color var(--pt-transition-fast) var(--pt-ease);
+}
+
+.pt-dropzone--over {
+    border-color: var(--pt-accent);
+    background-color: var(--pt-surface-selected);
+}
+
+.pt-dropzone__hint {
+    font-size: var(--pt-fs-caption);
+    color: var(--pt-text-muted);
+}
+
+.pt-dropzone input[type="file"] {
+    font-size: var(--pt-fs-supporting);
+    color: var(--pt-text-secondary);
+}
+
+.pt-filelist {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pt-space-1);
+    width: 100%;
+    margin-top: var(--pt-space-2);
+    font-size: var(--pt-fs-caption);
+    color: var(--pt-text-secondary);
+    text-align: left;
+}
+
+.pt-filelist__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--pt-space-3);
+    padding: var(--pt-space-1) var(--pt-space-2);
+    background-color: var(--pt-surface);
+    border: var(--pt-border-w) solid var(--pt-border);
+    border-radius: var(--pt-radius-sm);
+}
+
+.pt-filelist__name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.pt-filelist__size {
+    flex-shrink: 0;
+    color: var(--pt-text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Two panes, the way a file manager does it: the folder tree, then the contents of
+   the open folder. One column until there is room for two. */
+.pt-explorer {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--pt-space-4);
+    align-items: start;
+}
+
+@media (min-width: 900px) {
+    .pt-explorer {
+        grid-template-columns: 15rem minmax(0, 1fr);
+    }
+}
+
+/* The disclosure row: a native <details> marker, so folders open and close with no
+   script, and the row inside it is the same shape as a leaf folder. */
+.pt-tree__summary {
+    cursor: pointer;
+    border-radius: var(--pt-radius-sm);
+}
+
+.pt-tree__summary:hover {
+    background-color: var(--pt-surface-hover);
+}
+
+.pt-tree__summary:focus-visible {
+    outline: var(--pt-focus-ring);
+    outline-offset: var(--pt-focus-offset);
+}
+
+.pt-tree {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: var(--pt-fs-supporting);
+}
+
+.pt-tree__group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-left: var(--pt-space-3);
+    padding-left: var(--pt-space-2);
+    border-left: var(--pt-border-w) solid var(--pt-divider);
+}
+
+.pt-tree__node > summary {
+    cursor: pointer;
+}
+
+.pt-tree__link {
+    display: flex;
+    align-items: center;
+    gap: var(--pt-space-2);
+    padding: var(--pt-space-1) var(--pt-space-2);
+    border-radius: var(--pt-radius-sm);
+    color: var(--pt-text-secondary);
+    text-decoration: none;
+}
+
+.pt-tree__link:hover {
+    background-color: var(--pt-surface-hover);
+    color: var(--pt-text);
+}
+
+.pt-tree__link:focus-visible {
+    outline: var(--pt-focus-ring);
+    outline-offset: var(--pt-focus-offset);
+}
+
+.pt-tree__link.is-active {
+    background-color: var(--pt-surface-selected);
+    color: var(--pt-text);
+    font-weight: var(--pt-fw-semibold);
+}
+
+.pt-tree__icon {
+    display: flex;
+    flex-shrink: 0;
+    color: var(--pt-text-muted);
+}
+
+.pt-tree__link.is-active .pt-tree__icon {
+    color: var(--pt-accent);
+}
+
+.pt-tree__name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pt-tree__count {
+    margin-left: auto;
+    flex-shrink: 0;
+    font-size: var(--pt-fs-caption);
+    color: var(--pt-text-muted);
+    font-variant-numeric: tabular-nums;
+}

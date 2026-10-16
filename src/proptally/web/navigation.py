@@ -216,6 +216,25 @@ def financial_sections() -> list[NavSection]:
                 ),
             ],
         ),
+        NavSection(
+            label="Documents",
+            items=[
+                NavItem(
+                    label="Document Vault",
+                    short="Vault",
+                    href="/documents",
+                    icon="file_text",
+                    page="documents",
+                ),
+                NavItem(
+                    label="Statements & Ingestion",
+                    short="Statements",
+                    href="/statements",
+                    icon="inbox",
+                    page="statements",
+                ),
+            ],
+        ),
     ]
 
 

@@ -1,7 +1,4 @@
-import hashlib
-import os
 import re
-import shutil
 import urllib.parse
 from datetime import date
 from pathlib import Path
@@ -30,6 +27,7 @@ from proptally.db.models import (
 )
 from proptally.domain.accounting.metrics import calculate_property_financials
 from proptally.domain.transactions.suggest import suggest_split_for_transaction
+from proptally.ingestion.service import MAX_UPLOAD_BYTES, store_document
 from proptally.web.auth import current_context
 from proptally.web.helpers import format_cents, period_label
 
@@ -484,40 +482,24 @@ def get_properties_router(templates, get_session_dep):
         if not file.filename:
             raise HTTPException(status_code=400, detail="No file selected")
 
-        ext = Path(file.filename).suffix.lower()
-        if ext not in (".pdf", ".png", ".jpg", ".jpeg"):
-            raise HTTPException(status_code=400, detail="Only PDF and image documents are permitted.")
-
-        content = await file.read()
-        if len(content) > 50 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="File too large (max 50MB).")
-
-        digest = hashlib.sha256(content).hexdigest()
-        repo_root = Path(__file__).resolve().parents[4]
-        vault_dir = Path(os.environ.get("PROPTALLY_VAULT_DIR", repo_root / "storage" / "documents"))
-        dest_dir = vault_dir / digest[:2]
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest_path = dest_dir / f"{digest}{ext if ext != '.pdf' else '.pdf'}"
-
-        if not dest_path.exists():
-            with dest_path.open("wb") as buffer:
-                buffer.write(content)
-
-        doc = session.exec(select(Document).where(Document.file_sha256 == digest)).first()
-        if not doc:
-            doc = Document(
-                id=str(uuid4()),
-                file_sha256=digest,
+        content = await file.read(MAX_UPLOAD_BYTES + 1)
+        try:
+            stored = store_document(
+                session,
+                current_context().paths.vault,
+                payload=content,
                 original_filename=file.filename,
-                storage_path=str(dest_path),
-                file_size_bytes=len(content),
-                mime_type=file.content_type or ("application/pdf" if ext == ".pdf" else "image/jpeg"),
-                property_id=property_id,
                 document_type=document_type,
+                property_id=property_id,
+                parse=False,
             )
-            session.add(doc)
-            session.flush()
-        else:
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        doc = stored.document
+        if not stored.created:
+            # The bytes are already in this portfolio's vault; the upload still files
+            # them against this door rather than storing the same content twice.
             if not doc.property_id:
                 doc.property_id = property_id
             if not doc.document_type or doc.document_type == "OTHER":
