@@ -58,12 +58,35 @@
     var reduceMotion = window.matchMedia
         && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+    // Leaving a step clears it: no half-typed password survives a step change, a
+    // password revealed with the eye toggle is hidden again, and the previous
+    // verdict goes with it. Hidden inputs (the CSRF token) are left alone.
+    function resetStep(pane) {
+        pane.querySelectorAll("input").forEach(function (input) {
+            if (input.type === "hidden") { return; }
+            input.value = "";
+            input.removeAttribute("aria-invalid");
+        });
+        pane.querySelectorAll("[data-password-toggle]").forEach(function (button) {
+            var field = document.getElementById(button.getAttribute("data-password-toggle"));
+            if (field) { field.type = "password"; }
+            button.setAttribute("aria-pressed", "false");
+            button.setAttribute("aria-label", "Show password");
+        });
+        pane.querySelectorAll(".auth-reveal").forEach(function (note) {
+            note.hidden = true;
+        });
+    }
+
     document.querySelectorAll("[data-pane-toggle]").forEach(function (control) {
         control.addEventListener("click", function (event) {
             var host = document.querySelector("[data-panes]");
             if (!host) { return; }
             var wanted = control.getAttribute("data-pane-toggle");
             event.preventDefault();
+
+            var leaving = host.querySelector("[data-pane]:not([hidden])");
+            if (leaving) { resetStep(leaving); }
 
             var from = host.offsetHeight;
             host.querySelectorAll("[data-pane]").forEach(function (pane) {
