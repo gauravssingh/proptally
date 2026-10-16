@@ -363,8 +363,12 @@
     <span class="pt-empty__icon">{{ icon(icon_name, "lg") }}</span>
     <h3 class="pt-empty__title">{{ title }}</h3>
     {%- if message %}<p class="pt-empty__message">{{ message }}</p>{% endif -%}
-    {%- if action_label and action_href -%}
+    {%- if action_label -%}
+    {%- if action_href -%}
     {{ btn(action_label, variant="neutral", size="sm", href=action_href, attrs=action_attrs) }}
+    {%- else -%}
+    {{ btn(action_label, variant="neutral", size="sm", type="button", attrs=action_attrs) }}
+    {%- endif -%}
     {%- endif -%}
 </div>
 {%- endmacro %}

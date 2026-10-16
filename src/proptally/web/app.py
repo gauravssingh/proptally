@@ -101,7 +101,7 @@ def create_app(
     # a stale cached copy cannot hide a fix (see `helpers.asset_version`).
     templates.env.globals["asset_version"] = asset_version
     templates.env.globals["instance_name"] = (
-        os.environ.get("PROPTALLY_INSTANCE_NAME", "").strip() or "This PropTally instance"
+        os.environ.get("PROPTALLY_INSTANCE_NAME", "").strip() or "PropTally"
     )
     # Shell navigation: static structure plus the doors of the portfolio this
     # request is allowed to see. Read from the request context, never from a

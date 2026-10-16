@@ -111,15 +111,6 @@ ROLE_PICKER_LABELS = {
     ROLE_READ_ONLY: "READ_ONLY — View only",
 }
 
-#: What a signed-in person may do in the currently open portfolio. Do not collapse
-#: `can_work` and `can_administer`: MANAGER can change the books but not administer people.
-ROLE_SUMMARIES = {
-    ROLE_OWNER: "Portfolio administration",
-    ROLE_MANAGER: "Bookkeeping",
-    ROLE_CPA_REVIEWER: "Bookkeeping + review",
-    ROLE_READ_ONLY: "Read only",
-}
-
 
 class AuthenticationRequired(Exception):
     """Raised when a request has no valid session. Rendered as a redirect to /auth/login."""

@@ -19,8 +19,6 @@
    action the app cannot carry out (§1: no dead affordances).
    --------------------------------------------------------------------------- #}
 
-{% set who = current_context() %}
-
 {% set section_nav %}
 <nav class="pt-segmented" aria-label="Administration sections">
     {% for key, label in account_sections %}
@@ -37,18 +35,9 @@
 {% endif %}
 {% endset %}
 
-{% set header_meta %}
-{{ ui.badge(
-    who.role ~ " — " ~ role_summary,
-    variant=("success" if context.can_administer else "neutral"),
-    upper=true
-) }}
-{% endset %}
-
 {% call ui.page_header(
     "Administration",
-    "People, status and backup for " ~ context.tenant.name ~ ".",
-    meta=header_meta
+    "People, status and backup for " ~ context.tenant.name ~ "."
 ) %}
     <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-2">
         {{ section_nav }}
@@ -226,7 +215,9 @@
         {% else %}
         {{ ui.empty_state(
             "No invitations outstanding",
-            "Every invitation sent from this portfolio has been accepted, withdrawn or expired. Invite somebody from the button above."
+            "Every invitation sent from this portfolio has been accepted, withdrawn or expired.",
+            action_label="Invite somebody",
+            action_attrs='data-modal-open="invite-member-modal"'
         ) }}
         {% endif %}
     {{ ui.section_close() }}

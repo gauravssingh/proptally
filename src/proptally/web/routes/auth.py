@@ -31,7 +31,6 @@ from proptally.web.auth import (
     ROLES,
     ROLE_DESCRIPTIONS,
     ROLE_PICKER_LABELS,
-    ROLE_SUMMARIES,
     AuthenticationDependency,
     LoginRateLimiter,
     NoActivePortfolio,
@@ -492,7 +491,6 @@ def get_auth_router(
                     {"value": role, "label": ROLE_PICKER_LABELS[role]}
                     for role in ROLES if role in INVITABLE_ROLES
                 ],
-                "role_summary": ROLE_SUMMARIES.get(context.role, "Portfolio member"),
                 "role_capabilities": ROLE_CAPABILITIES,
                 # Surfaced so the screen can explain why a control is unavailable rather
                 # than let it fail when used: the portfolio must keep an owner.

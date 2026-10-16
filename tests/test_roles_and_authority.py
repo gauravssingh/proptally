@@ -147,8 +147,7 @@ def test_a_manager_does_the_bookkeeping_but_cannot_administer(owner, monkeypatch
     account_page = manager.client.get("/account").text
     assert "Only an owner can invite people or change roles" in account_page
     assert "People with access" in account_page, "a manager can still see who is in the portfolio"
-    assert "MANAGER — Bookkeeping" in account_page
-    assert "MANAGER — read only" not in account_page
+    assert "MANAGER" in account_page, "the access list names the member's role"
 
 
 def test_a_manager_cannot_authorize_on_the_clients_behalf(owner, monkeypatch):

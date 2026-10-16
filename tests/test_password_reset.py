@@ -93,7 +93,8 @@ def test_invite_only_sign_in_identifies_the_installation_and_access_path(owner, 
     with TestClient(account.app) as anonymous:
         page = anonymous.get("/auth/login").text
 
-    assert "Sign in to Nathan Property Office" in page
+    assert "Nathan Property Office" in page
+    assert "Your portfolio is isolated on this host" in page
     assert "invite-only" in page
     assert "Ask a portfolio owner for an invitation link" in page
     assert "Create a portfolio" not in page

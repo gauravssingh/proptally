@@ -580,12 +580,70 @@
     min-height: 100dvh;
     display: grid;
     place-items: center;
+    align-content: center;
     padding: var(--pt-space-8) var(--pt-space-4);
 }
 
 .pt-auth__card {
     width: 100%;
     max-width: 30rem;
+}
+
+/* The unauthenticated pages carry the same mark as the application shell, so
+   signing in reads as the same product rather than an unrelated form. */
+.pt-auth__lockup {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--pt-space-3);
+    margin-bottom: var(--pt-space-5);
+}
+
+.pt-auth__instance {
+    font-size: var(--pt-fs-section);
+    font-weight: var(--pt-fw-bold);
+}
+
+/* Why the account exists and the two ways out of a failed sign-in. A divided
+   footer rather than loose caption text, so it reads as part of the card. */
+.pt-auth__footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--pt-space-2) var(--pt-space-4);
+    margin-top: var(--pt-space-5);
+    padding-top: var(--pt-space-4);
+    border-top: var(--pt-border-w) solid var(--pt-border);
+    font-size: var(--pt-fs-caption);
+}
+
+/* --- A9. Role legend (administration) ---------------------------------- */
+/* One row per role: the role, then what it may do, in the same words the
+   application enforces. Replaces a capabilities grid that made the reader
+   scan four columns to answer one question. */
+.pt-role-legend {
+    display: grid;
+    gap: var(--pt-space-4);
+}
+
+.pt-role-legend__row {
+    display: grid;
+    grid-template-columns: 14rem minmax(0, 1fr);
+    gap: var(--pt-space-4);
+    align-items: baseline;
+}
+
+.pt-role-legend__capabilities {
+    color: var(--pt-text-secondary);
+    font-size: var(--pt-fs-supporting);
+}
+
+@media (max-width: 720px) {
+    .pt-role-legend__row {
+        grid-template-columns: 1fr;
+        gap: var(--pt-space-1);
+    }
 }
 
 /* ==========================================================================

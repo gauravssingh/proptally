@@ -4,7 +4,7 @@
 {{ ui.card_open() }}
 <h1>Sign in</h1>
 <p class="pt-fs-supporting pt-text-secondary">
-    Sign in to {{ instance_name }}. Your portfolio is isolated on this host.
+    Your portfolio is isolated on this host.
 </p>
 {% if error %}{{ ui.alert(variant="error", title="Could not sign in", text=error) }}{% endif %}
 
@@ -22,13 +22,13 @@
     </div>
 </form>
 
-<div class="pt-stack pt-gap-2 pt-fs-caption">
+<div class="pt-auth__footer">
     {% if registration_open %}
     <span>No account yet? <a href="/auth/register">Create a portfolio</a>.</span>
     {% else %}
     <span>This installation is invite-only. Ask a portfolio owner for an invitation link.</span>
     {% endif %}
-    <span><a href="/auth/reset">Forgot your password?</a></span>
+    <a href="/auth/reset">Forgot your password?</a>
 </div>
 {{ ui.card_close() }}
 {% endblock %}
