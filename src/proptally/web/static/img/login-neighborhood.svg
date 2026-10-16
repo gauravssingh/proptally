@@ -221,8 +221,11 @@
   <!-- ========================================================================= -->
   <g id="highlighted-property-1-sfh" filter="url(#activeHouseShadow)">
     <polygon points="48,382 88,332 88,554 48,538" fill="#C6AE8E"/>
-    <rect x="62" y="395" width="12" height="24" fill="url(#activeWindowGrad)" stroke="#F8FAFC" stroke-width="1.5" transform="skewY(-14)"/>
-    <rect x="62" y="458" width="12" height="24" fill="url(#activeWindowGrad)" stroke="#F8FAFC" stroke-width="1.5" transform="skewY(-14)"/>
+    <!-- Side-wall windows. Same polygon form as the townhomes': these were rects
+         skewed about the document origin, which shifts them by x*tan(14) and so
+         moves them if the house ever moves. Coordinates are the rendered ones. -->
+    <polygon points="62,379.5 74,376.6 74,400.6 62,403.5" fill="url(#activeWindowGrad)" stroke="#F8FAFC" stroke-width="1.5"/>
+    <polygon points="62,442.5 74,439.6 74,463.6 62,466.5" fill="url(#activeWindowGrad)" stroke="#F8FAFC" stroke-width="1.5"/>
 
     <rect x="88" y="362" width="188" height="196" fill="#E8D8C0"/>
     <polygon points="182,362 234,312 286,362 286,558 182,558" fill="#F2E5D2"/>
@@ -277,8 +280,11 @@
   <!-- ========================================================================= -->
   <g id="highlighted-property-2-townhomes" filter="url(#activeHouseShadow)">
     <polygon points="325,408 358,376 358,532 325,524" fill="#8D99AE"/>
-    <rect x="336" y="424" width="10" height="22" fill="url(#activeWindowGrad)" stroke="#F8FAFC" stroke-width="1.2" transform="skewY(-12)"/>
-    <rect x="336" y="472" width="10" height="22" fill="url(#activeWindowGrad)" stroke="#F8FAFC" stroke-width="1.2" transform="skewY(-12)"/>
+    <!-- Side-wall windows, tilted by the drawing's side-face perspective (-14deg,
+         the same shear the single-family home's side windows use) rather than by
+         the wall's eave, which is the roof rake and reads as a skew. -->
+    <polygon points="336,424 346,421.5 346,443.5 336,446" fill="url(#activeWindowGrad)" stroke="#F8FAFC" stroke-width="1.2"/>
+    <polygon points="336,472 346,469.5 346,491.5 336,494" fill="url(#activeWindowGrad)" stroke="#F8FAFC" stroke-width="1.2"/>
 
     <rect x="358" y="404" width="166" height="132" fill="#C8B8A6"/>
     <polygon points="392,408 424,376 456,408 456,536 392,536" fill="#D8C8B4"/>
