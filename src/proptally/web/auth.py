@@ -80,13 +80,38 @@ UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _HASHER = PasswordHasher()
 
 
-#: What each role may do, in the words the interface uses.
 ROLE_DESCRIPTIONS = {
-    ROLE_OWNER: "Everything, including people, invitations, export and removal.",
-    ROLE_MANAGER: "Does the bookkeeping: imports, allocations, posting and setup. "
-                  "Cannot manage people or authorize on the owner's behalf.",
-    ROLE_CPA_REVIEWER: "Read, plus recording the external review a deduction requires.",
-    ROLE_READ_ONLY: "Read only.",
+    ROLE_OWNER: (
+        "Administer people and invitations, do the bookkeeping, authorize on the client's "
+        "behalf, export the portfolio and remove it."
+    ),
+    ROLE_MANAGER: (
+        "Do bookkeeping and portfolio setup: import statements, allocate and post "
+        "transactions, and manage properties, accounts and loans. Cannot manage people or "
+        "provide the client's own confirmation."
+    ),
+    ROLE_CPA_REVIEWER: (
+        "Do bookkeeping as needed and record a verified external review. Cannot manage "
+        "people or provide the client's own confirmation."
+    ),
+    ROLE_READ_ONLY: "Read portfolio data only; cannot change it or export the portfolio.",
+}
+
+#: Short, scannable labels for the role picker. Full descriptions are shown on the
+#: invitation-acceptance page and the capabilities matrix.
+ROLE_PICKER_LABELS = {
+    ROLE_MANAGER: "MANAGER — Bookkeeping + setup",
+    ROLE_CPA_REVIEWER: "CPA_REVIEWER — Bookkeeping + verified review",
+    ROLE_READ_ONLY: "READ_ONLY — View only",
+}
+
+#: What a signed-in person may do in the currently open portfolio. Do not collapse
+#: `can_work` and `can_administer`: MANAGER can change the books but not administer people.
+ROLE_SUMMARIES = {
+    ROLE_OWNER: "Portfolio administration",
+    ROLE_MANAGER: "Bookkeeping",
+    ROLE_CPA_REVIEWER: "Bookkeeping + review",
+    ROLE_READ_ONLY: "Read only",
 }
 
 
@@ -689,12 +714,11 @@ def accept_invite(
 
 
 def issue_password_reset(control_engine: Engine, email: str) -> Optional[str]:
-    """Creates a reset token and returns it for out-of-band delivery.
+    """Creates a reset token for the local operator to deliver out of band.
 
-    Returns None when no such account exists, and the caller must render the same
-    response either way so the endpoint cannot be used to enumerate accounts. The
-    token is returned rather than emailed because this deployment has no mail
-    transport by design; the operator hands it over (see the deployment guide).
+    Returns ``None`` when no such account exists. This helper must only be called from an
+    operator-controlled path (currently ``scripts/issue_password_reset.py``), never from an
+    unauthenticated web endpoint: the returned token can change the account's password.
     """
     with Session(control_engine) as session:
         user = session.exec(select(User).where(User.email == normalise_email(email))).first()

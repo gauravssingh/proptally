@@ -16,6 +16,13 @@
 ) %}{% endcall %}
 
 {% if error %}{{ ui.alert(variant="error", title="Not available", text=error) }}{% endif %}
+{% if choose_portfolio %}
+{{ ui.alert(
+    variant="info",
+    title="Choose a portfolio",
+    text="This account belongs to more than one portfolio. Choose which one to open before continuing."
+) }}
+{% endif %}
 
 <div class="pt-stack pt-gap-6">
     {{ ui.section_open(
@@ -59,11 +66,16 @@
                     </td>
                     <td class="pt-table__actions">
                         <div class="pt-inline-flex pt-gap-2">
-                            {% if portfolio.tenant_id != context.tenant.id %}
+                            {% if portfolio.tenant_id != context.tenant.id or choose_portfolio %}
                             <form method="post" action="/portfolios/{{ portfolio.tenant_id }}/open" class="pt-inline-flex">
                                 {{ csrf_field() }}
-                                {{ ui.btn("Open", variant="subtle", size="sm", type="submit",
-                                          title="Make this the portfolio every other screen reports on") }}
+                                <input type="hidden" name="return_to" value="{{ return_to }}">
+                                {{ ui.btn(
+                                    "Continue" if portfolio.tenant_id == context.tenant.id else "Open",
+                                    variant=("primary" if choose_portfolio and portfolio.tenant_id == context.tenant.id else "subtle"),
+                                    size="sm", type="submit",
+                                    title="Open this portfolio as the active workspace"
+                                ) }}
                             </form>
                             {% endif %}
                             {% if portfolio.can_export %}

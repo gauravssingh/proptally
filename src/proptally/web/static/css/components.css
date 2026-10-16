@@ -70,11 +70,48 @@
     border-bottom: var(--pt-border-w) solid var(--pt-border-chrome);
 }
 
+/* One persistent workspace selector in the sidebar and drawer. It changes only the
+   session's active portfolio; it is not the property/door selector in the app bar. */
+.pt-workspace-switcher {
+    padding: 0 var(--pt-space-4) var(--pt-space-3);
+}
+
+.pt-workspace-switcher__label {
+    display: block;
+    margin-bottom: var(--pt-space-1);
+    color: var(--pt-text-on-dark-muted);
+    font-size: var(--pt-fs-caption);
+}
+
+.pt-workspace-switcher select,
+.pt-workspace-switcher__select {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: var(--pt-btn-h-sm);
+    padding: var(--pt-space-1) var(--pt-space-2);
+    background-color: var(--pt-navy-800);
+    background-image: none;
+    color: var(--pt-text-on-dark);
+    border-color: var(--pt-navy-700);
+    font-size: var(--pt-fs-caption);
+    appearance: auto;
+}
+
+.pt-workspace-switcher select:focus-visible {
+    outline: 2px solid var(--pt-accent-on-dark);
+    outline-offset: 2px;
+}
+
 .pt-brand {
     display: flex;
     align-items: center;
     gap: var(--pt-space-3);
+    min-width: 0;
     color: var(--pt-text-inverse);
+}
+
+.pt-brand > span:last-child {
+    min-width: 0;
 }
 
 .pt-brand:hover {
@@ -106,9 +143,13 @@
 
 .pt-brand__meta {
     display: block;
+    max-width: 100%;
+    overflow: hidden;
     font-family: var(--pt-font-mono);
     font-size: var(--pt-fs-caption);
     color: var(--pt-text-on-dark-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .pt-sidebar__footer {

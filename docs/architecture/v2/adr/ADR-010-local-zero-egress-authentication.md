@@ -47,8 +47,10 @@ We select **local, zero-egress authentication** (option 2).
 ### Positive
 * **No egress and no third-party dependency.** No account data, email address or login
   event leaves the host, consistent with ADR-006 and the privacy premise of the product.
-* **No mail transport required.** Password reset surfaces a single-use token to the
-  operator instead of emailing it; the deployment needs no SMTP configuration.
+* **No mail transport required.** Password reset is issued by a local operator command
+  (`scripts/issue_password_reset.py`) and handed to the verified account holder out of
+  band. The public reset page never creates or displays a token; local host access is the
+  recovery authority when no mail transport is configured.
 * **No default credentials ship.** The bootstrap path replaces a seeded admin password,
   which is the most common way a self-hosted financial app is compromised.
 * **CSRF protection is structural**, not per-route discipline.

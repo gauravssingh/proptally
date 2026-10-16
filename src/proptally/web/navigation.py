@@ -17,6 +17,35 @@ from typing import Optional
 from sqlmodel import Session, select
 
 from proptally.db.models import Property
+from proptally.db.system_models import Tenant, TenantMembership
+
+
+@dataclass(frozen=True)
+class PortfolioNavItem:
+    tenant_id: str
+    name: str
+    role: str
+    is_active: bool
+
+
+def get_nav_portfolios(engine, user_id: str, active_tenant_id: str) -> list[PortfolioNavItem]:
+    """The signed-in person's portfolio switcher; never a process-global portfolio list."""
+    with Session(engine) as session:
+        memberships = session.exec(
+            select(TenantMembership, Tenant)
+            .join(Tenant, Tenant.id == TenantMembership.tenant_id)
+            .where(TenantMembership.user_id == user_id)
+            .order_by(TenantMembership.created_at)
+        ).all()
+    return [
+        PortfolioNavItem(
+            tenant_id=membership.tenant_id,
+            name=tenant.name,
+            role=membership.role,
+            is_active=tenant.id == active_tenant_id,
+        )
+        for membership, tenant in memberships
+    ]
 
 
 @dataclass(frozen=True)
@@ -88,11 +117,42 @@ def get_nav_doors(engine) -> list[Property]:
         return []
 
 
+def get_nav_portfolios(engine, user_id: str, active_tenant_id: str) -> list[PortfolioNavItem]:
+    """Only the signed-in person's memberships, with the active workspace marked."""
+    try:
+        with Session(engine) as session:
+            rows = session.exec(
+                select(TenantMembership, Tenant)
+                .join(Tenant, Tenant.id == TenantMembership.tenant_id)
+                .where(TenantMembership.user_id == user_id)
+                .order_by(TenantMembership.created_at)
+            ).all()
+    except Exception:  # noqa: BLE001 - a broken switcher must not blank the shell
+        return []
+    return [
+        PortfolioNavItem(membership.tenant_id, tenant.name, membership.role,
+                         tenant.id == active_tenant_id)
+        for membership, tenant in rows
+    ]
+
+
 def primary_sections() -> list[NavSection]:
-    """Sidebar/drawer sections above the door list."""
+    """Workspace destinations, then destinations scoped to the open portfolio."""
     return [
         NavSection(
-            label="Portfolio",
+            label="Workspaces",
+            items=[
+                NavItem(
+                    label="All Portfolios",
+                    short="Portfolios",
+                    href="/portfolios",
+                    icon="scale",
+                    page="portfolios",
+                ),
+            ],
+        ),
+        NavSection(
+            label="Current portfolio",
             items=[
                 NavItem(
                     label="Portfolio Overview",
@@ -100,13 +160,6 @@ def primary_sections() -> list[NavSection]:
                     href="/",
                     icon="home",
                     page="dashboard",
-                ),
-                NavItem(
-                    label="All Portfolios",
-                    short="Portfolios",
-                    href="/portfolios",
-                    icon="scale",
-                    page="portfolios",
                 ),
                 NavItem(
                     label="Administration",

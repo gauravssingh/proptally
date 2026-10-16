@@ -147,6 +147,8 @@ def test_a_manager_does_the_bookkeeping_but_cannot_administer(owner, monkeypatch
     account_page = manager.client.get("/account").text
     assert "Only an owner can invite people or change roles" in account_page
     assert "People with access" in account_page, "a manager can still see who is in the portfolio"
+    assert "MANAGER — Bookkeeping" in account_page
+    assert "MANAGER — read only" not in account_page
 
 
 def test_a_manager_cannot_authorize_on_the_clients_behalf(owner, monkeypatch):
@@ -228,6 +230,8 @@ def test_a_read_only_member_can_still_manage_their_own_account(owner, monkeypatc
     viewer = owner(app=keeper.app, email="viewer@example.com",
                    password="viewer-password-1", portfolio_name="Viewer Portfolio")
     _invite_and_accept(keeper, viewer, ROLE_READ_ONLY, email="viewer@example.com")
+    signin_page = viewer.client.get("/account?section=signin").text
+    assert "Changing it signs out every session, including this one" in signin_page
 
     changed = viewer.post("/account/password", {
         "current_password": "viewer-password-1", "new_password": "a-new-password-22",

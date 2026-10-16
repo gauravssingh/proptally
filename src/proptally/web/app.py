@@ -95,6 +95,9 @@ def create_app(
     # Stylesheets are fetched with a version query, so a changed file is a changed URL and
     # a stale cached copy cannot hide a fix (see `helpers.asset_version`).
     templates.env.globals["asset_version"] = asset_version
+    templates.env.globals["instance_name"] = (
+        os.environ.get("PROPTALLY_INSTANCE_NAME", "").strip() or "This PropTally instance"
+    )
     # Shell navigation: static structure plus the doors of the portfolio this
     # request is allowed to see. Read from the request context, never from a
     # process-wide engine, so one portfolio's doors can never appear in another's
@@ -103,6 +106,16 @@ def create_app(
     templates.env.globals["nav_doors"] = lambda: (
         navigation.get_nav_doors(current_context().engine) if current_context() else []
     )
+
+    def _nav_portfolios():
+        context = current_context()
+        if context is None:
+            return []
+        return navigation.get_nav_portfolios(
+            control_engine, context.user.id, context.tenant.id
+        )
+
+    templates.env.globals["nav_portfolios"] = _nav_portfolios
     templates.env.globals["current_context"] = current_context
     templates.env.globals["csrf_token_value"] = lambda: (
         current_context().csrf_token if current_context() else ""

@@ -34,16 +34,17 @@ behaviour is a requirement, not a suggestion.
 | Component | Macro / class | Purpose |
 | :--- | :--- | :--- |
 | Application shell | `base.html` + `.pt-shell` | Chrome beside canvas; one layout for every screen. |
-| Sidebar | `shell.sidebar(doors, active_page, active_property, review_count, is_demo)` | Fixed 256px navigation at `≥1024px`. |
-| Top environment strip | `shell.topbar(is_demo)` | Demo/live posture and locality statement. |
-| Mobile app bar | `shell.appbar(doors, active_property, review_count, is_demo)` | Menu, brand, mode badge, door switcher, queue bell. |
-| Drawer | `shell.drawer(...)` | Same navigation as the sidebar, one markup source. |
+| Sidebar | `shell.sidebar(doors, active_page, active_property, review_count)` | Fixed 256px navigation at `≥1024px`, grouped into Workspaces and Current portfolio; the shell names the active portfolio and shows a membership-scoped switcher when there is more than one. |
+| Top environment strip | `shell.topbar()` | Deployment posture and locality statement. |
+| Workspace selector | `shell.workspace_switcher(id)` | Membership-scoped native select in the sidebar and drawer. It switches the active portfolio for this session only; the current portfolio's name is also visible in the brand. |
+| Mobile app bar | `shell.appbar(doors, active_property, review_count)` | Menu, brand with active portfolio name, mode badge, current-portfolio door switcher, queue bell. |
+| Drawer | `shell.drawer(...)` | Same navigation and workspace switcher as the sidebar, one markup source. |
 | Bottom navigation | `shell.bottomnav(active_page, active_property, review_count)` | Five highest-frequency destinations. |
 | Page header | `ui.page_header(title, subtitle, meta)` | Title + optional meta badges; caller supplies actions. |
 | Section card | `ui.section_open/close` | Card with title, subtitle, actions, flush body. |
 | Content container | `.pt-content` | 1280px cap, tokenised padding, 20px rhythm. |
 | Centred single-column layout | `.pt-auth` + `.pt-auth__card` | Standalone shell for the screens shown before a portfolio context exists: sign-in, register, invitation acceptance, password reset. `auth_base.html` provides it; the screens inside it are ordinary cards, fields and buttons from this library. |
-| Account row | `shell.account_controls()` (`.pt-account`, `.pt-account__identity`, `.pt-account__name`, `.pt-account__meta`) | Who is signed in, at the foot of the sidebar and of the drawer: a `.pt-avatar` monogram, the name, a muted second line (`ROLE · email`), and `ui.icon_btn("Sign out", "logout", variant="chrome")` beside it. The row itself links to `/account`; the sign-out control is a separate control, never nested in that link. |
+| Account row | `shell.account_controls()` (`.pt-account`, `.pt-account__identity`, `.pt-account__name`, `.pt-account__meta`) | At the foot of the sidebar and drawer: monogram, name, muted `ROLE · email`, and a separate sign-out icon control. The identity links to personal sign-in settings (`/account?section=signin`); tenant Administration is a separate navigation destination. |
 | Avatar | `.pt-avatar` (+ `--pt-avatar-size`) | Monogram circle for a person: initials, on the on-dark ramp so it reads on the chrome. A self-hosted instance has no photos to fall back on, so the initials are the image. |
 
 **Required data.** `doors` is a `Property` sequence (from `navigation.get_nav_doors`);

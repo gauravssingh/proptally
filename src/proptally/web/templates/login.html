@@ -3,8 +3,9 @@
 {% block card %}
 {{ ui.card_open() }}
 <h1>Sign in</h1>
-<p class="pt-fs-supporting pt-text-secondary">Self-hosted portfolio finance. Your data stays on this host.</p>
-
+<p class="pt-fs-supporting pt-text-secondary">
+    Sign in to {{ instance_name }}. Your portfolio is isolated on this host.
+</p>
 {% if error %}{{ ui.alert(variant="error", title="Could not sign in", text=error) }}{% endif %}
 
 <form method="post" action="/auth/login">
@@ -25,7 +26,7 @@
     {% if registration_open %}
     <span>No account yet? <a href="/auth/register">Create a portfolio</a>.</span>
     {% else %}
-    <span>Accounts on this instance are created by invitation or by the operator.</span>
+    <span>This installation is invite-only. Ask a portfolio owner for an invitation link.</span>
     {% endif %}
     <span><a href="/auth/reset">Forgot your password?</a></span>
 </div>

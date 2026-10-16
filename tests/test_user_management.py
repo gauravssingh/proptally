@@ -18,6 +18,7 @@ from proptally.db.system_models import (
     INVITABLE_ROLES,
     ROLES,
     ROLE_CPA_REVIEWER,
+    ROLE_MANAGER,
     ROLE_OWNER,
     ROLE_READ_ONLY,
 )
@@ -257,6 +258,7 @@ def test_the_account_screen_and_sign_out_are_reachable_from_the_shell(owner):
 
     dashboard = keeper.client.get("/").text
     assert 'href="/account"' in dashboard or "/account" in dashboard, "account must be linked"
+    assert 'href="/account?section=signin"' in dashboard, "the identity row must lead to personal sign-in settings"
     assert 'action="/auth/logout"' in dashboard, "sign out must be reachable without a URL"
     assert "Sign out" in dashboard
 
@@ -294,10 +296,31 @@ def test_the_role_controls_offer_exactly_the_roles_they_may_hand_out(owner, monk
     page = keeper.client.get("/account").text
 
     invite_form = page.split('id="invite-member-modal"', 1)[1].split("</form>", 1)[0]
-    assert tuple(re.findall(r'<option value="([A-Z_]+)"', invite_form)) == INVITABLE_ROLES, (
+    invite_options = dict(re.findall(r'<option value="([A-Z_]+)">(.*?)</option>', invite_form))
+    assert tuple(invite_options) == INVITABLE_ROLES, (
         "the invitation form must offer exactly the roles an invitation may carry"
     )
+    assert "Bookkeeping + setup" in invite_options[ROLE_MANAGER]
+    assert "verified review" in invite_options[ROLE_CPA_REVIEWER]
+    assert "View only" in invite_options[ROLE_READ_ONLY]
 
+    manager_invite = keeper.post(
+        "/account/invites", {"email": "manager@example.com", "role": ROLE_MANAGER},
+        follow_redirects=False,
+    )
+    manager_token = re.search(r"invite_token=([A-Za-z0-9_-]+)", manager_invite.headers["location"]).group(1)
+    with TestClient(keeper.app) as invitee:
+        manager_page = invitee.get(f"/auth/invite/{manager_token}").text
+        assert "Do bookkeeping and portfolio setup" in manager_page
+        assert "record a verified external review" not in manager_page
+
+        reader_invite = keeper.post(
+            "/account/invites", {"email": "reader@example.com", "role": ROLE_READ_ONLY},
+            follow_redirects=False,
+        )
+        reader_token = re.search(r"invite_token=([A-Za-z0-9_-]+)", reader_invite.headers["location"]).group(1)
+        reader_page = invitee.get(f"/auth/invite/{reader_token}").text
+        assert "cannot change it or export the portfolio" in reader_page
     # A member who is not the portfolio's only owner gets a role control, and that control is
     # how ownership is granted, so it offers every role.
     _invite_and_accept(keeper, owner(app=keeper.app, email="member@example.com",

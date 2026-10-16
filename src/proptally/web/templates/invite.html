@@ -5,11 +5,7 @@
 <h1>Join {{ invite_tenant_name }}</h1>
 <p class="pt-fs-supporting pt-text-secondary">
     You have been invited as <strong>{{ invite_role }}</strong>.
-    {% if invite_role == 'READ_ONLY' %}
-    Read-only access: you can view and export, but not change anything.
-    {% else %}
-    Review access: you can record the external review a Schedule E deduction requires.
-    {% endif %}
+    {{ invite_role_description }}
 </p>
 
 {% if error %}{{ ui.alert(variant="error", title="Could not accept the invitation", text=error) }}{% endif %}

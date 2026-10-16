@@ -67,6 +67,13 @@ def _membership_for(request: Request, context, tenant_id: str, *, roles):
     return membership
 
 
+def _safe_return_to(path: str) -> str:
+    """Only redirect back to a path on this host after a workspace switch."""
+    if path.startswith("/") and not path.startswith("//"):
+        return path
+    return "/"
+
+
 def _portfolio_rows(control_engine, tenant_manager: TenantManager, user_id: str) -> list[dict]:
     """Every portfolio this account is a member of, with its role and headline figures.
 
@@ -133,6 +140,8 @@ def get_portfolios_router(templates, auth_dep, session_dep=None):
                 ),
                 "error": request.query_params.get("error"),
                 "csrf_token": context.csrf_token,
+                "choose_portfolio": request.query_params.get("choose") == "1",
+                "return_to": _safe_return_to(request.query_params.get("next", "/")),
             },
         )
 
@@ -239,7 +248,12 @@ def get_portfolios_router(templates, auth_dep, session_dep=None):
         return RedirectResponse(url="/portfolios", status_code=303)
 
     @router.post("/portfolios/{tenant_id}/open", dependencies=[Depends(session_scope)])
-    def open_portfolio(tenant_id: str, request: Request, context=Depends(session_scope)):
+    def open_portfolio(
+        tenant_id: str,
+        request: Request,
+        return_to: str = Form("/"),
+        context=Depends(session_scope),
+    ):
         """Switches the session's active portfolio to one this account belongs to."""
         allowed = {
             m.tenant_id
@@ -255,6 +269,6 @@ def get_portfolios_router(templates, auth_dep, session_dep=None):
         switch_active_tenant(
             request.app.state.control_engine, request.cookies.get(cookie_name()), tenant_id
         )
-        return RedirectResponse(url="/", status_code=303)
+        return RedirectResponse(url=_safe_return_to(return_to), status_code=303)
 
     return router

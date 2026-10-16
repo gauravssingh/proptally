@@ -39,7 +39,7 @@
 
 {% set header_meta %}
 {{ ui.badge(
-    who.role ~ (" — you may change this portfolio" if context.can_administer else " — read only"),
+    who.role ~ " — " ~ role_summary,
     variant=("success" if context.can_administer else "neutral"),
     upper=true
 ) }}
@@ -273,19 +273,19 @@
     ) }}
         <div class="pt-stack pt-gap-3">
             <div class="pt-kv">
-                <span class="pt-kv__key" title="{{ portfolio_status.database }}">Ledger database</span>
+                <span class="pt-kv__key"{% if context.user.is_instance_admin %} title="{{ portfolio_status.database }}"{% endif %}>Ledger database</span>
                 <span class="pt-kv__value">{{ portfolio_status.database_bytes | format_bytes }}</span>
             </div>
             <div class="pt-kv">
-                <span class="pt-kv__key" title="{{ portfolio_status.database }}-wal">Write-ahead log</span>
+                <span class="pt-kv__key"{% if context.user.is_instance_admin %} title="{{ portfolio_status.database }}-wal"{% endif %}>Write-ahead log</span>
                 <span class="pt-kv__value">{{ portfolio_status.wal_bytes | format_bytes }}</span>
             </div>
             <div class="pt-kv">
-                <span class="pt-kv__key" title="{{ portfolio_status.vault }}">Document vault</span>
+                <span class="pt-kv__key"{% if context.user.is_instance_admin %} title="{{ portfolio_status.vault }}"{% endif %}>Document vault</span>
                 <span class="pt-kv__value">{{ portfolio_status.vault_bytes | format_bytes }}</span>
             </div>
             <div class="pt-kv">
-                <span class="pt-kv__key" title="{{ portfolio_status.photos }}">Photos</span>
+                <span class="pt-kv__key"{% if context.user.is_instance_admin %} title="{{ portfolio_status.photos }}"{% endif %}>Photos</span>
                 <span class="pt-kv__value">{{ portfolio_status.photos_bytes | format_bytes }}</span>
             </div>
             <div class="pt-kv">
@@ -293,7 +293,11 @@
                 <span class="pt-kv__value">{{ portfolio_status.portfolio_bytes | format_bytes }}</span>
             </div>
             <p class="pt-fs-caption pt-text-secondary">
-                All of it under <code>{{ portfolio_status.root }}</code>.
+                {% if context.user.is_instance_admin %}
+                All parts live under <code>{{ portfolio_status.root }}</code>.
+                {% else %}
+                Exact host paths are visible only to the installation operator.
+                {% endif %}
             </p>
         </div>
     {{ ui.section_close() }}
@@ -332,6 +336,7 @@
                         <form method="post" action="/auth/switch-tenant" class="pt-inline-flex">
                             {{ csrf_field() }}
                             <input type="hidden" name="tenant_id" value="{{ membership.tenant_id }}">
+                            <input type="hidden" name="return_to" value="/account?section=portfolio">
                             {{ ui.btn("Open", variant="subtle", size="sm", type="submit",
                                       title="Make this portfolio the one the app reports on") }}
                         </form>
@@ -393,11 +398,18 @@
         </div>
     {{ ui.section_close() }}
 
-    {# --- The whole installation ----------------------------------------- #}
+    {% if context.user.is_instance_admin %}
     {{ ui.section_open(
-        "Back up the whole installation",
-        "A portfolio export covers one portfolio. The operator script covers the control plane as well: accounts, invitations, sessions, and every portfolio database with its vault."
+        "Whole-installation backup",
+        "The operator backup covers the control plane and every portfolio. It is separate from the export of this one portfolio."
     ) }}
+    {% else %}
+    {{ ui.section_open(
+        "Installation backup",
+        "Shared-host backups are managed by the installation operator. This section does not expose the other portfolios or the operator's storage paths."
+    ) }}
+    {% endif %}
+        {% if context.user.is_instance_admin %}
         <div class="pt-stack pt-gap-4">
             {% if portfolio_status %}
             <p class="pt-fs-caption pt-text-secondary">
@@ -427,6 +439,13 @@
                 </p>
             </div>
         </div>
+        {% else %}
+        {{ ui.alert(
+            variant="info",
+            title="Installation operator only",
+            text="A whole-installation backup includes every portfolio and account. Only the installation operator can view its paths and run instructions; your portfolio export is above."
+        ) }}
+        {% endif %}
     {{ ui.section_close() }}
 
 {% else %}
@@ -446,7 +465,7 @@
                 <span class="pt-kv__value">{{ ui.badge(context.role, variant="neutral", upper=true) }}</span>
             </div>
             <div class="pt-kv">
-                <span class="pt-kv__key">Installation administrator</span>
+                <span class="pt-kv__key">Installation operator</span>
                 <span class="pt-kv__value">
                     {% if context.user.is_instance_admin %}
                     {{ ui.badge("YES", variant="rule", upper=true) }}
@@ -457,8 +476,7 @@
             </div>
         </div>
     {{ ui.section_close() }}
-
-    {{ ui.section_open("Change your password", "Changing it signs out every session except this one.") }}
+    {{ ui.section_open("Change your password", "Changing it signs out every session, including this one. Sign in again with the new password.") }}
         <form method="post" action="/account/password">
             {{ csrf_field() }}
             <div class="pt-stack pt-gap-4">

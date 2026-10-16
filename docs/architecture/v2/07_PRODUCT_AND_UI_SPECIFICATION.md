@@ -29,21 +29,23 @@ The PropTally user interface is engineered to provide immediate clarity on real 
 
 ## 2. Navigation Architecture
 
-PropTally features a clean, responsive left sidebar navigation layout:
-
-```text
 PropTally
-├── 📊 Portfolio Overview
-├── 🏘️ Properties (Doors)
-├── 🏦 Mortgages & Debt
-├── 💳 Transactions
-├── ⚖️ Reconciliation Center   (Badge: Pending count)
-├── 📁 Document Vault
-├── 📑 Tax Center (Schedule E)
-├── 📈 Analytics & Trends
-├── 🤖 Local AI Copilot
-└── ⚙️ Settings & Backups
-```
+├── Workspaces
+│   └── All Portfolios (membership-scoped workspace list)
+└── Current portfolio · <active portfolio name, shown in the shell>
+    ├── Portfolio Overview
+    ├── Administration (People, Portfolio status, Backup, Sign-in)
+    ├── Portfolio Setup
+    ├── Portfolio doors (the active portfolio's properties)
+    └── Financial Core
+        ├── Mortgages & Escrow
+        ├── Transactions Register
+        ├── Review Queue   (Badge: Pending count)
+        └── Tax & Schedule E
+
+The sidebar and mobile drawer share one navigation source. When the account belongs to
+multiple portfolios, the shell's workspace selector changes only that browser session; a
+new sign-in presents a portfolio chooser rather than silently opening the oldest membership.
 
 ---
 
@@ -153,9 +155,11 @@ PropTally
 
 ### 3.9 Portfolio administration (`/account`)
 
-The administration screen for the portfolio that is open: its people, its status and its
-backup. It is a portfolio-level screen, not an instance-level one, and it is reachable from
-the shell's navigation (*Administration*) and from its footer on every surface.
+The administration screen covers the open portfolio's people, status and backup. It is a
+portfolio-level screen, not an instance-level one, and is reachable from the shell's
+*Administration* navigation. The shell keeps the active portfolio name visible and provides
+a membership-scoped switcher; the identity row links to personal sign-in settings, not back
+to the tenant administrator's People section.
 
 **Sections, not one page.** Four sections, each its own URL (`/account?section=…`), so a
 section can be bookmarked, reloaded, and reached with the browser's back button, and the
@@ -165,10 +169,9 @@ with the active section carrying `is-active` and `aria-current="page"`; the shel
 navigation marks the screen itself the same way, so both levels of the hierarchy are
 represented. A query parameter for an unknown section falls back to *People*.
 
-* **Header:** the title, the portfolio's name in the subtitle, a meta badge with the
-  caller's role (`READ ONLY` where they have no authority, rather than hiding the facts),
-  and the section navigation. The primary action appears only where it belongs: *Invite
-  somebody* in *People*, and only for an owner.
+* **Header:** the title, active portfolio name, role-accurate capability label (`MANAGER —
+  Bookkeeping`, not `read only`), and the section navigation. The primary action appears
+  only where it belongs: *Invite somebody* in *People*, and only for an owner.
 * **People** (default): *People with access to `<portfolio>`* — one row per member (name,
   `You` marker, email, role, the date access was granted). An owner gets a role select and a
   confirmed **Remove** per row; the last owner cannot be demoted or removed, and the row
@@ -187,35 +190,38 @@ represented. A query parameter for an unknown section falls back to *People*.
   self-hosted deployment sends no email.
 * **Portfolio status:** what the portfolio holds, counted from its own database (doors,
   loans, documents, transactions, journal entries, files on disk), whether the database
-  reads, and when it was created; then where it lives — the ledger database, its
-  write-ahead log, the document vault, the photos, and the resulting export size, each with
-  its path and size; then the portfolios this account reaches, with a row action to open
-  one; then the removal route, offered only to a role the removal endpoint accepts. An
-  unreadable database is reported as such, with the advice to take a copy first.
+  reads, and when it was created; then its storage sizes and the export size. Absolute host
+  paths are shown only to the installation operator, not to portfolio members; then the
+  portfolios this account reaches, with a row action to open one; then the removal route,
+  offered only to a role the removal endpoint accepts. An unreadable database is reported,
+  with advice to take a copy first.
 * **Backup:** what an export of this portfolio contains (a `VACUUM INTO` database snapshot,
-  the vault, the photos, a manifest), the download action for a role the export endpoint
-  accepts, the size the archive will be, and the statement that the app keeps no copy and
-  records no export history. Then the whole-installation backup: the operator scripts
-  (`scripts/backup.sh`, `scripts/restore.sh`), what they cover (control plane and every
-  portfolio database plus vaults), that each copy is verified with `PRAGMA integrity_check`
-  and shipped with a SHA-256 sidecar, and that nothing in the app schedules a backup.
+  the vault, the photos, a manifest), the owner-only download, its estimated size, and the
+  statement that the app keeps no copy and records no export history. Whole-installation
+  backup instructions and the control-plane path are shown only to the installation
+  operator; portfolio members are told that the operator manages shared-host backups.
+  The operator scripts (`scripts/backup.sh`, `scripts/restore.sh`) cover the control plane
+  and every portfolio, verify each database with `PRAGMA integrity_check`, and produce a
+  SHA-256 sidecar. Nothing in the app schedules a backup.
 * **Sign-in:** who you are (name, email, role in this portfolio, whether the account is an
-  installation administrator) and the password form, which every role may use — it is about
-  the person's own credentials, not about the portfolio.
+  installation operator) and the password form, which every role may use — it is about the
+  person's own credentials, not about the portfolio. The public reset page does not issue a
+  token; the local operator uses `scripts/issue_password_reset.py` and hands the single-use,
+  two-hour link to the verified account holder out of band.
 
-**Roles.** `OWNER` — everything, including people, invitations, export and removal.
-`MANAGER` — the bookkeeping (imports, allocations, posting, portfolio setup) but never
-people, and never the client's confirmation on its behalf. `CPA_REVIEWER` — read, plus
-recording the external review a deduction requires. `READ_ONLY` — read only. A member who is
-not an owner sees the same facts with the owner-only actions replaced by a sentence naming
-the role requirement, so the screen never offers an action that would be refused.
+**Roles.** `OWNER` — portfolio administration, bookkeeping, client confirmation, export and
+removal. `MANAGER` — bookkeeping and setup, but not people or the client's own confirmation.
+`CPA_REVIEWER` — bookkeeping plus a verified external review, but not people or client
+confirmation. `READ_ONLY` — view only. The header describes the role's actual capability;
+it does not call a manager read-only.
 
 **Deliberately absent.** No activity log, because the `access_events` table is never
 written; no sessions list, because there is no read helper for `user_sessions`; no
 "integrity check now" button, because no importable checker exists (the scripts do it at
 backup time); and no backup history or last-backup timestamp, because nothing records one.
-Instance-level administration (all users, all portfolios) has no authority model behind it
-today: `is_instance_admin` is a display flag, so this screen is portfolio-scoped.
+The installation-operator flag gates only operator backup details on this screen; it does
+not grant portfolio membership or global financial-data access. There is no global user or
+portfolio administration console yet.
 
 **Design-system sources.** Assembled from the component library
 (`docs/ui-ux/04_COMPONENT_LIBRARY.md`): `ui.page_header`, `ui.section_open/close`,

@@ -29,6 +29,9 @@ from proptally.db.tenant_manager import TenantManager
 from proptally.web.routes.portfolios import DELETE_ROLES, EXPORT_ROLES
 from proptally.web.auth import (
     ROLES,
+    ROLE_DESCRIPTIONS,
+    ROLE_PICKER_LABELS,
+    ROLE_SUMMARIES,
     AuthenticationDependency,
     LoginRateLimiter,
     MembershipError,
@@ -43,7 +46,6 @@ from proptally.web.auth import (
     change_password,
     create_invite,
     find_invite,
-    issue_password_reset,
     issue_pre_session_csrf,
     issue_session,
     clear_session_cookie,
@@ -228,7 +230,15 @@ def get_auth_router(
             control_engine, user, memberships[0].tenant_id,
             ip_address=ip, user_agent=request.headers.get("user-agent"),
         )
-        response = RedirectResponse(url=_safe_next(next), status_code=303)
+        destination = _safe_next(next)
+        if len(memberships) > 1:
+            # Never silently drop a multi-portfolio user into the oldest portfolio.
+            # The authenticated list lets them choose, then returns to the original
+            # local destination in the newly selected session context.
+            destination = "/portfolios?" + urllib.parse.urlencode(
+                {"choose": "1", "next": destination}
+            )
+        response = RedirectResponse(url=destination, status_code=303)
         set_session_cookie(response, token, request)
         return response
 
@@ -320,6 +330,7 @@ def get_auth_router(
         return _render(
             templates, request, "invite.html",
             {"error": None, "token": token, "invite_email": invite.email, "invite_role": invite.role,
+             "invite_role_description": ROLE_DESCRIPTIONS.get(invite.role, ""),
              "invite_tenant_name": tenant.name if tenant else "this portfolio",
              "display_name": "", "min_password_length": MIN_PASSWORD_LENGTH},
             csrf_token=csrf_token, set_cookie=set_cookie,
@@ -347,6 +358,7 @@ def get_auth_router(
                 templates, request, "invite.html",
                 {"error": "Your form expired. Please try again.", "token": token,
                  "invite_email": invite.email, "invite_role": invite.role,
+                 "invite_role_description": ROLE_DESCRIPTIONS.get(invite.role, ""),
                  "invite_tenant_name": "", "display_name": display_name,
                  "min_password_length": MIN_PASSWORD_LENGTH},
                 csrf_token=csrf_token, set_cookie=set_cookie,
@@ -360,8 +372,10 @@ def get_auth_router(
             return _render(
                 templates, request, "invite.html",
                 {"error": str(exc), "token": token, "invite_email": invite.email,
-                 "invite_role": invite.role, "invite_tenant_name": "",
-                 "display_name": display_name, "min_password_length": MIN_PASSWORD_LENGTH},
+                 "invite_role": invite.role,
+                 "invite_role_description": ROLE_DESCRIPTIONS.get(invite.role, ""),
+                 "invite_tenant_name": "", "display_name": display_name,
+                 "min_password_length": MIN_PASSWORD_LENGTH},
                 csrf_token=csrf_token, set_cookie=set_cookie,
             )
         session_token, _ = issue_session(
@@ -376,37 +390,14 @@ def get_auth_router(
 
     @router.get("/auth/reset", response_class=HTMLResponse)
     def reset_form(request: Request):
-        csrf_token, set_cookie = issue_pre_session_csrf(request)
-        return _render(
-            templates, request, "reset.html",
-            {"error": None, "issued_token": None, "submitted": False},
-            csrf_token=csrf_token, set_cookie=set_cookie,
-        )
+        """Explains how to request an operator-issued reset link.
 
-    @router.post("/auth/reset")
-    def reset_submit(request: Request, email: str = Form(...), csrf_token: str = Form(None)):
-        csrf_token, set_cookie = issue_pre_session_csrf(request)
-        if not pre_session_csrf_valid(request, csrf_token):
-            return _render(
-                templates, request, "reset.html",
-                {"error": "Your form expired. Please try again.", "issued_token": None, "submitted": False},
-                csrf_token=csrf_token, set_cookie=set_cookie,
-            )
-        issued = issue_password_reset(control_engine, email)
-        if issued is not None:
-            # This deployment has no mail transport, so the token is surfaced to the
-            # operator rather than silently dropped. It is still only shown here; the
-            # response for an unknown address is identical in shape.
-            return _render(
-                templates, request, "reset.html",
-                {"error": None, "issued_token": issued, "submitted": True},
-                csrf_token=csrf_token, set_cookie=set_cookie,
-            )
-        return _render(
-            templates, request, "reset.html",
-            {"error": None, "issued_token": None, "submitted": True},
-            csrf_token=csrf_token, set_cookie=set_cookie,
-        )
+        Reset tokens are never issued to an unauthenticated web requester: this
+        self-hosted deployment has no mailer, so the operator creates the one-time link
+        locally and hands it to the verified account holder out of band.
+        """
+        return templates.TemplateResponse(request=request, name="reset.html", context={})
+
 
     @router.get("/auth/reset/{token}", response_class=HTMLResponse)
     def reset_password_form(token: str, request: Request):
@@ -491,8 +482,10 @@ def get_auth_router(
                 # role the invitation endpoint would refuse.
                 "role_options": [{"value": role, "label": role} for role in ROLES],
                 "invitable_role_options": [
-                    {"value": role, "label": role} for role in ROLES if role in INVITABLE_ROLES
+                    {"value": role, "label": ROLE_PICKER_LABELS[role]}
+                    for role in ROLES if role in INVITABLE_ROLES
                 ],
+                "role_summary": ROLE_SUMMARIES.get(context.role, "Portfolio member"),
                 "role_capabilities": ROLE_CAPABILITIES,
                 # Surfaced so the screen can explain why a control is unavailable rather
                 # than let it fail when used: the portfolio must keep an owner.
@@ -620,14 +613,17 @@ def get_auth_router(
     def switch_tenant(
         request: Request,
         tenant_id: str = Form(...),
-        context=Depends(auth_dep),
+        return_to: str = Form("/"),
+        context=Depends(session_scope),
     ):
         allowed = {m.tenant_id for m in memberships_for(control_engine, context.user.id)}
         if tenant_id not in allowed:
-            # A user may only switch to a portfolio they are a member of; never
-            # let the posted value choose which database to open.
-            return RedirectResponse(url="/account?error=Not a member of that portfolio", status_code=303)
+            # A user may only switch to a portfolio they belong to; never let the posted
+            # value choose which database to open.
+            return RedirectResponse(
+                url="/portfolios?error=Not%20a%20member%20of%20that%20portfolio", status_code=303
+            )
         switch_active_tenant(control_engine, request.cookies.get(cookie_name()), tenant_id)
-        return RedirectResponse(url="/", status_code=303)
+        return RedirectResponse(url=_safe_next(return_to), status_code=303)
 
     return router

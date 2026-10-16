@@ -3,39 +3,17 @@
 {% block card %}
 {{ ui.card_open() }}
 <h1>Reset your password</h1>
-
-{% if issued_token %}
 <p class="pt-fs-supporting pt-text-secondary">
-    This deployment has no mail transport by design, so the reset token is shown
-    here once rather than emailed. Hand it to the account holder over a channel you
-    trust, or use the link below yourself.
+    This installation does not send email. For your security, reset links are issued by its
+    operator rather than shown to anyone who enters an email address here.
 </p>
-{{ ui.alert(variant="success", title="Reset token created",
-            text="<code>" ~ issued_token ~ "</code>",
-            action_label="Set a new password", action_href="/auth/reset/" ~ issued_token) }}
-{% elif submitted %}
-<p class="pt-fs-supporting pt-text-secondary">
-    If an account exists for that address, a reset token has been created. No email
-    is sent: ask the operator of this instance for the token.
-</p>
-{{ ui.alert(variant="success", text="Request processed.") }}
-{% else %}
-<p class="pt-fs-supporting pt-text-secondary">Enter the email address on the account.</p>
-{% if error %}{{ ui.alert(variant="error", title="Could not create a reset token", text=error) }}{% endif %}
-<form method="post" action="/auth/reset">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="pt-stack pt-gap-4">
-        {{ ui.text_field("email", "Email", type="email", required=true,
-                         extra='autocomplete="username" autofocus') }}
-        <div class="pt-form-actions">
-            {{ ui.btn("Create reset token", variant="primary", type="submit", block=true) }}
-        </div>
-    </div>
-</form>
-{% endif %}
-
-<div class="pt-stack pt-gap-2 pt-fs-caption">
-    <span><a href="/auth/login">Back to sign in</a></span>
+{{ ui.alert(
+    variant="info",
+    title="Ask the installation operator",
+    text="The operator can create a single-use reset link on the host with <code>python scripts/issue_password_reset.py --email &lt;your-email&gt;</code>, then give it to you over a trusted channel. The link expires after two hours."
+) }}
+<div class="pt-form-actions">
+    {{ ui.btn("Back to sign in", variant="secondary", href="/auth/login") }}
 </div>
 {{ ui.card_close() }}
 {% endblock %}

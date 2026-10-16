@@ -40,13 +40,37 @@
 
 
 {% macro brand(version=None) -%}
+{% set who = current_context() %}
 <a class="pt-brand" href="/">
     <span class="pt-brand__mark" aria-hidden="true">P</span>
     <span>
         <span class="pt-brand__name">PropTally</span>
-        <span class="pt-brand__meta">Self-hosted · local vault</span>
+        <span class="pt-brand__meta">{{ who.tenant.name if who else "Self-hosted · local vault" }}</span>
     </span>
 </a>
+{%- endmacro %}
+
+
+{% macro workspace_switcher(select_id) -%}
+{% set portfolios = nav_portfolios() %}
+{% if portfolios | length > 1 %}
+{% set return_to = request.url.path ~ ("?" ~ request.url.query if request.url.query else "") %}
+<div class="pt-workspace-switcher">
+    <label class="pt-workspace-switcher__label" for="{{ select_id }}">Switch portfolio</label>
+    <form method="post" action="/auth/switch-tenant" class="pt-flex pt-items-center pt-gap-2">
+        {{ csrf_field() }}
+        <input type="hidden" name="return_to" value="{{ return_to }}">
+        <select id="{{ select_id }}" name="tenant_id" class="pt-workspace-switcher__select">
+            {% for portfolio in portfolios %}
+            <option value="{{ portfolio.tenant_id }}"{% if portfolio.is_active %} selected{% endif %}>
+                {{ portfolio.name }}
+            </option>
+            {% endfor %}
+        </select>
+        {{ ui.btn("Switch", variant="chrome", size="sm", type="submit") }}
+    </form>
+</div>
+{% endif %}
 {%- endmacro %}
 
 
@@ -70,6 +94,7 @@
         {{ brand() }}
         {{ mode_badge() }}
     </div>
+    {{ workspace_switcher("sidebar-portfolio") }}
 
     <nav class="pt-nav">
         {% for section in nav.primary_sections() %}
@@ -96,15 +121,15 @@
 {#- Who is signed in, at the foot of the sidebar and of the drawer.
 
     The standard account row: a monogram, the person's name with one muted line beneath it
-    (their role here, then the address they sign in with), and the way out beside it. The
-    row itself is the link to the administration screen, so the destination is one click
-    and needs no button; the sign-out control is a separate control, and it is icon-only
+    (their role here, then the address they sign in with), and the way out beside it.
+    The identity row is a separate link to personal account/sign-in settings; tenant
+    administration has its own navigation destination. The sign-out control is icon-only
     with a mandatory accessible name (`ui.icon_btn`). -#}
 {% set who = current_context() %}
 {% if who %}
 <div class="pt-sidebar__footer">
     <div class="pt-account">
-        <a class="pt-account__identity" href="/account" title="Administration: people, portfolio status and backup">
+        <a class="pt-account__identity" href="/account?section=signin" title="Account and sign-in settings">
             <span class="pt-avatar" aria-hidden="true">{{ (who.user.display_name or who.user.email) | initials }}</span>
             <span class="pt-account__text">
                 <span class="pt-account__name">{{ who.user.display_name or who.user.email }}</span>
@@ -169,6 +194,7 @@
                 {{ ui.icon("close", "lg") }}
             </button>
         </div>
+        {{ workspace_switcher("drawer-portfolio") }}
 
         <nav class="pt-nav pt-drawer__body">
             {% for section in nav.primary_sections() %}

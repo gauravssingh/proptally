@@ -49,6 +49,7 @@ CSS custom properties cannot be used in media queries, so `tokens.css` records t
 | Sidebar | Full labels, section headings, door list with rental/primary dots, queue count. |
 | Drawer | Identical navigation (one markup source), 288px wide, capped at 85vw. |
 | Bottom nav | Five destinations: Overview, Doors, Mortgages, Review, Tax/Sched E. Label text is always visible — never icon-only. |
+| Workspace switcher | Membership-scoped native select in sidebar and drawer; active portfolio name also stays visible in the shell. Switching updates only that session. |
 | Door switcher | Native `<select>` in the app bar; the full door list scrolls natively. |
 | Table of contents | None: the shell is shallow by design. |
 

@@ -105,6 +105,13 @@ administrator; afterwards, registration closes unless you set
 `PROPTALLY_ALLOW_REGISTRATION=true`. Other people join an existing portfolio only
 through an invitation created on the **Account** screen.
 
+For installations shared by several people, set `PROPTALLY_INSTANCE_NAME` to a name they
+recognize; it appears on the sign-in screen. Password recovery does not send email: a local
+operator issues a single-use link on the host with
+`python scripts/issue_password_reset.py --email user@example.com` and gives it to the
+verified account holder over a trusted channel. The public reset page never reveals or
+issues a token.
+
 ### Where data lives
 
 ```text
