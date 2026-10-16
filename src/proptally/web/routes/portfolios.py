@@ -29,13 +29,12 @@ from proptally.db.portfolio_archive import build_portfolio_archive, discard_arch
 from proptally.db.system_models import ROLE_CPA_REVIEWER, ROLE_OWNER, ROLE_READ_ONLY, Tenant
 from proptally.db.tenant_manager import TenantManager
 from proptally.domain.accounting.metrics import calculate_portfolio_equity
-from proptally.web.auth import cookie_name, memberships_for, switch_active_tenant
-
-ROLE_DESCRIPTIONS = {
-    ROLE_OWNER: "Full access: setup, import, posting, invitations and export.",
-    ROLE_CPA_REVIEWER: "Read, plus recording the external review a deduction requires.",
-    ROLE_READ_ONLY: "Read only.",
-}
+from proptally.web.auth import (
+    ROLE_DESCRIPTIONS,
+    cookie_name,
+    memberships_for,
+    switch_active_tenant,
+)
 
 #: Roles that may take a full copy of a portfolio away with them.
 EXPORT_ROLES = (ROLE_OWNER,)

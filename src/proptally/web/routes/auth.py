@@ -8,19 +8,28 @@ exists yet to lend them one.
 
 from __future__ import annotations
 
+import urllib.parse
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
 
-from proptally.db.system_models import UserInvite
+from proptally.db.system_models import ROLE_OWNER
 from proptally.db.tenant_manager import TenantManager
 from proptally.web.auth import (
+    ROLES,
     AuthenticationDependency,
     LoginRateLimiter,
+    MembershipError,
     ROLE_CPA_REVIEWER,
+    ROLE_DESCRIPTIONS,
     accept_invite,
+    change_member_role,
+    pending_invites,
+    remove_member,
+    revoke_invite,
+    tenant_members,
     authenticate,
     change_password,
     create_invite,
@@ -356,21 +365,16 @@ def get_auth_router(templates, control_engine, tenant_manager: TenantManager, ra
 
     @router.get("/account", response_class=HTMLResponse)
     def account_screen(request: Request, context=Depends(auth_dep)):
+        """The signed-in account: its portfolios, who can reach this one, and its access list."""
         memberships = []
         for membership in memberships_for(control_engine, context.user.id):
             tenant = tenant_for(control_engine, membership.tenant_id)
             if tenant is not None:
                 memberships.append({"tenant_id": tenant.id, "name": tenant.name, "role": membership.role})
 
-        pending = []
-        if context.can_administer:
-            with Session(control_engine) as session:
-                pending = list(session.exec(
-                    select(UserInvite).where(
-                        UserInvite.tenant_id == context.tenant.id,
-                        UserInvite.accepted_at.is_(None),
-                    )
-                ).all())
+        members = tenant_members(control_engine, context.tenant.id)
+        invites = pending_invites(control_engine, context.tenant.id)
+        owners = [m for m in members if m["role"] == ROLE_OWNER]
 
         return templates.TemplateResponse(
             request=request,
@@ -379,7 +383,13 @@ def get_auth_router(templates, control_engine, tenant_manager: TenantManager, ra
                 "active_page": "account",
                 "context": context,
                 "memberships": memberships,
-                "pending_invites": pending,
+                "members": members,
+                "pending_invites": invites,
+                "roles": ROLES,
+                "role_descriptions": ROLE_DESCRIPTIONS,
+                # Surfaced so the screen can explain why a control is unavailable rather
+                # than let it fail when used: the portfolio must keep an owner.
+                "owner_count": len(owners),
                 "invite_token": request.query_params.get("invite_token"),
                 "message": request.query_params.get("message"),
                 "error": request.query_params.get("error"),
@@ -425,6 +435,48 @@ def get_auth_router(templates, control_engine, tenant_manager: TenantManager, ra
         except ValueError as exc:
             return RedirectResponse(url=f"/account?error={exc}", status_code=303)
         return RedirectResponse(url=f"/account?invite_token={token}", status_code=303)
+
+    @router.post("/account/members/{membership_id}/role")
+    def account_change_member_role(
+        membership_id: str,
+        role: str = Form(...),
+        context=Depends(auth_dep),
+    ):
+        """Changes what a member may do in this portfolio. Owners only."""
+        context.require_admin()
+        try:
+            change_member_role(
+                control_engine, membership_id, role, tenant_id=context.tenant.id
+            )
+        except MembershipError as exc:
+            return RedirectResponse(url=f"/account?error={urllib.parse.quote(str(exc))}", status_code=303)
+        return RedirectResponse(
+            url=f"/account?message={urllib.parse.quote('Role updated.')}", status_code=303
+        )
+
+    @router.post("/account/members/{membership_id}/remove")
+    def account_remove_member(membership_id: str, context=Depends(auth_dep)):
+        """Removes somebody's access to this portfolio. Their account survives."""
+        context.require_admin()
+        try:
+            remove_member(control_engine, membership_id, tenant_id=context.tenant.id)
+        except MembershipError as exc:
+            return RedirectResponse(url=f"/account?error={urllib.parse.quote(str(exc))}", status_code=303)
+        return RedirectResponse(
+            url=f"/account?message={urllib.parse.quote('Access removed.')}", status_code=303
+        )
+
+    @router.post("/account/invites/{invite_id}/revoke")
+    def account_revoke_invite(invite_id: str, context=Depends(auth_dep)):
+        """Withdraws an unaccepted invitation, so its link stops working."""
+        context.require_admin()
+        try:
+            revoke_invite(control_engine, invite_id, tenant_id=context.tenant.id)
+        except MembershipError as exc:
+            return RedirectResponse(url=f"/account?error={urllib.parse.quote(str(exc))}", status_code=303)
+        return RedirectResponse(
+            url=f"/account?message={urllib.parse.quote('Invitation withdrawn.')}", status_code=303
+        )
 
     @router.post("/auth/switch-tenant")
     def switch_tenant(

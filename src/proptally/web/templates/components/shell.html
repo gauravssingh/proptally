@@ -90,6 +90,29 @@
 {# ---------------------------------------------------------------------------
    A4. Mobile top app bar
    --------------------------------------------------------------------------- #}
+{% macro account_controls() -%}
+{#- Who is signed in, and the way out. Rendered wherever the shell has room, so
+    signing out never depends on remembering a URL. -#}
+{% set who = current_context() %}
+{% if who %}
+<div class="pt-flex pt-items-center pt-gap-1">
+    <a href="/account" class="pt-btn pt-btn--ghost pt-btn--sm"
+       title="Signed in as {{ who.user.email }} ({{ who.role }}) — account, access and password">
+        {{ ui.icon("user_check", "lg") }}
+        <span class="pt-sr-only">Your account and who has access</span>
+    </a>
+    <form method="post" action="/auth/logout" class="pt-inline-flex">
+        {{ csrf_field() }}
+        <button class="pt-btn pt-btn--ghost pt-btn--sm" type="submit" title="Sign out">
+            {{ ui.icon("lock", "lg") }}
+            <span class="pt-sr-only">Sign out</span>
+        </button>
+    </form>
+</div>
+{% endif %}
+{%- endmacro %}
+
+
 {% macro appbar(doors, active_property, review_count) -%}
 <header class="pt-appbar">
     <div class="pt-flex pt-items-center pt-gap-3">
@@ -117,6 +140,8 @@
             <span class="pt-count-bubble">{{ review_count }}</span>
         </a>
         {% endif %}
+
+        {{ account_controls() }}
     </div>
 </header>
 {%- endmacro %}
@@ -152,6 +177,7 @@
         </nav>
     </div>
 </div>
+    {{ account_controls() }}
 {%- endmacro %}
 
 

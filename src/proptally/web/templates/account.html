@@ -47,13 +47,105 @@
         </div>
     </section>
 
-    {# --- Invitations (owners only) --------------------------------------- #}
-    {% if context.can_administer %}
+    {# --- Who has access to this portfolio -------------------------------- #}
     <section class="pt-card">
         <div class="pt-card__header">
-            <h2 class="pt-card__title">Invite somebody to this portfolio</h2>
+            <h2 class="pt-card__title">People with access to {{ context.tenant.name }}</h2>
         </div>
         <div class="pt-card__body">
+            {% if context.can_administer %}
+            <p class="pt-fs-caption pt-text-secondary">
+                Everyone here signs in with their own account and sees only this portfolio.
+                Roles decide what they may do; a portfolio always keeps at least one owner.
+            </p>
+            {% endif %}
+
+            <table class="pt-table">
+                <thead>
+                    <tr><th>Person</th><th>Role</th><th>Added</th>{% if context.can_administer %}<th></th>{% endif %}</tr>
+                </thead>
+                <tbody>
+                {% for member in members %}
+                    <tr>
+                        <td>
+                            <strong>{{ member.display_name or member.email }}</strong>
+                            <div class="pt-fs-caption pt-text-secondary">{{ member.email }}</div>
+                        </td>
+                        <td>
+                            {% if context.can_administer and not (member.role == 'OWNER' and owner_count == 1) %}
+                            <form method="post" action="/account/members/{{ member.membership_id }}/role"
+                                  class="pt-inline-flex">
+                                {{ csrf_field() }}
+                                <label class="pt-sr-only" for="role_{{ member.membership_id }}">Role for {{ member.email }}</label>
+                                <select id="role_{{ member.membership_id }}" name="role">
+                                    {% for role in roles %}
+                                    <option value="{{ role }}"{% if role == member.role %} selected{% endif %}>{{ role }}</option>
+                                    {% endfor %}
+                                </select>
+                                <button class="pt-btn pt-btn--secondary pt-btn--sm" type="submit">Change</button>
+                            </form>
+                            {% else %}
+                            {{ member.role }}
+                            {% if member.role == 'OWNER' and owner_count == 1 %}
+                            <div class="pt-fs-caption pt-text-secondary">the portfolio's only owner</div>
+                            {% endif %}
+                            {% endif %}
+                        </td>
+                        <td>{{ member.joined_at | format_date }}</td>
+                        {% if context.can_administer %}
+                        <td>
+                            {% if member.role == 'OWNER' and owner_count == 1 %}
+                            <span class="pt-fs-caption pt-text-secondary">—</span>
+                            {% else %}
+                            <form method="post" action="/account/members/{{ member.membership_id }}/remove"
+                                  class="pt-inline-flex">
+                                {{ csrf_field() }}
+                                <button class="pt-btn pt-btn--subtle pt-btn--sm" type="submit"
+                                        title="Remove this person's access. Their account stays.">Remove</button>
+                            </form>
+                            {% endif %}
+                        </td>
+                        {% endif %}
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+
+            {% if not context.can_administer %}
+            <p class="pt-fs-caption pt-text-secondary">
+                Only an owner can invite people or change roles.
+            </p>
+            {% endif %}
+
+            {# --- Pending invitations --- #}
+            {% if pending_invites %}
+            <h3 class="pt-fs-caption pt-fw-bold" style="margin-top:1.25rem">Invitations not yet accepted</h3>
+            <table class="pt-table">
+                <thead><tr><th>Email</th><th>Role</th><th>Expires</th>{% if context.can_administer %}<th></th>{% endif %}</tr></thead>
+                <tbody>
+                {% for invite in pending_invites %}
+                    <tr>
+                        <td>{{ invite.email }}</td>
+                        <td>{{ invite.role }}</td>
+                        <td>{{ invite.expires_at | format_date }}</td>
+                        {% if context.can_administer %}
+                        <td>
+                            <form method="post" action="/account/invites/{{ invite.id }}/revoke" class="pt-inline-flex">
+                                {{ csrf_field() }}
+                                <button class="pt-btn pt-btn--subtle pt-btn--sm" type="submit"
+                                        title="Withdraw this invitation, so its link stops working">Withdraw</button>
+                            </form>
+                        </td>
+                        {% endif %}
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+
+            {# --- Invite somebody --- #}
+            {% if context.can_administer %}
+            <h3 class="pt-fs-caption pt-fw-bold" style="margin-top:1.25rem">Invite somebody</h3>
             <form method="post" action="/account/invites" class="pt-form-grid pt-form-grid--2">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div class="pt-auth__field">
@@ -63,8 +155,11 @@
                 <div class="pt-auth__field">
                     <label for="invite_role">Role</label>
                     <select id="invite_role" name="role">
-                        <option value="READ_ONLY">Read-only (view and export)</option>
-                        <option value="CPA_REVIEWER">Reviewer (may record external review)</option>
+                        {% for role, description in role_descriptions.items() %}
+                        {% if role != 'OWNER' %}
+                        <option value="{{ role }}">{{ role }} — {{ description }}</option>
+                        {% endif %}
+                        {% endfor %}
                     </select>
                 </div>
                 <div style="align-self:end">
@@ -78,24 +173,9 @@
                 <span class="pt-alert__text" style="word-break:break-all">/auth/invite/{{ invite_token }}</span>
             </div>
             {% endif %}
-
-            {% if pending_invites %}
-            <table class="pt-table" style="margin-top:1rem">
-                <thead><tr><th>Email</th><th>Role</th><th>Expires</th></tr></thead>
-                <tbody>
-                {% for invite in pending_invites %}
-                    <tr>
-                        <td>{{ invite.email }}</td>
-                        <td>{{ invite.role }}</td>
-                        <td>{{ invite.expires_at | format_date }}</td>
-                    </tr>
-                {% endfor %}
-                </tbody>
-            </table>
             {% endif %}
         </div>
     </section>
-    {% endif %}
 
     {# --- Password --------------------------------------------------------- #}
     <section class="pt-card">

@@ -37,6 +37,7 @@ from sqlmodel import Session, select
 
 from proptally.db.system_models import (
     MUTATING_ROLES,
+    ROLES,
     ROLE_CPA_REVIEWER,
     ROLE_OWNER,
     ROLE_READ_ONLY,
@@ -70,6 +71,14 @@ LOGIN_ATTEMPT_WINDOW_SECONDS = 15 * 60
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 _HASHER = PasswordHasher()
+
+
+#: What each role may do, in the words the interface uses.
+ROLE_DESCRIPTIONS = {
+    ROLE_OWNER: "Full access: setup, import, posting, invitations and export.",
+    ROLE_CPA_REVIEWER: "Read, plus recording the external review a deduction requires.",
+    ROLE_READ_ONLY: "Read only.",
+}
 
 
 class AuthenticationRequired(Exception):
@@ -278,6 +287,128 @@ def memberships_for(engine: Engine, user_id: str) -> list[TenantMembership]:
 def tenant_for(engine: Engine, tenant_id: str) -> Optional[Tenant]:
     with Session(engine) as session:
         return session.get(Tenant, tenant_id)
+
+
+# --- Who has access to a portfolio -----------------------------------------
+
+class MembershipError(RuntimeError):
+    """Raised when a change to a portfolio's access list is refused."""
+
+
+def tenant_members(control_engine: Engine, tenant_id: str) -> list[dict]:
+    """Everyone with access to this portfolio, oldest membership first.
+
+    Returns plain rows rather than ORM objects so a template cannot accidentally walk
+    into another portfolio's data through a relationship.
+    """
+    with Session(control_engine) as session:
+        memberships = session.exec(
+            select(TenantMembership)
+            .where(TenantMembership.tenant_id == tenant_id)
+            .order_by(TenantMembership.created_at)
+        ).all()
+        rows = []
+        for membership in memberships:
+            user = session.get(User, membership.user_id)
+            rows.append({
+                "membership_id": membership.id,
+                "user_id": membership.user_id,
+                "email": user.email if user else "(deleted account)",
+                "display_name": user.display_name if user else "",
+                "is_active": bool(user.is_active) if user else False,
+                "role": membership.role,
+                "joined_at": membership.created_at,
+            })
+        return rows
+
+
+def pending_invites(control_engine: Engine, tenant_id: str) -> list[UserInvite]:
+    """Invitations that have been issued and not yet accepted."""
+    with Session(control_engine) as session:
+        return list(session.exec(
+            select(UserInvite).where(
+                UserInvite.tenant_id == tenant_id,
+                UserInvite.accepted_at.is_(None),
+            ).order_by(UserInvite.created_at)
+        ).all())
+
+
+def _owner_count(session: Session, tenant_id: str, excluding: Optional[str] = None) -> int:
+    """Owners of the portfolio, optionally ignoring one membership."""
+    owners = session.exec(
+        select(TenantMembership).where(
+            TenantMembership.tenant_id == tenant_id,
+            TenantMembership.role == ROLE_OWNER,
+        )
+    ).all()
+    return len([m for m in owners if m.id != excluding])
+
+
+def change_member_role(
+    control_engine: Engine, membership_id: str, new_role: str, *, tenant_id: str
+) -> None:
+    """Changes what a member may do. The portfolio must keep at least one owner.
+
+    A portfolio with no owner cannot be administered by anyone: no role changes, no
+    invitations, no removal of its data. Demoting the last owner is therefore refused
+    rather than performed.
+    """
+    if new_role not in ROLES:
+        raise MembershipError(f"{new_role!r} is not a role.")
+
+    with Session(control_engine) as session:
+        membership = session.get(TenantMembership, membership_id)
+        # The membership must belong to the portfolio the caller administers: the id
+        # alone must never be enough to reach another portfolio's access list.
+        if membership is None or membership.tenant_id != tenant_id:
+            raise MembershipError("That member is not in this portfolio.")
+        if membership.role == new_role:
+            return
+        if membership.role == ROLE_OWNER and new_role != ROLE_OWNER:
+            if _owner_count(session, tenant_id, excluding=membership.id) == 0:
+                raise MembershipError(
+                    "This is the portfolio's only owner, so it cannot be demoted. "
+                    "Make somebody else an owner first."
+                )
+        membership.role = new_role
+        session.add(membership)
+        session.commit()
+
+
+def remove_member(control_engine: Engine, membership_id: str, *, tenant_id: str) -> None:
+    """Removes somebody's access to a portfolio.
+
+    Their account survives: they may still belong to other portfolios. The portfolio
+    must keep at least one owner, so removing the last one is refused.
+    """
+    with Session(control_engine) as session:
+        membership = session.get(TenantMembership, membership_id)
+        if membership is None or membership.tenant_id != tenant_id:
+            raise MembershipError("That member is not in this portfolio.")
+        if membership.role == ROLE_OWNER and _owner_count(session, tenant_id, excluding=membership.id) == 0:
+            raise MembershipError(
+                "This is the portfolio's only owner. Transfer ownership before removing "
+                "it, or remove the portfolio itself."
+            )
+        session.delete(membership)
+        session.commit()
+
+    logger.info(
+        "Portfolio access removed: tenant=%s membership=%s user=%s",
+        tenant_id, membership_id, membership.user_id,
+    )
+
+
+def revoke_invite(control_engine: Engine, invite_id: str, *, tenant_id: str) -> None:
+    """Withdraws an invitation that has not been accepted, so its link stops working."""
+    with Session(control_engine) as session:
+        invite = session.get(UserInvite, invite_id)
+        if invite is None or invite.tenant_id != tenant_id:
+            raise MembershipError("That invitation is not for this portfolio.")
+        if invite.accepted_at is not None:
+            raise MembershipError("That invitation has already been accepted.")
+        session.delete(invite)
+        session.commit()
 
 
 def unique_slug(engine: Engine, name: str) -> str:
