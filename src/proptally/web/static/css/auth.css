@@ -91,7 +91,7 @@
 
     .auth-root { background-image: none; }
 
-    /* An edgeless wash over the right third, so the labels and inputs keep their
+    /* An edgeless wash over the sign-in bay, so the labels and inputs keep their
        contrast against whatever the scene is doing underneath. */
     .auth-glow {
         display: block;
@@ -99,21 +99,23 @@
         inset: 0;
         z-index: 1;
         background-image: radial-gradient(
-            closest-side at 76% 50%,
-            rgba(255, 255, 255, 0.82),
-            rgba(255, 255, 255, 0.45) 62%,
+            520px 460px at 55.6% 43%,
+            rgba(255, 255, 255, 0.85),
+            rgba(255, 255, 255, 0.5) 62%,
             rgba(255, 255, 255, 0) 100%
         );
     }
 
+    /* The form sits in the bay between house 2 and house 3, not out on the
+       empty right-hand lawn, and rides a little above the horizon line. */
     .auth-panel {
         display: block;
         min-height: 0;
         padding: 0;
         position: absolute;
-        right: 4rem;
-        top: 50%;
-        transform: translateY(-50%);
+        left: 55.6%;
+        top: 43%;
+        transform: translate(-50%, -50%);
         width: 100%;
         max-width: 24rem;
     }

@@ -186,7 +186,8 @@
   </g>
 
   <!-- ================= 6. HIGHLIGHTED CHOICE 3: SUBDIVISION CRAFTSMAN ================= -->
-  <g id="highlight-craftsman" filter="url(#focusShadow)">
+  <!-- Shifted right of the sign-in bay: House 1, House 2, the form, House 3. -->
+  <g id="highlight-craftsman" filter="url(#focusShadow)" transform="translate(330 0)">
     <rect x="695" y="542" width="255" height="6" fill="#94A3B8"/>
     <rect x="700" y="390" width="135" height="152" fill="#FFFFFF"/>
     <rect x="825" y="430" width="115" height="112" fill="#F1F5F9"/>
@@ -247,9 +248,12 @@
     <circle cx="986" cy="510" r="30" fill="#15803D"/>
     <circle cx="1025" cy="512" r="28" fill="#16A34A" opacity="0.9"/>
 
-    <rect x="1220" y="565" width="12" height="52" fill="#78350F" rx="2"/>
-    <circle cx="1228" cy="532" r="52" fill="#14532D"/>
-    <circle cx="1205" cy="512" r="36" fill="#15803D"/>
-    <circle cx="1252" cy="516" r="32" fill="#16A34A" opacity="0.9"/>
+    <!-- Moved from the far right to cover the sign-in bay's left edge. -->
+    <g transform="translate(-660 0)">
+      <rect x="1220" y="565" width="12" height="52" fill="#78350F" rx="2"/>
+      <circle cx="1228" cy="532" r="52" fill="#14532D"/>
+      <circle cx="1205" cy="512" r="36" fill="#15803D"/>
+      <circle cx="1252" cy="516" r="32" fill="#16A34A" opacity="0.9"/>
+    </g>
   </g>
 </svg>
