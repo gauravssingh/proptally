@@ -460,3 +460,83 @@ def test_updates_from_form_ignores_untouched_inputs_and_parses_money(owner):
     assert updates["loan_number"] == "0700000002"
     assert "escrow_cents" not in updates
     assert "loan_account_id" not in updates
+
+
+# --- one row, one next step, one dialog -----------------------------------
+
+
+def _dialog_block(html: str, dialog_id: str) -> str:
+    """The markup from a dialog's opening tag to the end of the form inside it.
+
+    A page of stacked forms is what this screen replaced, so "the form is inside a
+    closed dialog" is the behaviour under test and has to be readable from the markup.
+    """
+    start = html.index(f'id="{dialog_id}" class="pt-modal"')
+    end = html.index("</form>", start) + len("</form>")
+    return html[start:end]
+
+
+def test_a_validated_statement_offers_approval_in_a_dialog_and_then_import(owner, statement_pdf):
+    signed_in = owner()
+    _register_loan(signed_in.engine)
+    assert _upload(signed_in, statement_pdf).status_code == 303
+    extraction = _only_extraction(signed_in.engine)
+
+    page = signed_in.client.get("/statements").text
+
+    # The row's single next step is approval, behind a dialog that opens on its own id.
+    assert f'data-modal-open="approve-{extraction.id}"' in page
+    assert f'data-modal-open="import-{extraction.id}"' not in page   # nothing to import yet
+    assert f'id="approve-{extraction.id}" class="pt-modal" hidden' in page
+    assert f'action="/statements/extractions/{extraction.id}/approve"' in _dialog_block(page, f"approve-{extraction.id}")
+
+    # The correction form is in a closed dialog too, and exists exactly once: no inline
+    # copy of it is left on the page beside the row.
+    review = _dialog_block(page, f"review-{extraction.id}")
+    assert f'id="review-{extraction.id}" class="pt-modal" hidden' in page
+    assert f'action="/statements/extractions/{extraction.id}/update"' in review
+    assert page.count(f'action="/statements/extractions/{extraction.id}/update"') == 1
+
+    # Approving moves the row on to importing; importing ends it, with nothing left to open.
+    signed_in.post(f"/statements/extractions/{extraction.id}/approve", {})
+    approved = signed_in.client.get("/statements").text
+    assert f'data-modal-open="import-{extraction.id}"' in approved
+    assert f'data-modal-open="approve-{extraction.id}"' not in approved
+    assert f'action="/statements/extractions/{extraction.id}/import"' in _dialog_block(approved, f"import-{extraction.id}")
+
+    signed_in.post(f"/statements/extractions/{extraction.id}/import", {})
+    imported = signed_in.client.get("/statements").text
+    assert f'data-modal-open="import-{extraction.id}"' not in imported
+    assert f'data-modal-open="review-{extraction.id}"' not in imported
+
+
+def test_a_statement_that_matched_no_account_offers_exactly_one_way_in(owner, statement_pdf):
+    signed_in = owner()
+    assert _upload(signed_in, statement_pdf).status_code == 303   # no loan registered
+
+    extraction = _only_extraction(signed_in.engine)
+    assert extraction.validation_status == "NEEDS_REVIEW"
+    page = signed_in.client.get("/statements").text
+
+    # One next step — reviewing it — and the fields to correct are in that dialog.
+    assert f'data-modal-open="review-{extraction.id}"' in page
+    assert f'data-modal-open="approve-{extraction.id}"' not in page
+    assert f'data-modal-open="import-{extraction.id}"' not in page
+    assert f'action="/statements/extractions/{extraction.id}/update"' in _dialog_block(page, f"review-{extraction.id}")
+
+
+def test_a_bank_statement_with_no_registered_account_registers_it_from_the_dialog(owner, tmp_path):
+    signed_in = owner()
+    path = tmp_path / "boa-jan-2026.pdf"
+    _write_pdf_pages(path, [BANK_HEADER_TEXT, BANK_ACTIVITY_TEXT])
+    assert _upload(signed_in, path, filename="boa-jan-2026.pdf").status_code == 303
+
+    extraction = _only_extraction(signed_in.engine)
+    page = signed_in.client.get("/statements").text
+
+    # The one way forward is the dialog that explains the missing account and offers
+    # to register it, so the operator never has to leave the screen for a shell.
+    assert f'data-modal-open="review-{extraction.id}"' in page
+    dialog = _dialog_block(page, f"review-{extraction.id}")
+    assert 'name="register_observed_account"' in dialog
+    assert f'action="/statements/extractions/{extraction.id}/update"' in dialog

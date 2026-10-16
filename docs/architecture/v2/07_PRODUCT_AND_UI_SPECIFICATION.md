@@ -156,7 +156,40 @@ Navigated the way a file manager is, not read like a report.
 
 ---
 
-### 3.7 Tax Center (IRS Schedule E Hub) (`/tax-center`)
+### 3.7 Statements & Ingestion (`/statements`)
+A statement arrives as a document, and it has to be matched, checked and made
+authoritative — in that order, and never by accident.
+
+* **Upload** takes a PDF, stores it in the portfolio's vault, and matches it against the
+  accounts this portfolio has registered. A file already in the vault is reported rather
+  than stored twice, and an unrecognised format is kept with its reason rather than guessed
+  at.
+* **One row per document.** Each row states what was read (type, servicer or institution,
+  loan or account ending), the extraction's verdict — `VALIDATED`, `NEEDS_REVIEW`, or
+  `UNSUPPORTED` for a document that is not a statement — with its reasons listed when it
+  has any, its approval state, the account or loan it matched, and anything already
+  imported from it.
+* **One next step per row.** The row offers a single primary action: *Review & correct*
+  while anything is unresolved, *Approve* once validated, *Import* once approved, and
+  nothing at all once imported — with *Review* beside Approve and Import so the figures stay
+  reachable. Every action opens a dialog on that row; no correction field is stacked inline
+  beneath it (`05_INTERACTION_STANDARDS.md` §6, rule 6).
+* **The Review dialog** carries the fields a person may need to correct — institution or
+  servicer, the account or loan identity, the balances or mortgage amounts, the dates and
+  the reported interest rate — and, when the statement names an institution and last four
+  digits this portfolio has not registered, the offer to register that account from the
+  statement itself. Saving re-validates and reports the new verdict.
+* **The Approve dialog** restates the document, its type and date, what it matched and the
+  figure in question, and says plainly that approving writes nothing to the ledger.
+* **The Import dialog** says what importing means: the statement becomes this portfolio's
+  authoritative record for that account and period; importing the same statement twice is
+  refused; correcting it afterwards is a separate, audited step.
+* **The header badges** count what is ready to import, awaiting review and imported, so the
+  state of the backlog is legible before any row is read.
+
+---
+
+### 3.8 Tax Center (IRS Schedule E Hub) (`/tax-center`)
 * **Tax Year Selector:** Toggle between tax years (2025, 2026).
 * **Schedule E Workpaper Grid:**
   * Columns: `Tax Line Number | Category Description | 12307 Larkspur St | 2718 Foxglove Ct | Total Rental Portfolio`
@@ -168,7 +201,7 @@ Navigated the way a file manager is, not read like a report.
 
 ---
 
-### 3.8 Local AI Copilot (`/ai-assistant`)
+### 3.9 Local AI Copilot (`/ai-assistant`)
 * **Conversational Interface:** Chat panel powered by the local NVIDIA GPU server (Ollama / vLLM).
 * **Security & Transparency Badges:**
   * Indicator confirming: *"Running locally on RTX GPU • Zero cloud egress • Deterministic tool access"*.
@@ -180,7 +213,7 @@ Navigated the way a file manager is, not read like a report.
 
 ---
 
-### 3.9 Portfolio administration (`/account`)
+### 3.10 Portfolio administration (`/account`)
 
 The administration screen covers the open portfolio's people, status and backup. It is a
 portfolio-level screen, not an instance-level one, and is reachable from the shell's

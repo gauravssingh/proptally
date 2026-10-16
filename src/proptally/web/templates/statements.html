@@ -6,7 +6,14 @@
 {% block content %}
 {# Every statement is matched against the accounts this portfolio has registered.
    A recognised statement for an account that is not registered is kept for
-   review with the reason, never silently dropped and never guessed at. #}
+   review with the reason, never silently dropped and never guessed at.
+
+   The screen is a list, not a stack of forms: one row per document carries its
+   state and the single next step for it, and the work that step needs happens in a
+   dialog. Nothing about a statement is edited inline, so the table stays readable at
+   a glance and no two extractions compete for the same stretch of page. The row and
+   its dialog are the same decision, which is why `action` — decided once per row —
+   drives both. #}
 {% set ns = namespace(validated=0, review=0, imported=0) %}
 {% for row in rows %}
     {% if row.status == 'VALIDATED' %}{% set ns.validated = ns.validated + 1 %}{% endif %}
@@ -49,7 +56,7 @@
 {# --- Documents and extractions ------------------------------------------ #}
 {{ ui.section_open(
     "Statements in this portfolio",
-    "Documents in the vault, the status of their extraction, and the statement each one imported.",
+    "One row per document: what was read from it, whether it matched an account, and the single next step. Correct, approve or import from that row's dialog.",
     flush=true
 ) }}
 {% if rows %}
@@ -61,11 +68,19 @@
             {{ ui.th("Approval") }}
             {{ ui.th("Matched account") }}
             {{ ui.th("Imported statement") }}
+            {{ ui.th("Next step") }}
         </tr>
     </thead>
     <tbody>
         {% for row in rows %}
         {% set extraction = row.extraction %}
+        {# The row states what is true of the extraction; registering an account is an
+           offer inside the review dialog, since a statement with no matching account is
+           never VALIDATED in the first place. #}
+        {% set action = 'done' if row.statement
+                        else 'import' if row.approval_status == 'APPROVED'
+                        else 'approve' if row.status == 'VALIDATED'
+                        else 'review' %}
         <tr>
             <td>
                 <div class="pt-cell-stack pt-cell-stack--start">
@@ -127,6 +142,26 @@
                     <span class="pt-amount pt-amount--unavailable" title="Nothing imported from this document yet.">—</span>
                 {% endif %}
             </td>
+            <td class="pt-table__actions">
+                {% if not extraction %}
+                    <span class="pt-amount pt-amount--unavailable" title="Nothing was staged for this document.">—</span>
+                {% elif action == 'import' %}
+                    {{ ui.btn("Import", variant="primary", size="sm", type="button",
+                              attrs='data-modal-open="import-' ~ extraction.id ~ '"') }}
+                    {{ ui.btn("Review", variant="ghost", size="sm", type="button",
+                              attrs='data-modal-open="review-' ~ extraction.id ~ '"') }}
+                {% elif action == 'approve' %}
+                    {{ ui.btn("Approve", variant="primary", size="sm", type="button",
+                              attrs='data-modal-open="approve-' ~ extraction.id ~ '"') }}
+                    {{ ui.btn("Review", variant="ghost", size="sm", type="button",
+                              attrs='data-modal-open="review-' ~ extraction.id ~ '"') }}
+                {% elif action == 'review' %}
+                    {{ ui.btn("Review & correct", variant="primary", size="sm", type="button",
+                              attrs='data-modal-open="review-' ~ extraction.id ~ '"') }}
+                {% else %}
+                    <span class="pt-amount pt-amount--unavailable" title="Imported; nothing left to do with this extraction.">—</span>
+                {% endif %}
+            </td>
         </tr>
         {% endfor %}
     </tbody>
@@ -139,108 +174,167 @@
 {% endif %}
 {{ ui.section_close() }}
 
-{# --- Review, approve and import ----------------------------------------- #}
-{% if rows %}
-{{ ui.section_open(
-    "Review, approve and import",
-    "Correct a field, choose the registered account or loan a statement belongs to, then approve and import it."
-) }}
-<div class="pt-stack pt-gap-3">
+{# --- The dialogs: one next step, one dialog ------------------------------ #}
+{# The forms post to the same endpoints as before, so the behaviour is unchanged —
+   only the address is: a dialog opens on the row you chose, and nothing else moves. #}
 {% for row in rows %}
 {% set extraction = row.extraction %}
-{% if extraction %}
-<div class="pt-card pt-card--flush">
-    <div class="pt-section__header">
-        <div class="pt-section__heading">
-            <h3 class="pt-section__title">{{ row.document.original_filename }}</h3>
-            <p class="pt-section__subtitle">
-                {{ row.data.get('statement_type') or 'UNRECOGNISED FORMAT' }} ·
-                {{ row.status }}{% if row.statement %} · imported{% endif %}
-            </p>
-        </div>
-    </div>
-    <div class="pt-section__body">
+{% set action = 'done' if row.statement
+                else 'import' if row.approval_status == 'APPROVED'
+                else 'approve' if row.status == 'VALIDATED'
+                else 'review' %}
+{% if extraction and action != 'done' %}
 
-        {% if row.can_register %}
-        <form method="POST" action="/statements/extractions/{{ extraction.id }}/update" class="pt-flex pt-flex-wrap pt-items-end pt-gap-3">
-            {{ csrf_field() }}
-            <p class="pt-section__subtitle">
-                No account in this portfolio matches {{ row.data.get('institution_name') }}
-                ending {{ row.data.get('account_last4') }}. Register it from this statement to
-                import the transactions into this portfolio.
-            </p>
-            {{ ui.checkbox_field("register_observed_account", "Register " ~ (row.data.get('institution_name') or "") ~ " account ending " ~ (row.data.get('account_last4') or ""), value="true", id="register-" ~ extraction.id) }}
-            {{ ui.btn("Register and re-validate", variant="primary", type="submit") }}
-        </form>
-        {% endif %}
-
-        <form method="POST" action="/statements/extractions/{{ extraction.id }}/update"
-              class="pt-grid pt-gap-3">
-            {{ csrf_field() }}
-
-            {% if row.data.get('statement_type') in ['CHECKING', 'CREDIT_CARD'] %}
-                {{ ui.text_field("institution_name", "Institution", value=(row.data.get('institution_name') or ""), id="inst-" ~ extraction.id) }}
-                {{ ui.text_field("account_last4", "Account last four", value=(row.data.get('account_last4') or ""), id="last4-" ~ extraction.id) }}
-            {% else %}
-                {{ ui.text_field("servicer_name", "Servicer", value=(row.data.get('servicer_name') or ""), id="servicer-" ~ extraction.id) }}
-                {{ ui.text_field("loan_number", "Loan number", value=(row.data.get('loan_number') or ""), id="loan-number-" ~ extraction.id) }}
+{{ ui.modal_open("review-" ~ extraction.id,
+                      "Review " ~ row.document.original_filename,
+                      (row.data.get('statement_type') or 'UNRECOGNISED FORMAT') ~ " · " ~ row.status ~ " · " ~ (row.approval_status or "NOT APPROVED"),
+                      size="lg") }}
+<form method="POST" action="/statements/extractions/{{ extraction.id }}/update" class="pt-modal__form">
+    {{ csrf_field() }}
+    <div class="pt-modal__body">
+        <div class="pt-stack pt-gap-4">
+            {% if row.can_register %}
+            {{ ui.alert(
+                "info",
+                title="No registered account matches this statement",
+                text="The statement names " ~ (row.data.get('institution_name') or 'an institution') ~ " ending "
+                     ~ (row.data.get('account_last4') or '') ~ ", which this portfolio has not registered. Tick the box "
+                     "below to register it from this statement and import into it — or correct the details first, if the "
+                     "extraction read them wrong."
+            ) }}
+            {{ ui.checkbox_field("register_observed_account",
+                                 "Register " ~ (row.data.get('institution_name') or "") ~ " account ending " ~ (row.data.get('account_last4') or ""),
+                                 value="true", id="register-" ~ extraction.id) }}
             {% endif %}
 
-            {% if row.data.get('statement_type') == 'CHECKING' %}
-                {{ ui.number_field("opening_balance", "Opening balance ($)", value=row.money.opening_balance, id="open-" ~ extraction.id) }}
-                {{ ui.number_field("closing_balance", "Closing balance ($)", value=row.money.closing_balance, id="close-" ~ extraction.id) }}
-            {% elif row.data.get('statement_type') == 'CREDIT_CARD' %}
-                {{ ui.number_field("opening_balance", "Previous balance ($)", value=row.money.opening_balance, id="open-" ~ extraction.id) }}
-                {{ ui.number_field("closing_balance", "New balance ($)", value=row.money.closing_balance, id="close-" ~ extraction.id) }}
-            {% else %}
-                {{ ui.number_field("principal", "Principal ($)", value=row.money.principal, id="principal-" ~ extraction.id) }}
-                {{ ui.number_field("interest", "Interest ($)", value=row.money.interest, id="interest-" ~ extraction.id) }}
-                {{ ui.number_field("escrow", "Escrow ($)", value=row.money.escrow, id="escrow-" ~ extraction.id) }}
-                {{ ui.number_field("fees", "Fees ($)", value=row.money.fees, id="fees-" ~ extraction.id) }}
-                {{ ui.number_field("total_due", "Total due ($)", value=row.money.total_due, id="total-" ~ extraction.id) }}
-                {{ ui.number_field("outstanding_principal", "Outstanding principal ($)", value=row.money.outstanding_principal, id="outstanding-" ~ extraction.id) }}
-                {{ ui.number_field("escrow_balance", "Escrow balance ($)", value=row.money.escrow_balance, id="escrow-balance-" ~ extraction.id) }}
-                {{ ui.number_field("interest_rate_percent", "Interest rate (%)", value=row.rate_percent, step="0.001", id="rate-" ~ extraction.id) }}
-            {% endif %}
+            <div class="pt-grid pt-gap-3">
+                {% if row.data.get('statement_type') in ['CHECKING', 'CREDIT_CARD'] %}
+                    {{ ui.text_field("institution_name", "Institution", value=(row.data.get('institution_name') or ""), id="inst-" ~ extraction.id) }}
+                    {{ ui.text_field("account_last4", "Account last four", value=(row.data.get('account_last4') or ""), id="last4-" ~ extraction.id) }}
+                {% else %}
+                    {{ ui.text_field("servicer_name", "Servicer", value=(row.data.get('servicer_name') or ""), id="servicer-" ~ extraction.id) }}
+                    {{ ui.text_field("loan_number", "Loan number", value=(row.data.get('loan_number') or ""), id="loan-number-" ~ extraction.id) }}
+                {% endif %}
 
-            {{ ui.date_field("statement_date", "Statement date", value=(row.data.get('statement_date') or ""), id="stmt-date-" ~ extraction.id) }}
-            {{ ui.date_field("payment_due_date", "Payment due date", value=(row.data.get('payment_due_date') or ""), id="due-date-" ~ extraction.id) }}
+                {% if row.data.get('statement_type') == 'CHECKING' %}
+                    {{ ui.number_field("opening_balance", "Opening balance ($)", value=row.money.opening_balance, id="open-" ~ extraction.id) }}
+                    {{ ui.number_field("closing_balance", "Closing balance ($)", value=row.money.closing_balance, id="close-" ~ extraction.id) }}
+                {% elif row.data.get('statement_type') == 'CREDIT_CARD' %}
+                    {{ ui.number_field("opening_balance", "Previous balance ($)", value=row.money.opening_balance, id="open-" ~ extraction.id) }}
+                    {{ ui.number_field("closing_balance", "New balance ($)", value=row.money.closing_balance, id="close-" ~ extraction.id) }}
+                {% else %}
+                    {{ ui.number_field("principal", "Principal ($)", value=row.money.principal, id="principal-" ~ extraction.id) }}
+                    {{ ui.number_field("interest", "Interest ($)", value=row.money.interest, id="interest-" ~ extraction.id) }}
+                    {{ ui.number_field("escrow", "Escrow ($)", value=row.money.escrow, id="escrow-" ~ extraction.id) }}
+                    {{ ui.number_field("fees", "Fees ($)", value=row.money.fees, id="fees-" ~ extraction.id) }}
+                    {{ ui.number_field("total_due", "Total due ($)", value=row.money.total_due, id="total-" ~ extraction.id) }}
+                    {{ ui.number_field("outstanding_principal", "Outstanding principal ($)", value=row.money.outstanding_principal, id="outstanding-" ~ extraction.id) }}
+                    {{ ui.number_field("escrow_balance", "Escrow balance ($)", value=row.money.escrow_balance, id="escrow-balance-" ~ extraction.id) }}
+                    {{ ui.number_field("interest_rate_percent", "Interest rate (%)", value=row.rate_percent, step="0.001", id="rate-" ~ extraction.id) }}
+                {% endif %}
 
-            {% if row.data.get('statement_type') in ['CHECKING', 'CREDIT_CARD'] %}
-                {{ ui.select_field("financial_account_id", "Registered account", account_options,
-                                   selected=(row.data.get('financial_account_id') or ""), placeholder="— unchanged —",
-                                   id="account-" ~ extraction.id) }}
-            {% else %}
-                {{ ui.select_field("loan_account_id", "Registered loan", loan_options,
-                                   selected=(row.data.get('loan_account_id') or ""), placeholder="— unchanged —",
-                                   id="loan-" ~ extraction.id) }}
-            {% endif %}
+                {{ ui.date_field("statement_date", "Statement date", value=(row.data.get('statement_date') or ""), id="stmt-date-" ~ extraction.id) }}
+                {{ ui.date_field("payment_due_date", "Payment due date", value=(row.data.get('payment_due_date') or ""), id="due-date-" ~ extraction.id) }}
 
-            <div class="pt-flex pt-gap-2">
-                {{ ui.btn("Save and re-validate", variant="secondary", type="submit") }}
+                {% if row.data.get('statement_type') in ['CHECKING', 'CREDIT_CARD'] %}
+                    {{ ui.select_field("financial_account_id", "Registered account", account_options,
+                                       selected=(row.data.get('financial_account_id') or ""), placeholder="— unchanged —",
+                                       id="account-" ~ extraction.id) }}
+                {% else %}
+                    {{ ui.select_field("loan_account_id", "Registered loan", loan_options,
+                                       selected=(row.data.get('loan_account_id') or ""), placeholder="— unchanged —",
+                                       id="loan-" ~ extraction.id) }}
+                {% endif %}
             </div>
-        </form>
-
-        <div class="pt-flex pt-flex-wrap pt-gap-2">
-            {% if row.status == 'VALIDATED' and row.approval_status != 'APPROVED' %}
-            <form method="POST" action="/statements/extractions/{{ extraction.id }}/approve">
-                {{ csrf_field() }}
-                {{ ui.btn("Approve extraction", variant="primary", type="submit") }}
-            </form>
-            {% endif %}
-            {% if row.approval_status == 'APPROVED' and not row.statement %}
-            <form method="POST" action="/statements/extractions/{{ extraction.id }}/import"
-                  data-confirm="Import this statement as authoritative? Imported statements are matched by loan and date and cannot be re-imported.">
-                {{ csrf_field() }}
-                {{ ui.btn("Import statement", variant="primary", type="submit", icon_name="check") }}
-            </form>
-            {% endif %}
         </div>
     </div>
-</div>
+    <div class="pt-modal__footer">
+        {{ ui.btn("Cancel", variant="secondary", size="sm", type="button", attrs="data-modal-close") }}
+        {% if row.can_register %}
+        {{ ui.btn("Register and re-validate", variant="primary", size="sm", type="submit") }}
+        {% else %}
+        {{ ui.btn("Save and re-validate", variant="primary", size="sm", type="submit") }}
+        {% endif %}
+    </div>
+</form>
+{{ ui.modal_close() }}
 {% endif %}
+
+{% if extraction and action == 'approve' %}
+{{ ui.modal_open("approve-" ~ extraction.id,
+                      "Approve this extraction?",
+                      "Approving records that the extracted figures have been checked. It writes nothing to the ledger yet — importing is the step that does.",
+                      size="sm") }}
+<form method="POST" action="/statements/extractions/{{ extraction.id }}/approve" class="pt-modal__form">
+    {{ csrf_field() }}
+    <div class="pt-modal__body">
+        {{ ui.statement_open() }}
+            {{ ui.statement_row("Document", row.document.original_filename) }}
+            {{ ui.statement_row("Statement", row.data.get('statement_type') or 'UNRECOGNISED FORMAT') }}
+            {{ ui.statement_row("Statement date", row.data.get('statement_date') or '—') }}
+            {% if row.account %}
+                {{ ui.statement_row("Matched account", row.account.account_name ~ " · " ~ row.account.account_number_masked) }}
+            {% elif row.loan %}
+                {{ ui.statement_row("Matched loan", "Loan " ~ row.loan.loan_number) }}
+            {% else %}
+                {{ ui.statement_row("Matched account", "—") }}
+            {% endif %}
+            {% if row.is_bank %}
+                {{ ui.statement_row("Closing balance", "$" ~ (row.money.closing_balance or "—")) }}
+            {% else %}
+                {{ ui.statement_row("Total due", "$" ~ (row.money.total_due or "—")) }}
+            {% endif %}
+        {{ ui.statement_close() }}
+    </div>
+    <div class="pt-modal__footer">
+        {{ ui.btn("Cancel", variant="secondary", size="sm", type="button", attrs="data-modal-close") }}
+        {{ ui.btn("Approve extraction", variant="primary", size="sm", type="submit", icon_name="check") }}
+    </div>
+</form>
+{{ ui.modal_close() }}
+{% endif %}
+
+{% if extraction and action == 'import' %}
+{{ ui.modal_open("import-" ~ extraction.id,
+                      "Import this statement?",
+                      "This is the last step for this document, and it cannot be repeated: the same statement for the same account and date is refused rather than imported twice.",
+                      size="sm") }}
+<form method="POST" action="/statements/extractions/{{ extraction.id }}/import" class="pt-modal__form">
+    {{ csrf_field() }}
+    <div class="pt-modal__body">
+        <div class="pt-stack pt-gap-4">
+            {{ ui.alert(
+                "warning",
+                title="Becomes the authoritative record",
+                text="The statement below is recorded as what this portfolio holds as evidence for that period. "
+                     "Re-importing it is refused, and correcting it afterwards is a separate, audited step."
+            ) }}
+            {{ ui.statement_open() }}
+                {{ ui.statement_row("Document", row.document.original_filename) }}
+                {{ ui.statement_row("Statement", row.data.get('statement_type') or 'UNRECOGNISED FORMAT') }}
+                {{ ui.statement_row("Statement date", row.data.get('statement_date') or '—') }}
+                {% if row.account %}
+                    {{ ui.statement_row("Into account", row.account.account_name ~ " · " ~ row.account.account_number_masked) }}
+                {% elif row.loan %}
+                    {{ ui.statement_row("Into loan", "Loan " ~ row.loan.loan_number) }}
+                {% else %}
+                    {{ ui.statement_row("Into account", "—") }}
+                {% endif %}
+                {% if row.is_bank %}
+                    {{ ui.statement_row("Closing balance", "$" ~ (row.money.closing_balance or "—")) }}
+                {% else %}
+                    {{ ui.statement_row("Total due", "$" ~ (row.money.total_due or "—")) }}
+                {% endif %}
+            {{ ui.statement_close() }}
+        </div>
+    </div>
+    <div class="pt-modal__footer">
+        {{ ui.btn("Cancel", variant="secondary", size="sm", type="button", attrs="data-modal-close") }}
+        {{ ui.btn("Import statement", variant="primary", size="sm", type="submit", icon_name="check") }}
+    </div>
+</form>
+{{ ui.modal_close() }}
+{% endif %}
+
 {% endfor %}
-</div>
-{{ ui.section_close() }}
-{% endif %}
 {% endblock %}

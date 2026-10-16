@@ -74,7 +74,9 @@ while the user is still typing the first time.
   controls, never nested inside the link.
 * **Detail → list:** a back link in the page header, at the same position on every screen.
   Browser back must also work — no client-side routing.
-* **Breadcrumbs** appear only when depth > 2 (property → section). The shell has none today.
+* **Breadcrumbs** appear only when depth > 2 (property → section). The one exception is
+  the document vault, whose folder path *is* the breadcrumb (`/documents` §3.6); the shell
+  itself has none.
 * **Filtering** is server-side and reflected in the URL, so a filtered view is shareable,
   bookmarkable and survives a refresh (`/reconciliation?q=APPLE&gate=CBD2`).
 * **Empty results after filtering** must differ from "no data at all": filtered-empty names
@@ -103,6 +105,17 @@ strictest rules:
    and the destination, and the confirm step restates the count in words.
 5. **After posting**, the row leaves the queue and the success message reports the count
    and destination accounts.
+6. **One row, one next step.** A queue row states what is true of the record — its status,
+   what it matched, why it needs attention — and offers exactly **one** primary action: the
+   next step for that row alone. The work that step needs happens in a dialog on that row's
+   id. Editing fields inline beneath the row is not allowed: a page of stacked forms hides
+   the state, buries the order of operations, and makes two records compete for one stretch
+   of screen. `/statements` §3.7 is the worked example.
+7. **Approval and its consequence are separate steps, and the UI says which one it is.**
+   Approving records that the figures were checked and writes nothing; importing records the
+   statement as the authoritative evidence and cannot be repeated. Each dialog states what it
+   does not do as plainly as what it does, because "approve" that silently writes to the
+   ledger is how a queue loses its meaning.
 
 ---
 
