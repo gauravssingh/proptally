@@ -278,14 +278,21 @@ def _seed_legacy_database(db_path: Path) -> None:
 
 
 def _make_pre_m5(db_path: Path) -> None:
-    """Remove the reviewer columns and forget migration 8, as a pre-M5 database would be."""
+    """Remove the reviewer columns and forget that migration, as a pre-M5 database would be.
+
+    The migration is identified by what it does rather than by its number: numbers are
+    a shared namespace and this code line deliberately uses a reserved range, so a
+    hard-coded number here would quietly stop simulating the old shape.
+    """
     engine = get_engine(f"sqlite:///{db_path}")
     with engine.begin() as conn:
         for column in ("authorized_by_user_id", "authorized_by_role", "verified_cpa_reviewer"):
             conn.exec_driver_sql(
                 f"ALTER TABLE posting_authorizations DROP COLUMN {column}"
             )
-        conn.exec_driver_sql("DELETE FROM schema_migrations WHERE version = 8")
+        conn.exec_driver_sql(
+            "DELETE FROM schema_migrations WHERE description LIKE '%reviewer identity%'"
+        )
     engine.dispose()
 
 
@@ -348,12 +355,13 @@ def test_migration_preserves_metrics_and_refuses_a_second_run(tmp_path):
             )
         }
         assert {"authorized_by_user_id", "authorized_by_role", "verified_cpa_reviewer"} <= columns
-        versions = {
+        descriptions = {
             row[0] for row in connection.exec_driver_sql(
-                "SELECT version FROM schema_migrations"
+                "SELECT description FROM schema_migrations"
             )
         }
-        assert 8 in versions
+        # Identified by what it did, not by its number: those are a shared namespace.
+        assert any("reviewer identity" in d for d in descriptions)
 
     assert after_equity["net_equity_cents"] == before_equity["net_equity_cents"]
     assert after_equity["total_valuation_cents"] == before_equity["total_valuation_cents"]
@@ -573,3 +581,121 @@ def test_single_tenant_export_contains_only_that_portfolio(tmp_path):
     with Session(tenant_engine) as session:
         assert session.get(FinancialAccount, "acct_tnt_one") is not None
     assert (target_storage / "tenants" / "tnt_one" / "vault" / "doc.txt").exists()
+
+
+#: The tables the ledger allocator touches, as they looked before per-entity codes.
+LEGACY_TABLES = (
+    """CREATE TABLE financial_institutions (
+        id VARCHAR PRIMARY KEY, name VARCHAR NOT NULL, routing_number VARCHAR,
+        website VARCHAR, created_at TIMESTAMP NOT NULL)""",
+    """CREATE TABLE ledger_accounts (
+        code INTEGER PRIMARY KEY, name VARCHAR NOT NULL, account_type VARCHAR NOT NULL,
+        normal_balance VARCHAR NOT NULL)""",
+    """CREATE TABLE properties (
+        id VARCHAR PRIMARY KEY, name VARCHAR NOT NULL, address_line1 VARCHAR NOT NULL,
+        address_line2 VARCHAR, city VARCHAR NOT NULL, state VARCHAR NOT NULL,
+        zip_code VARCHAR NOT NULL, property_type VARCHAR NOT NULL, acquisition_date DATE,
+        purchase_price_cents INTEGER, land_basis_cents INTEGER, building_basis_cents INTEGER,
+        is_active BOOLEAN NOT NULL, description TEXT, google_maps_url TEXT,
+        cover_photo_id VARCHAR, created_at TIMESTAMP NOT NULL)""",
+    """CREATE TABLE financial_accounts (
+        id VARCHAR PRIMARY KEY, institution_id VARCHAR NOT NULL, account_name VARCHAR NOT NULL,
+        account_type VARCHAR NOT NULL, account_number_masked VARCHAR NOT NULL,
+        mixed_use_status VARCHAR NOT NULL, currency VARCHAR NOT NULL, is_active BOOLEAN NOT NULL,
+        created_at TIMESTAMP NOT NULL)""",
+    """CREATE TABLE loan_accounts (
+        id VARCHAR PRIMARY KEY, financial_account_id VARCHAR NOT NULL, property_id VARCHAR NOT NULL,
+        loan_number VARCHAR NOT NULL, origination_date DATE, original_principal_cents INTEGER,
+        term_months INTEGER NOT NULL, current_interest_rate_bps INTEGER, is_active BOOLEAN NOT NULL,
+        created_at TIMESTAMP NOT NULL)""",
+    """CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY, description TEXT NOT NULL, applied_at TEXT NOT NULL)""",
+)
+
+
+def _build_legacy_database(db_path):
+    """A database in the shape it had before per-entity ledger codes, plus a foreign record."""
+    from proptally.db.connection import get_engine
+
+    engine = get_engine(f"sqlite:///{db_path}")
+    with engine.begin() as conn:
+        for ddl in LEGACY_TABLES:
+            conn.exec_driver_sql(ddl)
+        # The versions this code line shares with the original sequence.
+        for version, description in (
+            (1, "add post-initial-schema columns"),
+            (2, "install missing CHECK constraints"),
+            (3, "create missing indexes"),
+            (4, "add property description, maps url, and photo columns"),
+            (5, "create vendor_rules table and seed standard rules"),
+        ):
+            conn.exec_driver_sql(
+                "INSERT INTO schema_migrations (version, description, applied_at) "
+                "VALUES (?, ?, '2026-10-12T00:00:00')",
+                (version, description),
+            )
+        # And a version another code line claimed for something else entirely -- the case
+        # that broke this migration on a real portfolio database.
+        conn.exec_driver_sql(
+            "INSERT INTO schema_migrations (version, description, applied_at) "
+            "VALUES (6, 'create property_annual_tax_depreciation table', '2026-10-14T06:05:51')"
+        )
+    return engine
+
+
+def test_a_database_written_by_another_code_line_still_migrates(tmp_path):
+    """Migration numbers are a shared namespace, and another line may have taken one.
+
+    A real portfolio database recorded version 6 as "create
+    property_annual_tax_depreciation table", written by a different tool sharing the same
+    migration table. This code line's own sixth change was then skipped as "already
+    applied", and the step that allocates per-entity ledger accounts ran against columns
+    that had never been added -- so migrating that portfolio failed outright.
+
+    Two things now prevent it: this code line's numbers start at 101, so nothing it
+    defines can be displaced; and the allocation step ensures its own columns first.
+    """
+    from proptally.db.schema import SCHEMA_MIGRATIONS, run_migrations
+
+    # 1. The numbering cannot collide with a number another line has taken.
+    defined = {version for version, _, _ in SCHEMA_MIGRATIONS}
+    assert defined & set(range(1, 100)) == {1, 2, 3, 4, 5}, (
+        "numbers 6-99 belong to whatever else has written to these databases"
+    )
+    assert min(v for v in defined if v > 5) >= 100
+
+    engine = _build_legacy_database(tmp_path / "legacy.db")
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "INSERT INTO financial_institutions (id, name, created_at) VALUES ('inst', 'Bank', '2026-01-01')"
+        )
+        conn.exec_driver_sql(
+            "INSERT INTO properties (id, name, address_line1, city, state, zip_code, "
+            "property_type, is_active, created_at) VALUES "
+            "('prop_legacy', 'Legacy Door', '1 Old St', 'Austin', 'TX', '78701', "
+            "'RENTAL_INVESTMENT', 1, '2026-01-01')"
+        )
+        conn.exec_driver_sql(
+            "INSERT INTO financial_accounts (id, institution_id, account_name, account_type, "
+            "account_number_masked, mixed_use_status, currency, is_active, created_at) VALUES "
+            "('acct_legacy', 'inst', 'Checking', 'CHECKING', '...1', 'UNCLASSIFIED', 'USD', 1, '2026-01-01')"
+        )
+
+    run_migrations(engine)
+
+    with engine.begin() as conn:
+        prop_cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(properties)")}
+        acct_cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(financial_accounts)")}
+        versions = {row[0] for row in conn.exec_driver_sql("SELECT version FROM schema_migrations")}
+        prop_code = conn.exec_driver_sql(
+            "SELECT asset_ledger_code FROM properties WHERE id='prop_legacy'"
+        ).scalar()
+        acct_code = conn.exec_driver_sql(
+            "SELECT ledger_account_code FROM financial_accounts WHERE id='acct_legacy'"
+        ).scalar()
+
+    assert "asset_ledger_code" in prop_cols, "the column was added despite the foreign version 6"
+    assert "ledger_account_code" in acct_cols
+    assert prop_code is not None and acct_code is not None, "and then actually allocated"
+    assert {101, 102, 103} <= versions
+    assert 6 in versions, "the other code line's record is left alone"

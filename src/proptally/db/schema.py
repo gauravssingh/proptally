@@ -1,5 +1,6 @@
 """Schema initialization, versioned migrations and DDL triggers for PropTally."""
 
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import CheckConstraint, MetaData, text
@@ -10,6 +11,8 @@ from sqlmodel import Session, SQLModel
 # read SQLModel.metadata, which is empty unless the models have been imported.
 # Relying on another module to import them first silently creates no tables.
 from proptally.db import models as _models  # noqa: F401
+
+logger = logging.getLogger(__name__)
 
 SQL_TRIGGERS = [
     # 1. Prevent inserting lines into a POSTED journal entry
@@ -407,20 +410,33 @@ def _allocate_entity_ledger_accounts(engine) -> int:
     """
     from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
 
+    # Ensure this migration's own columns exist before using them. Another code line
+    # may already have claimed a number this sequence would have used, in which case a
+    # column-adding migration can be skipped as "already applied" while this one still
+    # runs; making each step self-sufficient means that cannot break it. Re-adding an
+    # existing column is a no-op.
+    _apply(engine, _migrate_columns)
+
     with Session(engine) as session:
         allocated = ensure_entity_ledger_accounts(session)
     return sum(allocated.values())
 
 
+# Migration numbers are a shared namespace: a database records which numbers it has
+# already seen, and any code line that touches it writes into the same table. Numbers
+# 1-99 are therefore treated as taken -- version 6 is already claimed by another line
+# ("create property_annual_tax_depreciation table", which ran on a real portfolio
+# database), and reusing it silently skips the migration that carries the number. Ours
+# start at 101 so they can never collide with a number somebody else has used.
 SCHEMA_MIGRATIONS = (
     (1, "add post-initial-schema columns", lambda engine: _apply(engine, _migrate_columns)),
     (2, "install missing CHECK constraints", _migrate_constraints),
     (3, "create missing indexes", lambda engine: _apply(engine, _migrate_indexes)),
     (4, "add property description, maps url, and photo columns", lambda engine: _apply(engine, _migrate_columns)),
     (5, "create vendor_rules table and seed standard rules", _migrate_vendor_rules),
-    (6, "add per-entity ledger account code columns", lambda engine: _apply(engine, _migrate_columns)),
-    (7, "allocate per-entity ledger accounts", _allocate_entity_ledger_accounts),
-    (8, "add reviewer identity columns to posting authorizations", lambda engine: _apply(engine, _migrate_columns)),
+    (101, "add per-entity ledger account code columns", lambda engine: _apply(engine, _migrate_columns)),
+    (102, "allocate per-entity ledger accounts", _allocate_entity_ledger_accounts),
+    (103, "add reviewer identity columns to posting authorizations", lambda engine: _apply(engine, _migrate_columns)),
 )
 
 
@@ -444,11 +460,39 @@ def _applied_versions(conn) -> set:
     return {row[0] for row in conn.execute(text("SELECT version FROM schema_migrations"))}
 
 
+#: Numbers this code line defines.
+_DEFINED_VERSIONS = {version for version, _, _ in SCHEMA_MIGRATIONS}
+
+
+def _warn_about_foreign_migrations(engine) -> list:
+    """Reports migrations recorded by a different code line.
+
+    The migration table is keyed by a bare version number, so two code lines sharing a
+    database can each believe they own a number. A database that carries versions this
+    code does not define is still usable, but the operator should know: it means
+    another tool has been writing to it, which is how a silently-skipped migration
+    happens in the first place.
+    """
+    with engine.begin() as conn:
+        recorded = _applied_versions(conn)
+    foreign = sorted(recorded - _DEFINED_VERSIONS)
+    if foreign:
+        logger.warning(
+            "This database carries schema migrations from another code line: %s. "
+            "This code defines %s. Numbers are a shared namespace, so nothing here "
+            "reuses them.",
+            foreign,
+            sorted(_DEFINED_VERSIONS),
+        )
+    return foreign
+
+
 def run_migrations(engine) -> list:
     """Applies every pending migration in order, recording each as it lands."""
     applied_log = []
     with engine.begin() as conn:
         _ensure_migration_table(conn)
+    _warn_about_foreign_migrations(engine)
 
     for version, description, step in SCHEMA_MIGRATIONS:
         with engine.begin() as conn:

@@ -26,6 +26,7 @@ from proptally.db.models import (
 )
 from proptally.domain.accounting import coa
 from proptally.domain.accounting.coa import (
+    MORTGAGE_CLEARING,
     STANDARD_ACCOUNTS,
     ALLOCATION_RANGES,
     CARD_LIABILITY,
@@ -259,3 +260,104 @@ def test_adopting_is_idempotent_and_never_takes_a_standard_account(session: Sess
     ensure_entity_ledger_accounts(session)
     after = {loan.id: loan.escrow_ledger_code for loan in session.exec(select(LoanAccount)).all()}
     assert before == after
+
+
+def test_loans_adopt_the_accounts_that_name_their_own_servicer(session: Session):
+    """A migrated chart pairs each loan with its own accounts, not the next free ones.
+
+    A real portfolio's chart named its accounts "Mortgage Debt: Rocket (1000000001)",
+    "Mortgage Clearing: Rocket" and "Servicer Escrow Reserve: Rocket Mortgage". Pairing
+    by position instead crossed Rocket and CrossCountry: the totals still added up,
+    because the same accounts were in use, but each door's debt, interest and escrow
+    reserve were attributed to the other door -- silently, and only per door.
+    """
+    session.add(FinancialInstitution(id="inst_rocket", name="Rocket Mortgage"))
+    session.add(FinancialInstitution(id="inst_pnc", name="PNC Bank"))
+    session.add(FinancialInstitution(id="inst_ccm", name="CrossCountry Mortgage"))
+    session.flush()
+
+    # The chart as the previous deployment wrote it, deliberately NOT in creation order.
+    session.add_all([
+        LedgerAccount(code=2110, name="Mortgage Debt: Rocket (1000000001)", account_type="LIABILITY", normal_balance="CREDIT"),
+        LedgerAccount(code=2115, name="Mortgage Clearing: Rocket", account_type="LIABILITY", normal_balance="CREDIT"),
+        LedgerAccount(code=1110, name="Servicer Escrow Reserve: Rocket Mortgage", account_type="ASSET", normal_balance="DEBIT"),
+        LedgerAccount(code=2120, name="Mortgage Debt: PNC (1000000002)", account_type="LIABILITY", normal_balance="CREDIT"),
+        LedgerAccount(code=2125, name="Mortgage Clearing: PNC", account_type="LIABILITY", normal_balance="CREDIT"),
+        LedgerAccount(code=1120, name="Servicer Escrow Reserve: PNC Mortgage", account_type="ASSET", normal_balance="DEBIT"),
+        LedgerAccount(code=2130, name="Mortgage Debt: CrossCountry (1000000003)", account_type="LIABILITY", normal_balance="CREDIT"),
+        LedgerAccount(code=2135, name="Mortgage Clearing: CrossCountry", account_type="LIABILITY", normal_balance="CREDIT"),
+        LedgerAccount(code=1130, name="Servicer Escrow Reserve: CrossCountry", account_type="ASSET", normal_balance="DEBIT"),
+    ])
+    session.flush()
+
+    # CrossCountry's loan is created FIRST, so position-based adoption would give it
+    # Rocket's accounts.
+    for index, (loan_number, institution, expected) in enumerate((
+        ("1000000003", "inst_ccm", (2130, 2135, 1130)),
+        ("1000000001", "inst_rocket", (2110, 2115, 1110)),
+        ("1000000002", "inst_pnc", (2120, 2125, 1120)),
+    )):
+        prop = Property(
+            id=f"prop_pair_{index}", name=f"Door {index}", address_line1=f"{index} St",
+            city="Springfield", zip_code="62701", property_type="RENTAL_INVESTMENT",
+            created_at=BASE + timedelta(minutes=index),
+        )
+        account = FinancialAccount(
+            id=f"acct_pair_{index}", institution_id=institution, account_name="Servicing",
+            account_type="MORTGAGE", account_number_masked="...0000",
+            created_at=BASE + timedelta(hours=1, minutes=index),
+        )
+        session.add(prop)
+        session.add(account)
+        session.flush()
+        session.add(LoanAccount(
+            id=f"loan_pair_{index}", financial_account_id=account.id, property_id=prop.id,
+            loan_number=loan_number, created_at=BASE + timedelta(hours=2, minutes=index),
+        ))
+    session.flush()
+
+    ensure_entity_ledger_accounts(session)
+
+    for index, (loan_number, _institution, expected) in enumerate((
+        ("1000000003", "inst_ccm", (2130, 2135, 1130)),
+        ("1000000001", "inst_rocket", (2110, 2115, 1110)),
+        ("1000000002", "inst_pnc", (2120, 2125, 1120)),
+    )):
+        loan = session.get(LoanAccount, f"loan_pair_{index}")
+        actual = (loan.principal_ledger_code, loan.clearing_ledger_code, loan.escrow_ledger_code)
+        assert actual == expected, f"loan {loan_number} was paired with {actual}, not {expected}"
+        # And the account it claimed really does name it.
+        servicer = session.get(LedgerAccount, actual[0]).name.upper()
+        assert loan_number in servicer, servicer
+
+
+def test_identity_matching_ignores_words_that_describe_the_account(session: Session):
+    """Only distinctive tokens identify an account.
+
+    Every clearing account contains "Mortgage", and several contain "Bank", so matching
+    on those would pair a loan with whichever account came first. The words are filtered
+    out, and a token must be long enough to be specific; what remains is the loan number
+    or the servicer's own name.
+    """
+    from proptally.domain.accounting.coa import _adopt_by_identity
+
+    session.add_all([
+        LedgerAccount(code=2115, name="Mortgage Clearing: Rocket", account_type="LIABILITY", normal_balance="CREDIT"),
+        LedgerAccount(code=2125, name="Mortgage Clearing: Someone Else Bank", account_type="LIABILITY", normal_balance="CREDIT"),
+    ])
+    session.flush()
+
+    # Generic words alone identify nothing, so nothing is adopted: the caller falls back
+    # to the next free account in the class's range.
+    assert _adopt_by_identity(session, MORTGAGE_CLEARING, ("Mortgage Bank",), claimed=set()) is None
+    assert _adopt_by_identity(session, MORTGAGE_CLEARING, ("Clearing", "Account"), claimed=set()) is None
+    assert _adopt_by_identity(session, MORTGAGE_CLEARING, ("",), claimed=set()) is None
+
+    # A distinctive token does identify its account -- including a shortened form of an
+    # institution's name and a three-character servicer.
+    assert _adopt_by_identity(session, MORTGAGE_CLEARING, ("Rocket Mortgage",), claimed=set()) == 2115
+    assert _adopt_by_identity(session, MORTGAGE_CLEARING, ("Rocket",), claimed=set()) == 2115
+    assert _adopt_by_identity(session, MORTGAGE_CLEARING, ("Somebody Else Bank",), claimed=set()) == 2125
+
+    # An account already claimed by another entity is not offered again.
+    assert _adopt_by_identity(session, MORTGAGE_CLEARING, ("Rocket",), claimed={2115}) is None

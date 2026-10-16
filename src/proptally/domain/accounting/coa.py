@@ -28,6 +28,8 @@ is what lets a migrated database keep classifying its existing journal lines
 identically.
 """
 
+import re
+from collections.abc import Sequence
 from typing import Dict, List, Optional, Tuple
 
 from sqlmodel import Session, select
@@ -35,6 +37,7 @@ from sqlmodel import Session, select
 from proptally.core.exceptions import LedgerCodeExhaustedError
 from proptally.db.models import (
     FinancialAccount,
+    FinancialInstitution,
     LedgerAccount,
     LoanAccount,
     Property,
@@ -205,10 +208,94 @@ def _claimed_codes(session: Session) -> set:
     return claimed
 
 
+#: Words that say what an account *is* rather than *whose* it is. Matching on one of
+#: these would pair an entity with an account belonging to somebody else.
+_GENERIC_ACCOUNT_WORDS = frozenset({
+    "MORTGAGE", "BANK", "SERVICER", "CLEARING", "RESERVE", "ASSET", "DEBT", "LOAN",
+    "ACCOUNT", "CHECKING", "SAVINGS", "CARD", "CREDIT", "DEPOSIT", "THE", "AND", "OF",
+    "INC", "LLC", "LTD", "CO", "ESCROW", "PROPERTY",
+})
+
+#: Shortest token that can identify an entity. Three characters covers real servicers
+#: ("PNC") and is still far too specific to match by accident.
+_MIN_TOKEN = 3
+
+
+def _identity_needles(identity_tokens: Sequence[str]) -> list[str]:
+    """The distinctive strings to look for in an account's name.
+
+    A token is used whole ("1000000001", "...9456") and also word by word, because a
+    chart may name an account after part of an institution ("Rocket" for "Rocket
+    Mortgage"). Words that describe the account's kind rather than its owner are dropped.
+    """
+    needles: list[str] = []
+    for token in identity_tokens:
+        text = str(token or "").strip().upper()
+        if not text:
+            continue
+        if len(text) >= _MIN_TOKEN and text not in _GENERIC_ACCOUNT_WORDS:
+            needles.append(text)
+        for word in re.split(r"[^A-Z0-9]+", text):
+            if len(word) >= _MIN_TOKEN and word not in _GENERIC_ACCOUNT_WORDS:
+                needles.append(word)
+    # Longer needles are stronger, so duplicates are harmless; keep the list small.
+    return list(dict.fromkeys(needles))
+
+
+def _adopt_by_identity(
+    session: Session,
+    allocation_class: str,
+    identity_tokens: Sequence[str],
+    *,
+    claimed: set,
+) -> Optional[int]:
+    """An unclaimed existing account whose *name* identifies this entity.
+
+    A chart of accounts written before per-entity codes named its accounts after the
+    entity they belong to -- "Mortgage Debt: Rocket (1000000001)", "Bank of America
+    Checking (...9456)", "Property Asset: 12307 Larkspur St". Those names are the only
+    record of which account belongs to which loan, and allocating by position instead
+    pairs them wrongly whenever the entity order differs from the order the accounts
+    were created in: the totals still add up, because the same accounts are in use, but
+    each door's debt and interest are crossed with another's.
+
+    Tokens are tried in order of how identifying they are (a loan number before a
+    servicer name), and only against accounts of the right type inside this class's
+    range, so a short or generic token cannot capture an unrelated account.
+    """
+    expected_type = _CLASS_SHAPE[allocation_class][0]
+    candidates = [
+        code
+        for start, stop, step in ALLOCATION_RANGES[allocation_class]
+        for code in range(start, stop + 1, step)
+        if code not in claimed
+    ]
+    if not candidates:
+        return None
+    rows = session.exec(select(LedgerAccount).where(LedgerAccount.code.in_(candidates))).all()
+    by_code = {row.code: row for row in rows}
+
+    needles = _identity_needles(identity_tokens)
+    # Longest first: "CrossCountry" identifies its account where "PNC" would not, and a
+    # full loan number beats a servicer's name.
+    for needle in sorted(needles, key=len, reverse=True):
+        for code in candidates:
+            row = by_code.get(code)
+            if row is None or row.account_type != expected_type:
+                continue
+            name = (row.name or "").upper()
+            # Either direction: a chart may name the account "Rocket" from an institution
+            # called "Rocket Mortgage", or the reverse.
+            if needle in name or (len(name) >= 3 and name in needle):
+                return code
+    return None
+
+
 def _resolve_code(
     session: Session,
     allocation_class: str,
     *,
+    identity_tokens: Sequence[str] = (),
     existing_types: Optional[dict] = None,
     claimed: Optional[set] = None,
 ) -> tuple:
@@ -230,6 +317,12 @@ def _resolve_code(
     expected_type = _CLASS_SHAPE[allocation_class][0]
     standard_codes = {spec["code"] for spec in STANDARD_ACCOUNTS}
 
+    # Identity first: an existing account that names this entity is its account, whatever
+    # position it happens to occupy in the range.
+    adopted = _adopt_by_identity(session, allocation_class, identity_tokens, claimed=claimed)
+    if adopted is not None:
+        return adopted, adopted
+
     for start, stop, step in ALLOCATION_RANGES[allocation_class]:
         for code in range(start, stop + 1, step):
             if code in claimed or code in standard_codes:
@@ -250,6 +343,7 @@ def allocate_ledger_account(
     allocation_class: str,
     name: str,
     *,
+    identity_tokens: Sequence[str] = (),
     existing_types: Optional[dict] = None,
     claimed: Optional[set] = None,
 ) -> LedgerAccount:
@@ -262,7 +356,11 @@ def allocate_ledger_account(
         raise ValueError(f"Unknown ledger allocation class: {allocation_class!r}")
 
     code, existing = _resolve_code(
-        session, allocation_class, existing_types=existing_types, claimed=claimed
+        session,
+        allocation_class,
+        identity_tokens=identity_tokens,
+        existing_types=existing_types,
+        claimed=claimed,
     )
     if existing is not None:
         record = session.get(LedgerAccount, code)
@@ -279,6 +377,15 @@ def allocate_ledger_account(
     if existing_types is not None:
         existing_types[code] = account_type
     return record
+
+
+def _servicer_name(session: Session, loan: LoanAccount) -> str:
+    """The institution servicing the loan, as a pre-existing chart would have named it."""
+    account = session.get(FinancialAccount, loan.financial_account_id) if loan.financial_account_id else None
+    if account is None or not account.institution_id:
+        return ""
+    institution = session.get(FinancialInstitution, account.institution_id)
+    return institution.name if institution is not None else ""
 
 
 def _loan_label(session: Session, loan: LoanAccount) -> str:
@@ -303,16 +410,20 @@ def allocate_loan_ledger_accounts(
     debits clearing, and escrow funding debits the reserve.
     """
     label = _loan_label(session, loan)
+    servicer = _servicer_name(session, loan)
     principal = allocate_ledger_account(
-        session, MORTGAGE_PRINCIPAL, f"Mortgage Debt: {label}",
+        session, MORTGAGE_PRINCIPAL, f"Mortgage Debt: {servicer or label} ({loan.loan_number})",
+        identity_tokens=(loan.loan_number, servicer, label),
         existing_types=existing_types, claimed=claimed,
     )
     clearing = allocate_ledger_account(
-        session, MORTGAGE_CLEARING, f"Mortgage Clearing: {label}",
+        session, MORTGAGE_CLEARING, f"Mortgage Clearing: {servicer or label}",
+        identity_tokens=(servicer, label, loan.loan_number),
         existing_types=existing_types, claimed=claimed,
     )
     escrow = allocate_ledger_account(
-        session, ESCROW, f"Servicer Escrow Reserve: {label}",
+        session, ESCROW, f"Servicer Escrow Reserve: {servicer or label}",
+        identity_tokens=(servicer, label),
         existing_types=existing_types, claimed=claimed,
     )
     loan.principal_ledger_code = principal.code
@@ -344,6 +455,10 @@ def allocate_account_ledger_account(
 
     record = allocate_ledger_account(
         session, allocation_class, f"{prefix}: {account.account_name}",
+        identity_tokens=(
+            account.account_number_masked.lstrip(".xX") if account.account_number_masked else "",
+            account.account_name,
+        ),
         existing_types=existing_types, claimed=claimed,
     )
     account.ledger_account_code = record.code
@@ -362,6 +477,7 @@ def allocate_property_ledger_account(
     """Assigns the fixed-asset ledger account for one property."""
     record = allocate_ledger_account(
         session, PROPERTY_ASSET, f"Property Asset: {prop.name or prop.address_line1 or prop.id}",
+        identity_tokens=(prop.address_line1, prop.name, prop.short_label),
         existing_types=existing_types, claimed=claimed,
     )
     prop.asset_ledger_code = record.code
