@@ -138,9 +138,42 @@ databases, and the session handed to a route can only reach that file. See
 ### Roles
 | Role | Can |
 | :--- | :--- |
-| `OWNER` | Everything in the portfolio: setup, import, post, invite, back up. |
+| `OWNER` | Everything in the portfolio: setup, import, post, invite, export, remove. |
 | `CPA_REVIEWER` | Read, and record the external review a Schedule E deduction requires. |
-| `READ_ONLY` | Read and export only; every state-changing request is refused. |
+| `READ_ONLY` | Read only. |
+
+### Running more than one worker
+
+One process is the recommended deployment: `python main.py` starts a single uvicorn
+process, and for a household or an investor with 1–10 doors that is ample. Running
+several processes is **supported** when you need it — typically to keep statement
+parsing, which is CPU-bound, from delaying other requests.
+
+What is safe to share, and what is not:
+
+| | Behaviour with N processes |
+| :--- | :--- |
+| Accounts, portfolios, memberships, invitations, **sessions** | Shared. They live in `storage/system.db`, so a session issued by one worker is honoured by every other, and signing out or changing a password applies everywhere. |
+| Portfolio databases | Shared safely. Each is SQLite in WAL mode, which supports concurrent processes; connections use a 10-second `busy_timeout`, so a writer waits rather than failing. |
+| Start-up demo seeding | Race-safe. If several processes start at once, one seeds and the rest treat it as done (and finish it if it was interrupted). |
+| **Login throttling** | **Per process.** The 5-attempts-per-15-minutes limit is an in-memory counter, so N workers effectively allow N× the attempts. It is a speed bump, not an authorization control; if you need a hard limit under multiple workers, that counter has to move into `system.db` first. |
+| Per-process caches | Multiplied. Each worker keeps its own database handles and caches, so file handles and memory grow with the worker count. |
+| Write throughput | Unchanged. SQLite allows one writer at a time, so extra workers add concurrency for reads and for requests that do not write, not write capacity. |
+
+A multi-worker command, if you need one:
+
+```bash
+PYTHONPATH=src PROPTALLY_HOST=127.0.0.1 gunicorn \
+  -w 4 -k uvicorn.workers.UvicornWorker proptally.web.app:app
+```
+
+Every worker must share the same `PROPTALLY_STORAGE_ROOT`. Do not point workers at
+different roots while fronting them with one address: they would appear to be different
+instances with different accounts.
+
+Most of these properties are asserted by `tests/test_multitenant_deployment.py`, so the
+table above cannot drift away from the code.
+
 
 ---
 

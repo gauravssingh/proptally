@@ -457,9 +457,22 @@ to reversal.
   portfolio and opt-in from the UI, so the global flag has no place in a production
   deployment and can be dropped whenever it is convenient to remove the code path.
 
+* **Multi-worker deployment — decided: supported, single process recommended.**
+  Several processes against one storage root work, because the state that must be
+  shared (accounts, portfolios, memberships, invitations, sessions) lives in
+  `system.db` and each portfolio database is opened through SQLite's own multi-process
+  locking. Verified with two real processes on one root: a session issued by one is
+  honoured by the other, writes through either are visible on both, and signing out on
+  one invalidates the session on the other. Two things change with N workers and are
+  documented rather than hidden: login throttling is an in-memory counter per process,
+  so the effective allowance multiplies (the one behaviour a hard limit would need a
+  `system.db`-backed counter to fix), and per-process caches multiply file handles.
+  Write throughput does not improve, since SQLite serialises writers. Start-up demo
+  seeding is now race-safe, which it previously was not: the losers of that race used
+  to fail their worker's start-up. Stated in the README, in `ADR-010`, and asserted by
+  `tests/test_multitenant_deployment.py`.
+
 ### Still open for the user
-* Login throttling and the session store are per-process; a multi-worker deployment
-  multiplies the login allowance and re-opens databases per worker (`ADR-010`).
 * Whether a reviewer should be able to *edit across* several portfolios in one screen
   rather than switching between them. The read-only listing exists; batch operations
   across portfolios do not.

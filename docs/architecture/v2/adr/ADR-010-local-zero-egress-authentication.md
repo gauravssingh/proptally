@@ -59,8 +59,16 @@ We select **local, zero-egress authentication** (option 2).
 * **No multi-factor authentication**, no WebAuthn, and no SSO. An instance that must join
   an existing corporate identity provider is out of scope for this decision.
 * **Login throttling is in-process** (5 failures per 15 minutes per address+email pair).
-  It is a speed bump for a single self-hosted service, not a distributed rate limiter;
-  running multiple worker processes multiplies the effective allowance.
+  It is a speed bump for a single self-hosted service, not a distributed rate limiter:
+  a deployment running N worker processes allows roughly N× the attempts, because each
+  process keeps its own counter. Everything else that must be shared already is —
+  sessions, password changes and revocations are rows in the control-plane database, so
+  those hold across workers. Making the throttle hold too means storing attempt
+  timestamps in `system.db` and counting them on read; that is a small change, and it
+  is the one thing to do before running multiple workers if a hard attempt limit
+  matters. Running more than one worker is otherwise supported and documented in the
+  README, with `tests/test_multitenant_deployment.py` asserting both the shared
+  behaviour and this exception.
 * **Session data is server-side and single-database.** A session is valid only on the
   instance whose control plane holds it; there is no cross-instance session sharing.
 

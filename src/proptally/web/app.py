@@ -228,12 +228,22 @@ def create_app(
     app.state.tenant_manager = tenant_manager
     app.state.auth_dependency = auth_dep
     app.state.session_dependency = session_dep
+    # Exposed for inspection: this limiter is deliberately per-process, which is the one
+    # behaviour a multi-worker deployment changes (see ADR-010).
+    app.state.login_rate_limiter = rate_limiter
 
     return app
 
 
 def _seed_demo_portfolio(control_engine, tenant_manager: TenantManager) -> None:
     """Creates a demo account and portfolio on a fresh instance, if none exists.
+
+    Safe to run simultaneously in several processes, which is what happens when the
+    instance is started with more than one worker: the existence check below is
+    check-then-act, so two workers can both conclude the instance is empty. The loser
+    of that race loses on the unique email and is treated as "already seeded" rather
+    than being allowed to fail startup, and it finishes the part that may still be
+    missing (the demo data itself) so a crash between the two steps self-heals.
 
     The password must be supplied explicitly. It is never defaulted to a known value,
     and never generated-and-logged: writing a credential to the application log would
@@ -242,17 +252,8 @@ def _seed_demo_portfolio(control_engine, tenant_manager: TenantManager) -> None:
     """
     from sqlmodel import select
 
-    from proptally.db.system_models import Tenant, User
+    from proptally.db.models import Property
     from proptally.domain.fixtures.demo_seed import seed_demo_data
-
-    with Session(control_engine) as session:
-        if session.exec(select(User)).first() is not None:
-            return
-        tenants = session.exec(select(Tenant)).all()
-        if tenants:
-            return
-
-    from proptally.web.auth import register_portfolio
 
     email = os.environ.get("PROPTALLY_DEMO_EMAIL", "demo@proptally.local")
     password = os.environ.get("PROPTALLY_DEMO_PASSWORD")
@@ -264,15 +265,51 @@ def _seed_demo_portfolio(control_engine, tenant_manager: TenantManager) -> None:
         )
         return
 
-    _user, tenant, _ = register_portfolio(
-        control_engine, tenant_manager,
-        email=email,
-        password=password,
-        display_name="Demo Owner",
-        portfolio_name="Demo Portfolio",
-    )
-    with Session(tenant_manager.engine_for(tenant.id)) as session:
-        seed_demo_data(session)
+    tenant_id = _existing_demo_tenant(control_engine, email)
+    if tenant_id is None:
+        from proptally.web.auth import register_portfolio
+
+        try:
+            _user, tenant, _ = register_portfolio(
+                control_engine, tenant_manager,
+                email=email,
+                password=password,
+                display_name="Demo Owner",
+                portfolio_name="Demo Portfolio",
+            )
+            tenant_id = tenant.id
+        except ValueError as exc:
+            # Another process created the account between the check and the insert, or
+            # the instance was already seeded. Find whatever it created and finish the
+            # remaining step if it is still missing.
+            tenant_id = _existing_demo_tenant(control_engine, email)
+            if tenant_id is None:
+                logger.info("Demo portfolio not seeded by this process: %s", exc)
+                return
+
+    with Session(tenant_manager.engine_for(tenant_id)) as session:
+        if session.exec(select(Property)).first() is None:
+            seed_demo_data(session)
+        else:
+            logger.info("Demo portfolio already present in tenant %s", tenant_id)
+
+
+def _existing_demo_tenant(control_engine, email: str):
+    """The demo account's portfolio id, when the account already exists."""
+    from sqlmodel import select
+
+    from proptally.db.system_models import TenantMembership, User
+
+    with Session(control_engine) as session:
+        user = session.exec(select(User).where(User.email == email.lower())).first()
+        if user is None:
+            return None
+        membership = session.exec(
+            select(TenantMembership)
+            .where(TenantMembership.user_id == user.id)
+            .order_by(TenantMembership.created_at)
+        ).first()
+        return membership.tenant_id if membership else None
 
 
 # Default app instance for uvicorn. Real deployments should set PROPTALLY_* env
