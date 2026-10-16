@@ -39,8 +39,31 @@
                 {# Heading kept for screen-reader structure only. #}
                 <h1 class="pt-sr-only" tabindex="-1" data-pane-heading>Sign in to PropTally</h1>
 
-                {% if error %}
-                <div class="mt-6">{{ ui.alert(variant="error", title="Could not sign in", text=error) }}</div>
+                {# One failure, one sentence, and always a way forward. The route names
+                   what happened; the words and the recovery live here. #}
+                {% set failures = {
+                    "credentials": {
+                        "title": "That email and password did not match",
+                        "text": 'Check both and try again, or <a class="auth-link" href="/auth/reset" data-pane-toggle="forgot">ask for a reset token</a>.',
+                    },
+                    "throttled": {
+                        "title": "One moment",
+                        "text": "Too many attempts just now, so sign-in is paused for a few minutes. Nothing is wrong with your account.",
+                    },
+                    "expired": {
+                        "title": "That took a while",
+                        "text": "The form timed out and nothing was submitted. Try again.",
+                    },
+                    "nomember": {
+                        "title": "No portfolio on this account",
+                        "text": "Your sign-in worked, but this account is not in a portfolio yet. Ask the installation operator to add you to one.",
+                    },
+                } %}
+                {% if error_kind %}
+                {% set failure = failures.get(error_kind, {"title": "Could not sign in", "text": "Please try again."}) %}
+                <div class="auth-reveal mt-6">
+                    {{ ui.alert(variant="error", title=failure.title, text=failure.text) }}
+                </div>
                 {% endif %}
 
                 <form method="post" action="/auth/login" class="mt-6" data-loading-form>
@@ -55,7 +78,9 @@
                                 <input class="bg-white/95 backdrop-blur-xl border-2 border-white rounded-xl shadow-lg"
                                        type="email" id="email" name="email" value="{{ email or '' }}"
                                        placeholder="name@company.com"
-                                       required aria-required="true" autocomplete="email" autofocus>
+                                       {% if error_kind == 'credentials' %}aria-invalid="true"{% endif %}
+                                       required aria-required="true" autocomplete="email"
+                                       {% if not error_kind %}autofocus{% endif %}>
                             </div>
                         </div>
 
@@ -70,7 +95,9 @@
                                 <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("lock", "md") }}</span>
                                 <input class="bg-white/95 backdrop-blur-xl border-2 border-white rounded-xl shadow-lg"
                                        type="password" id="password" name="password"
-                                       required aria-required="true" autocomplete="current-password">
+                                       {% if error_kind == 'credentials' %}aria-invalid="true"{% endif %}
+                                       required aria-required="true" autocomplete="current-password"
+                                       {% if error_kind == 'credentials' %}autofocus{% endif %}>
                                 <button type="button" class="auth-toggle"
                                         data-password-toggle="password"
                                         aria-controls="password" aria-pressed="false"
@@ -105,10 +132,10 @@
                server has a verdict to show (pane == "forgot"). #}
             <div class="auth-pane" data-pane="forgot"{% if pane != 'forgot' %} hidden{% endif %}>
                 <h2 class="auth-pane__title" tabindex="-1" data-pane-heading>Reset your password</h2>
-                <div class="mt-2">{% include "components/reset_help.html" %}</div>
+                {% include "components/reset_help.html" %}
 
                 {% if reset_error %}
-                <div class="mt-2">{{ ui.alert(variant="error", title="Token not accepted", text=reset_error) }}</div>
+                <div class="mt-6">{{ ui.alert(variant="error", title="Token not accepted", text=reset_error) }}</div>
                 {% endif %}
 
                 {# The token is checked here, then the holder is sent on to set a

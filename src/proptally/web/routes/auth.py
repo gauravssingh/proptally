@@ -168,18 +168,22 @@ def get_auth_router(
     def _render_login(
         request: Request,
         *,
-        error: Optional[str] = None,
+        error_kind: Optional[str] = None,
         reset_error: Optional[str] = None,
         pane: Optional[str] = None,
         email: str = "",
         next_url: str = "/",
     ):
-        """Render the sign-in box, optionally on its reset step with a verdict."""
+        """Render the sign-in box, optionally with a verdict on the last attempt.
+
+        The route names what happened (``error_kind``); the template owns the words and
+        the recovery actions, so a failure reads the same wherever it is raised.
+        """
         csrf_token, set_cookie = issue_pre_session_csrf(request)
         return _render(
             templates, request, "login.html",
             {
-                "error": error,
+                "error_kind": error_kind,
                 "reset_error": reset_error,
                 "pane": pane,
                 "email": email,
@@ -211,42 +215,27 @@ def get_auth_router(
     ):
         csrf_token, set_cookie = issue_pre_session_csrf(request)
         if not pre_session_csrf_valid(request, csrf_token):
-            return _render(
-                templates, request, "login.html",
-                {"error": "Your sign-in form expired. Please try again.", "email": email,
-                 "next_url": _safe_next(next), "registration_open": registration_is_open(control_engine)},
-                csrf_token=csrf_token, set_cookie=set_cookie,
+            return _render_login(
+                request, error_kind="expired", email=email, next_url=_safe_next(next)
             )
 
         ip = _client_ip(request)
         if rate_limiter.is_blocked(ip, email):
-            return _render(
-                templates, request, "login.html",
-                {"error": "Too many failed attempts. Wait a few minutes and try again.",
-                 "email": email, "next_url": _safe_next(next),
-                 "registration_open": registration_is_open(control_engine)},
-                csrf_token=csrf_token, set_cookie=set_cookie,
+            return _render_login(
+                request, error_kind="throttled", email=email, next_url=_safe_next(next)
             )
 
         user = authenticate(control_engine, email, password)
         if user is None:
             rate_limiter.record_failure(ip, email)
-            return _render(
-                templates, request, "login.html",
-                {"error": "Email or password is incorrect.", "email": email,
-                 "next_url": _safe_next(next), "registration_open": registration_is_open(control_engine)},
-                csrf_token=csrf_token, set_cookie=set_cookie,
+            return _render_login(
+                request, error_kind="credentials", email=email, next_url=_safe_next(next)
             )
 
         rate_limiter.clear(ip, email)
         memberships = memberships_for(control_engine, user.id)
         if not memberships:
-            return _render(
-                templates, request, "login.html",
-                {"error": "This account is not a member of any portfolio.",
-                 "email": email, "next_url": "/", "registration_open": registration_is_open(control_engine)},
-                csrf_token=csrf_token, set_cookie=set_cookie,
-            )
+            return _render_login(request, error_kind="nomember", email=email)
 
         token, _ = issue_session(
             control_engine, user, memberships[0].tenant_id,
