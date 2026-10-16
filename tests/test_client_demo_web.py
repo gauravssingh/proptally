@@ -27,8 +27,8 @@ def test_dashboard_overview_renders_successfully(client: TestClient):
     assert "Rental Portfolio NOI" in html
     assert "Net Cash Flow (CADS)" in html
     assert "12307 Larkspur St" in html
-    assert "582 Foxglove Ct" in html
-    assert "1017 Elderberry Dr" in html
+    assert "2718 Foxglove Ct" in html
+    assert "3345 Elderberry Dr" in html
     assert "PRIMARY RESIDENCE" in html
     assert "CBD REVIEW" in html  # Review queue alert
 
@@ -52,13 +52,13 @@ def test_property_detail_views(client: TestClient):
     # 2. Maple Cir (Rental Door)
     resp_cim = client.get("/properties/prop_cimmaron_pingree")
     assert resp_cim.status_code == 200
-    assert "582 Foxglove Ct" in resp_cim.text
+    assert "2718 Foxglove Ct" in resp_cim.text
     assert "Account 0700000002" in resp_cim.text
 
     # 3. Elderberry Dr (Primary Residence)
     resp_rowan = client.get("/properties/prop_burkey_algonquin")
     assert resp_rowan.status_code == 200
-    assert "1017 Elderberry Dr" in resp_rowan.text
+    assert "3345 Elderberry Dr" in resp_rowan.text
     assert "PRIMARY RESIDENCE" in resp_rowan.text
 
 

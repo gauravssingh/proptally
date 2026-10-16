@@ -193,7 +193,7 @@ All source files in `./data/statements` are verified native vector PDFs.
 
 ### 4.2 PNC Mortgage (`PNCMortgageParser`)
 * **Fingerprint:** Text matches `"PNC Bank"`, Account ending in `"0708"` or `"0700000002"`.
-* **Property:** `582 Foxglove Ct, Harborview, IL 60197`.
+* **Property:** `2718 Foxglove Ct, Harborview, IL 60197`.
 * **Monthly Statement Contract:**
   * Extracts: Statement Date, Payment Due Date, Principal ($521.79 $\rightarrow$ `52179`), Interest ($438.37 $\rightarrow$ `43837`), Escrow ($841.32 $\rightarrow$ `84132`), Total Due ($1,801.48 $\rightarrow$ `180148`), Outstanding Principal ($210,419.62 $\rightarrow$ `21041962`), Interest Rate (2.500% $\rightarrow$ `2500`, thousandths of a percent).
 * **Escrow Analysis Contract:**
@@ -203,7 +203,7 @@ All source files in `./data/statements` are verified native vector PDFs.
 
 ### 4.3 CrossCountry Mortgage (`CrossCountryMortgageParser`)
 * **Fingerprint:** Text matches `"CROSSCOUNTRY MORTGAGE"`, Loan Number `"0700000003"`.
-* **Property:** `1017 Elderberry Dr, Cedar Grove, IL 60198` (Primary Residence).
+* **Property:** `3345 Elderberry Dr, Cedar Grove, IL 60198` (Primary Residence).
 * **Fields Extracted:** Statement Date, Payment Due Date, Principal Due, Interest Due, Escrow Due, Amount Due.
 
 ### 4.4 Bank of America Checking (`BofACheckingParser`)

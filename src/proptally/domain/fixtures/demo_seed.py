@@ -53,8 +53,8 @@ def seed_demo_data(session: Session) -> None:
     )
     foxglove = Property(
         id="prop_cimmaron_pingree",
-        name="582 Foxglove Ct",
-        address_line1="582 Foxglove Ct",
+        name="2718 Foxglove Ct",
+        address_line1="2718 Foxglove Ct",
         city="Oakhaven",
         state="IL",
         zip_code="60199",
@@ -66,8 +66,8 @@ def seed_demo_data(session: Session) -> None:
     )
     elderberry = Property(
         id="prop_burkey_algonquin",
-        name="1017 Elderberry Dr",
-        address_line1="1017 Elderberry Dr",
+        name="3345 Elderberry Dr",
+        address_line1="3345 Elderberry Dr",
         city="Cedar Grove",
         state="IL",
         zip_code="60198",

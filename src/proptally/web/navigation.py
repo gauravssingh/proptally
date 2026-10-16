@@ -42,8 +42,8 @@ class NavSection:
 #: Doors grouped ahead of the primary residence, as in the portfolio view.
 DOOR_SHORT_LABELS = {
     "prop_tinsley_huntley": "12307 Larkspur St",
-    "prop_cimmaron_pingree": "582 Foxglove Ct",
-    "prop_burkey_algonquin": "1017 Elderberry Dr",
+    "prop_cimmaron_pingree": "2718 Foxglove Ct",
+    "prop_burkey_algonquin": "3345 Elderberry Dr",
 }
 
 _STREET_SUFFIXES = {

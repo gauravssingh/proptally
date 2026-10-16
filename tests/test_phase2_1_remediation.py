@@ -56,7 +56,7 @@ def env_fixture(session: Session):
         zip_code="60196", property_type="RENTAL_INVESTMENT", purchase_price_cents=42500000,
     )
     elderberry = Property(
-        id=ELDERBERRY, name="Elderberry", address_line1="1017 Elderberry Dr", city="Cedar Grove",
+        id=ELDERBERRY, name="Elderberry", address_line1="3345 Elderberry Dr", city="Cedar Grove",
         zip_code="60198", property_type="PRIMARY_RESIDENCE", purchase_price_cents=65000000,
     )
     session.add(larkspur)

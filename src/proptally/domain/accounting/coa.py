@@ -12,8 +12,8 @@ STANDARD_ACCOUNTS: List[Dict[str, Any]] = [
     {"code": 1130, "name": "Servicer Escrow Reserve: CrossCountry", "account_type": "ASSET", "normal_balance": "DEBIT"},
     {"code": 1210, "name": "Rent Receivable (Accrued)", "account_type": "ASSET", "normal_balance": "DEBIT"},
     {"code": 1510, "name": "Property Asset: 12307 Larkspur St", "account_type": "ASSET", "normal_balance": "DEBIT"},
-    {"code": 1520, "name": "Property Asset: 582 Foxglove Ct", "account_type": "ASSET", "normal_balance": "DEBIT"},
-    {"code": 1530, "name": "Property Asset: 1017 Elderberry Dr", "account_type": "ASSET", "normal_balance": "DEBIT"},
+    {"code": 1520, "name": "Property Asset: 2718 Foxglove Ct", "account_type": "ASSET", "normal_balance": "DEBIT"},
+    {"code": 1530, "name": "Property Asset: 3345 Elderberry Dr", "account_type": "ASSET", "normal_balance": "DEBIT"},
 
     # 2000-2999: Liabilities (Normal balance: CREDIT)
     {"code": 2010, "name": "Bank of America Visa (...9306)", "account_type": "LIABILITY", "normal_balance": "CREDIT"},
@@ -33,7 +33,7 @@ STANDARD_ACCOUNTS: List[Dict[str, Any]] = [
     # 4000-4999: Income (Normal balance: CREDIT)
     {"code": 4010, "name": "Rental Income: 12307 Larkspur St", "account_type": "INCOME", "normal_balance": "CREDIT"},
     {"code": 4015, "name": "Fee Income: 12307 Larkspur St", "account_type": "INCOME", "normal_balance": "CREDIT"},
-    {"code": 4020, "name": "Rental Income: 582 Foxglove Ct", "account_type": "INCOME", "normal_balance": "CREDIT"},
+    {"code": 4020, "name": "Rental Income: 2718 Foxglove Ct", "account_type": "INCOME", "normal_balance": "CREDIT"},
 
     # 5000-5999: Expenses & Draws (Normal balance: DEBIT)
     {"code": 5010, "name": "Mortgage Interest Expense", "account_type": "EXPENSE", "normal_balance": "DEBIT"},

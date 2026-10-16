@@ -43,8 +43,8 @@ from proptally.ingestion.parsers import (
 
 PROPERTY_DEFAULTS = {
     "prop_tinsley_huntley": ("12307 Larkspur St", "12307 Larkspur St", "Westbrook", "60196", "RENTAL_INVESTMENT"),
-    "prop_cimmaron_pingree": ("582 Foxglove Ct", "582 Foxglove Ct", "Oakhaven", "60199", "RENTAL_INVESTMENT"),
-    "prop_burkey_algonquin": ("1017 Elderberry Dr", "1017 Elderberry Dr", "Cedar Grove", "60198", "PRIMARY_RESIDENCE"),
+    "prop_cimmaron_pingree": ("2718 Foxglove Ct", "2718 Foxglove Ct", "Oakhaven", "60199", "RENTAL_INVESTMENT"),
+    "prop_burkey_algonquin": ("3345 Elderberry Dr", "3345 Elderberry Dr", "Cedar Grove", "60198", "PRIMARY_RESIDENCE"),
 }
 LOANS = {
     "loan_rocket_1000000001": ("Rocket Mortgage", "acct_rocket_5035", "0700000001", "prop_tinsley_huntley"),
