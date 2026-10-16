@@ -144,15 +144,28 @@
       <stop offset="100%" stop-color="#10B981" stop-opacity="0"/>
     </radialGradient>
 
-    <!-- Architectural Drop Shadow for Active Portfolio Homes -->
-    <filter id="activeHouseShadow" x="-10%" y="-10%" width="120%" height="125%">
-      <feDropShadow dx="0" dy="12" stdDeviation="10" flood-color="#0F172A" flood-opacity="0.18"/>
+    <!-- Architectural Drop Shadow for Active Portfolio Homes. The sun sits at the
+         upper right (1210,185), so shadows fall down and to the left; a straight
+         downward offset said the light was overhead. The filter region is widened
+         to the left to leave room for the offset and its blur. -->
+    <filter id="activeHouseShadow" x="-15%" y="-10%" width="130%" height="125%">
+      <feDropShadow dx="-8" dy="12" stdDeviation="9" flood-color="#0F172A" flood-opacity="0.32"/>
     </filter>
 
     <!-- Soft Shadow for Neutral Background Homes -->
-    <filter id="neutralHouseShadow" x="-5%" y="-5%" width="110%" height="115%">
-      <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#1E293B" flood-opacity="0.09"/>
+    <filter id="neutralHouseShadow" x="-22%" y="-5%" width="144%" height="115%">
+      <feDropShadow dx="-4" dy="5" stdDeviation="4" flood-color="#1E293B" flood-opacity="0.15"/>
     </filter>
+
+    <!-- Shade lying on grass. A radial gradient rather than a blurred ellipse: at
+         these sizes a blur spreads the alpha so thin the shadow stops being visible
+         at all, which is what measuring the rendered pixels showed - 2 to 6 levels
+         out of 255 against 6 to 24 for the houses. -->
+    <radialGradient id="groundShade">
+      <stop offset="0%" stop-color="#0F172A" stop-opacity="0.30"/>
+      <stop offset="55%" stop-color="#0F172A" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#0F172A" stop-opacity="0"/>
+    </radialGradient>
 
     <!-- One leaf, drawn once: blade, midrib, stem. The blade takes the colour of
          whichever element uses it, so the pile can mix ambers while the rib and
@@ -290,7 +303,8 @@
        and flat: the scene's vehicles are 2D sprites, so an extruded one read as a
        different object pasted into the street. -->
   <g id="driveway-car" transform="translate(164 620)">
-    <ellipse cx="0" cy="3" rx="40" ry="8" fill="#0F172A" opacity="0.12"/>
+    <!-- Shadow thrown down and left, off the sun rather than straight under it. -->
+    <ellipse cx="-5" cy="3" rx="40" ry="8" fill="#0F172A" opacity="0.12"/>
     <rect x="-32" y="-12" width="12" height="22" rx="5" fill="#334155"/>
     <rect x="20" y="-12" width="12" height="22" rx="5" fill="#334155"/>
     <polygon points="-30,-30 -24,-54 24,-54 30,-30" fill="#94A3B8"/>
@@ -508,6 +522,19 @@
 
   <!-- ================= 7. TREES, SHRUBS & FOREGROUND FOLIAGE ================= -->
   <g id="suburban-trees-and-shrubs">
+    <!-- Contact shadows, offset down and left the way the houses' drop shadows now
+         fall. Only where the ground under a tree is actually visible: the ridge
+         tree at the far left stands behind a nearer tree's canopy, so its shade
+         would never have been seen, and it is left out. -->
+    <g fill="url(#groundShade)">
+      <ellipse cx="912" cy="545" rx="30" ry="9"/>
+      <ellipse cx="46" cy="742" rx="36" ry="10"/>
+      <ellipse cx="1272" cy="758" rx="56" ry="16"/>
+      <ellipse cx="62" cy="564" rx="18" ry="6"/>
+      <ellipse cx="242" cy="574" rx="22" ry="7"/>
+      <ellipse cx="270" cy="576" rx="14" ry="5"/>
+    </g>
+
     <rect x="24" y="485" width="9" height="82" fill="#6E4730" rx="2"/>
     <circle cx="28" cy="458" r="38" fill="#235732"/>
     <circle cx="12" cy="442" r="28" fill="#347846"/>
