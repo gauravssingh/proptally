@@ -51,17 +51,22 @@
     }
     .road-car { animation: ptDrive 50s linear infinite; }
 
-    /* Leaves coming down. Each leaf is its own element with its own delay, so they
-       arrive one at a time instead of as a single falling sheet. Origin at each
-       leaf's own centre so the spin reads as tumbling. */
+    /* One tree lets go of its leaves. Each leaf is its own element with its own
+       delay, so they come down one at a time; each stays where it lands for the
+       tail of its cycle, so the grass underneath gathers a pile and the wind
+       clears it again. Origin at each leaf's own centre, so the spin reads as
+       tumbling rather than as a swing around the viewBox corner. */
     @keyframes ptLeafFall {
-      0%   { transform: translate(-6px, -40px) rotate(0deg); }
-      25%  { transform: translate(8px, 205px) rotate(140deg); }
-      50%  { transform: translate(-7px, 445px) rotate(285deg); }
-      75%  { transform: translate(9px, 685px) rotate(430deg); }
-      100% { transform: translate(-4px, 965px) rotate(560deg); }
+      0%   { transform: translate(0px, 0px) rotate(-10deg); opacity: 0; }
+      3%   { transform: translate(-3px, 14px) rotate(14deg); opacity: 1; }
+      15%  { transform: translate(7px, 54px) rotate(104deg); opacity: 1; }
+      29%  { transform: translate(-8px, 96px) rotate(206deg); opacity: 1; }
+      45%  { transform: translate(6px, 140px) rotate(310deg); opacity: 1; }
+      58%  { transform: translate(-1px, 168px) rotate(392deg); opacity: 1; }
+      92%  { transform: translate(-1px, 168px) rotate(398deg); opacity: 1; }
+      100% { transform: translate(-1px, 168px) rotate(398deg); opacity: 0; }
     }
-    .leaf { animation: ptLeafFall 58s linear infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+    .leaf { animation: ptLeafFall 46s linear infinite backwards; transform-box: fill-box; transform-origin: 50% 50%; }
 
     /* CSS transforms on SVG elements default to rotating about the middle of the
        viewBox, which would slide these off their keyframes. Anchor them to the
@@ -71,7 +76,10 @@
 
     @media (prefers-reduced-motion: reduce) {
       .cloud-drift-slow, .pin-anim-1, .pin-anim-2, .pin-anim-3,
-      .sun-breathe, .kite, .bird-flock, .road-car, .leaf { animation: none; }
+      .sun-breathe, .kite, .bird-flock, .road-car { animation: none; }
+      /* The leaves stop rather than hang: the pile gathered on the grass is the
+         state that still says "autumn" without anything moving. */
+      .leaf { display: none; }
     }
   </style>
 
@@ -165,6 +173,16 @@
     <filter id="neutralHouseShadow" x="-5%" y="-5%" width="110%" height="115%">
       <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#1E293B" flood-opacity="0.09"/>
     </filter>
+
+    <!-- One leaf, drawn once: blade, midrib, stem. The blade takes the colour of
+         whichever element uses it, so the pile can mix ambers while the rib and
+         stem stay constant. A leaf this size needs the stem and the rib to read as
+         a leaf at all - a bare lens reads as a speck. -->
+    <g id="leaf-shape">
+      <path d="M0,-10 C6,-6 8,1 0,10 C-8,1 -6,-6 0,-10 Z" fill="currentColor"/>
+      <path d="M0,-9 L0,9" stroke="#B45309" stroke-width="1.1" opacity="0.65"/>
+      <path d="M0,10 L1,15" stroke="#6E4730" stroke-width="1.4" stroke-linecap="round"/>
+    </g>
   </defs>
 
   <!-- ================= 1. SKY, SUN & ATMOSPHERIC HALO ================= -->
@@ -201,13 +219,6 @@
     <g transform="translate(0 200)"><path d="M0,0 q4,-4 8,0 q4,-4 8,0"/></g>
     <g transform="translate(24 210) scale(0.85)"><path d="M0,0 q4,-4 8,0 q4,-4 8,0"/></g>
     <g transform="translate(44 196) scale(0.75)"><path d="M0,0 q4,-4 8,0 q4,-4 8,0"/></g>
-  </g>
-
-  <!-- Leaves coming down on the breeze, one at a time rather than as a sheet. -->
-  <g opacity="0.9">
-    <g transform="translate(262 0)"><g class="leaf"><path d="M0,-7 C5,-4 6,2 0,7 C-6,2 -5,-4 0,-7 Z" fill="#D97706"/></g></g>
-    <g transform="translate(452 0)"><g class="leaf" style="animation-delay:-24s"><path d="M-6,-5 C0,-8 6,-4 6,2 C6,6 0,7 -3,3 C-6,-1 -6,-3 -6,-5 Z" fill="#F59E0B"/></g></g>
-    <g transform="translate(1186 0)"><g class="leaf" style="animation-delay:-41s"><path d="M0,-6 C6,-3 7,3 1,7 C-5,4 -6,-2 0,-6 Z" fill="#D97706"/></g></g>
   </g>
 
   <!-- Distant Rolling Hills -->
@@ -546,6 +557,23 @@
     <circle cx="1315" cy="556" r="38" fill="#3E8450"/>
 
     <path d="M1080,900 Q1110,855 1155,865 Q1195,825 1250,848 Q1295,815 1350,845 Q1395,830 1440,860 L1440,900 Z" fill="#1A4225"/>
+  </g>
+
+  <!-- The big tree on the right shedding onto the grass under it. Four leaves come
+       down on staggered delays and stay where they land; the rest are already down,
+       so the pile is there to be found whether or not a leaf happens to be moving. -->
+  <g id="falling-leaves">
+    <g transform="translate(1252 592)"><g class="leaf" style="animation-delay:-4s;color:#D97706"><use href="#leaf-shape"/></g></g>
+    <g transform="translate(1284 600)"><g class="leaf" style="animation-delay:-15s;color:#F59E0B"><use href="#leaf-shape"/></g></g>
+    <g transform="translate(1316 586)"><g class="leaf" style="animation-delay:-26s;color:#D97706"><use href="#leaf-shape"/></g></g>
+    <g transform="translate(1298 596)"><g class="leaf" style="animation-delay:-37s;color:#F59E0B"><use href="#leaf-shape"/></g></g>
+
+    <!-- Already gathered, at the foot of the trunk. -->
+    <g transform="translate(1240 772) rotate(38)" style="color:#F59E0B"><use href="#leaf-shape"/></g>
+    <g transform="translate(1266 782) rotate(-24)" style="color:#D97706"><use href="#leaf-shape"/></g>
+    <g transform="translate(1291 770) rotate(104)" style="color:#F59E0B"><use href="#leaf-shape"/></g>
+    <g transform="translate(1312 784) rotate(-68)" style="color:#D97706"><use href="#leaf-shape"/></g>
+    <g transform="translate(1334 774) rotate(12)" style="color:#F59E0B"><use href="#leaf-shape"/></g>
   </g>
 
   <!-- ========================================================================= -->
