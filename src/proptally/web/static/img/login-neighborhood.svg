@@ -1,259 +1,455 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" style="display:block;">
+<svg id="proptallySceneSvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" style="display:block;">
+  <!-- Animations for the classes named below. They live inside the file because
+       this scene is served as an <img>: page CSS cannot reach it. Pins pulse by
+       opacity rather than transform, because a CSS transform would override each
+       pin group's own translate() attribute and drop it at the origin. -->
+  <style>
+    @keyframes ptCloudDrift { from { transform: translateX(-14px); } to { transform: translateX(14px); } }
+    .cloud-drift-slow { animation: ptCloudDrift 46s ease-in-out infinite alternate; }
+
+    @keyframes ptPinPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.68; } }
+    .pin-anim-1 { animation: ptPinPulse 4.6s ease-in-out infinite; }
+    .pin-anim-2 { animation: ptPinPulse 4.6s ease-in-out infinite 0.6s; }
+    .pin-anim-3 { animation: ptPinPulse 4.6s ease-in-out infinite 1.2s; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .cloud-drift-slow, .pin-anim-1, .pin-anim-2, .pin-anim-3 { animation: none; }
+    }
+  </style>
+
   <defs>
-    <!-- Sky & Sun Ambiance (fading across the entire 1440 width) -->
-    <linearGradient id="fullSky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#D7ECF9"/>
-      <stop offset="38%" stop-color="#EAF4FD"/>
-      <stop offset="72%" stop-color="#F4FAF7"/>
-      <stop offset="100%" stop-color="#E5F3EA"/>
+    <!-- Atmospheric Morning Sky Gradient -->
+    <linearGradient id="skyGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#89B4CC"/>
+      <stop offset="32%" stop-color="#B0D0E0"/>
+      <stop offset="65%" stop-color="#D6E6E8"/>
+      <stop offset="100%" stop-color="#E8EFE6"/>
     </linearGradient>
 
-    <!-- Warm Morning Sun -->
-    <radialGradient id="sunGlow" cx="42%" cy="17%" r="45%">
-      <stop offset="0%" stop-color="#FFFDF2" stop-opacity="0.95"/>
-      <stop offset="28%" stop-color="#FEEAA3" stop-opacity="0.45"/>
-      <stop offset="68%" stop-color="#FDE68A" stop-opacity="0.10"/>
+    <!-- Warm Morning Sun Bloom (Top Right) -->
+    <radialGradient id="sunBloom" cx="84%" cy="20%" r="38%">
+      <stop offset="0%" stop-color="#FFFDF5" stop-opacity="0.98"/>
+      <stop offset="22%" stop-color="#FDE68A" stop-opacity="0.65"/>
+      <stop offset="52%" stop-color="#FCD34D" stop-opacity="0.22"/>
       <stop offset="100%" stop-color="#FDE68A" stop-opacity="0"/>
     </radialGradient>
 
-    <!-- Lawn & Terrain Gradients -->
-    <linearGradient id="groundLawn" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#76C48F"/>
-      <stop offset="45%" stop-color="#489B66"/>
-      <stop offset="100%" stop-color="#286940"/>
+    <!-- Center Form Legibility Halo (Soft Atmospheric Brightening behind Login Area) -->
+    <radialGradient id="centerContrastHalo" cx="50%" cy="42%" r="32%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.78"/>
+      <stop offset="48%" stop-color="#F8FAFC" stop-opacity="0.45"/>
+      <stop offset="78%" stop-color="#E2F1F8" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#E2F1F8" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Distant & Mid-Ground Rolling Hill Gradients -->
+    <linearGradient id="distantRidgeGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#94BDA8"/>
+      <stop offset="100%" stop-color="#76A48D"/>
+    </linearGradient>
+    <linearGradient id="midValleyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#7BB08E"/>
+      <stop offset="100%" stop-color="#558E6B"/>
     </linearGradient>
 
-    <!-- Pavement & Driveway Gradients -->
-    <linearGradient id="asphaltRoad" x1="0" y1="0" x2="1" y2="1">
+    <!-- Foreground Rich Lawn Gradients -->
+    <linearGradient id="lawnLeftGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#68B678"/>
+      <stop offset="45%" stop-color="#48965A"/>
+      <stop offset="100%" stop-color="#2D6E3E"/>
+    </linearGradient>
+    <linearGradient id="lawnRightGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#5CA86E"/>
+      <stop offset="50%" stop-color="#3E8450"/>
+      <stop offset="100%" stop-color="#235732"/>
+    </linearGradient>
+
+    <!-- Sweeping Suburban Asphalt Road Gradient -->
+    <linearGradient id="asphaltGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#64748B"/>
+      <stop offset="45%" stop-color="#475569"/>
+      <stop offset="100%" stop-color="#334155"/>
+    </linearGradient>
+
+    <!-- Concrete Driveway & Curb Gradient -->
+    <linearGradient id="concreteGrad" x1="0%" y1="0%" x2="0%" y2="100%">
       <stop offset="0%" stop-color="#E2E8F0"/>
       <stop offset="100%" stop-color="#CBD5E1"/>
     </linearGradient>
 
-    <!-- Polished Reflective Window Glass -->
-    <linearGradient id="activeGlass" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#BAE6FD"/>
-      <stop offset="50%" stop-color="#93C5FD"/>
+    <!-- Active Portfolio Window Glass Reflection -->
+    <linearGradient id="activeWindowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#E0F2FE"/>
+      <stop offset="40%" stop-color="#93C5FD"/>
       <stop offset="100%" stop-color="#60A5FA"/>
     </linearGradient>
 
-    <!-- Soft Depth Shadow for Active Portfolio Properties -->
-    <filter id="focusShadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="16" stdDeviation="14" flood-color="#0F172A" flood-opacity="0.15"/>
+    <!-- Glowing Emerald Location Pin Gradient -->
+    <linearGradient id="pinBodyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#34D399"/>
+      <stop offset="55%" stop-color="#10B981"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+
+    <!-- Radial Green Halo Behind Location Pins -->
+    <radialGradient id="pinHaloGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#34D399" stop-opacity="0.7"/>
+      <stop offset="55%" stop-color="#10B981" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#10B981" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Architectural Drop Shadow for Active Portfolio Homes -->
+    <filter id="activeHouseShadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="12" stdDeviation="10" flood-color="#0F172A" flood-opacity="0.18"/>
     </filter>
 
-    <!-- Glowing Pin Markers -->
-    <filter id="glowPin" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#00684A" flood-opacity="0.35"/>
+    <!-- Soft Shadow for Neutral Background Homes -->
+    <filter id="neutralHouseShadow" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#1E293B" flood-opacity="0.09"/>
     </filter>
   </defs>
 
-  <!-- ================= 1. SKY & NATURAL AMBIANCE ================= -->
-  <rect width="1440" height="900" fill="url(#fullSky)"/>
-  <circle cx="480" cy="155" r="260" fill="url(#sunGlow)"/>
-  <circle cx="480" cy="155" r="44" fill="#FFFFFF" opacity="0.95"/>
+  <!-- ================= 1. SKY, SUN & ATMOSPHERIC HALO ================= -->
+  <rect width="1440" height="900" fill="url(#skyGradient)"/>
 
-  <!-- Distant Ridgelines & Woodlines -->
-  <path d="M0,450 Q280,420 580,445 T980,430 L1440,440 L1440,600 L0,600 Z" fill="#A7DCBA" opacity="0.45"/>
-  <path d="M0,480 Q320,455 680,475 T1040,465 L1440,470 L1440,640 L0,640 Z" fill="#80C99A" opacity="0.6"/>
+  <!-- Warm Morning Sun (Top Right) -->
+  <circle cx="1210" cy="185" r="310" fill="url(#sunBloom)"/>
+  <circle cx="1210" cy="185" r="105" fill="#FEF9C3" opacity="0.35"/>
+  <circle cx="1210" cy="185" r="56" fill="#FFFBEB" opacity="0.92"/>
 
-  <!-- ================= 2. MUTED NEIGHBORHOOD HOMES ================= -->
-  <g id="context-neighborhood" fill="#CBD5E1" stroke="#94A3B8" stroke-width="1.2" opacity="0.65">
-    <g transform="translate(15, 375) scale(0.66)">
-      <polygon points="50,110 130,40 210,110" fill="#94A3B8"/>
-      <rect x="60" y="110" width="140" height="95"/>
-      <rect x="80" y="130" width="28" height="35" fill="#E2E8F0"/>
-      <rect x="150" y="130" width="28" height="35" fill="#E2E8F0"/>
+  <!-- Soft Drifting Clouds -->
+  <g class="cloud-drift-slow" fill="#FFFFFF" opacity="0.42">
+    <path d="M190,140 Q210,120 238,128 Q262,108 294,122 Q320,120 332,138 Q348,140 348,154 L175,154 Q162,154 168,142 Z"/>
+    <path d="M880,115 Q902,94 932,104 Q958,86 990,100 Q1015,98 1028,118 L865,118 Q854,118 862,110 Z"/>
+  </g>
+
+  <!-- Distant Rolling Hills -->
+  <path d="M0,505 Q260,468 560,515 T1060,492 T1440,502 L1440,650 L0,650 Z" fill="url(#distantRidgeGrad)" opacity="0.7"/>
+  <path d="M0,535 Q340,498 720,548 T1180,520 L1440,535 L1440,680 L0,680 Z" fill="url(#midValleyGrad)" opacity="0.85"/>
+
+  <!-- ========================================================================= -->
+  <!-- 2. NEUTRAL / GRAYISH (NON-HIGHLIGHTED) BACKGROUND NEIGHBORHOOD HOUSES     -->
+  <!-- ========================================================================= -->
+  <g id="neutral-background-houses" filter="url(#neutralHouseShadow)">
+
+    <!-- NEUTRAL HOME 1: Far-Left Hillside Ridge -->
+    <g id="neutral-home-1" opacity="0.78">
+      <polygon points="8,452 24,435 24,505 8,500" fill="#94A3B8"/>
+      <rect x="24" y="452" width="68" height="53" fill="#CBD5E1"/>
+      <polygon points="4,454 24,433 96,454" fill="#64748B"/>
+      <polygon points="20,454 58,420 96,454" fill="#475569"/>
+      <rect x="35" y="463" width="14" height="16" fill="#E2E8F0" stroke="#64748B" stroke-width="1"/>
+      <rect x="65" y="463" width="14" height="16" fill="#E2E8F0" stroke="#64748B" stroke-width="1"/>
+      <rect x="35" y="485" width="14" height="16" fill="#E2E8F0" stroke="#64748B" stroke-width="1"/>
+      <rect x="66" y="484" width="12" height="21" fill="#64748B"/>
     </g>
-    <g transform="translate(290, 380) scale(0.62)">
-      <polygon points="40,110 110,50 180,110" fill="#94A3B8"/>
-      <polygon points="170,110 220,70 270,110" fill="#64748B"/>
-      <rect x="50" y="110" width="120" height="95"/>
-      <rect x="170" y="110" width="90" height="95"/>
-      <rect x="75" y="130" width="24" height="32" fill="#E2E8F0"/>
-      <rect x="125" y="130" width="24" height="32" fill="#E2E8F0"/>
+
+    <!-- NEUTRAL HOME 2: Mid-Ground Between Property 1 & Townhomes -->
+    <g id="neutral-home-2" opacity="0.82">
+      <polygon points="274,454 288,440 288,502 274,498" fill="#94A3B8"/>
+      <rect x="288" y="454" width="64" height="48" fill="#CBD5E1"/>
+      <polygon points="270,456 318,424 356,456" fill="#64748B"/>
+      <rect x="298" y="464" width="13" height="15" fill="#E2E8F0" stroke="#64748B" stroke-width="1"/>
+      <rect x="326" y="464" width="13" height="15" fill="#E2E8F0" stroke="#64748B" stroke-width="1"/>
+      <rect x="312" y="483" width="11" height="19" fill="#64748B"/>
     </g>
-    <g transform="translate(635, 375) scale(0.64)">
-      <polygon points="40,105 125,35 210,105" fill="#94A3B8"/>
-      <rect x="50" y="105" width="150" height="95"/>
-      <rect x="75" y="125" width="30" height="35" fill="#E2E8F0"/>
-      <rect x="145" y="125" width="30" height="35" fill="#E2E8F0"/>
-      <rect x="110" y="160" width="25" height="40" fill="#64748B"/>
+
+    <!-- NEUTRAL HOMES 3, 4 and 5 stood directly behind the sign-in area and are
+         removed: the centre of the frame is reserved for the form. -->
+
+    <!-- NEUTRAL HOME 6: Right-Mid Hillside Behind Craftsman -->
+    <g id="neutral-home-6" opacity="0.82">
+      <polygon points="1188,458 1204,444 1204,516 1188,510" fill="#94A3B8"/>
+      <rect x="1204" y="444" width="84" height="72" fill="#CBD5E1"/>
+      <polygon points="1184,460 1246,418 1292,446 1200,446" fill="#475569"/>
+      <polygon points="1200,446 1246,418 1292,446" fill="#64748B"/>
+      <polyline points="1200,446 1246,418 1292,446" fill="none" stroke="#E2E8F0" stroke-width="2"/>
+      <rect x="1218" y="456" width="16" height="18" fill="#E2E8F0" stroke="#64748B" stroke-width="1"/>
+      <rect x="1256" y="456" width="16" height="18" fill="#E2E8F0" stroke="#64748B" stroke-width="1"/>
+      <rect x="1216" y="484" width="32" height="32" fill="#E2E8F0" stroke="#64748B" stroke-width="1"/>
+      <line x1="1216" y1="495" x2="1248" y2="495" stroke="#94A3B8" stroke-width="1"/>
+      <line x1="1216" y1="505" x2="1248" y2="505" stroke="#94A3B8" stroke-width="1"/>
+      <rect x="1260" y="486" width="13" height="30" fill="#475569"/>
+    </g>
+
+    <!-- NEUTRAL HOME 7: Far-Right Ridge Home -->
+    <g id="neutral-home-7" opacity="0.80">
+      <polygon points="1306,448 1324,432 1324,515 1306,510" fill="#94A3B8"/>
+      <rect x="1324" y="432" width="96" height="83" fill="#D1D9E2"/>
+      <polygon points="1302,450 1372,404 1426,434 1320,434" fill="#475569"/>
+      <polygon points="1320,434 1372,404 1426,434" fill="#64748B"/>
+      <rect x="1338" y="446" width="18" height="20" fill="#E2E8F0" stroke="#64748B" stroke-width="1"/>
+      <rect x="1366" y="446" width="18" height="20" fill="#E2E8F0" stroke="#64748B" stroke-width="1"/>
+      <rect x="1394" y="446" width="14" height="20" fill="#E2E8F0" stroke="#64748B" stroke-width="1"/>
+      <rect x="1338" y="478" width="22" height="22" fill="#E2E8F0" stroke="#64748B" stroke-width="1"/>
+      <rect x="1372" y="480" width="14" height="35" fill="#475569"/>
+      <rect x="1394" y="478" width="16" height="22" fill="#E2E8F0" stroke="#64748B" stroke-width="1"/>
     </g>
   </g>
 
-  <!-- ================= 3. SUBURBAN ROADS & CUL-DE-SAC ================= -->
-  <path d="M0,520 Q420,490 940,510 L1440,520 L1440,900 L0,900 Z" fill="url(#groundLawn)"/>
-  <path d="M0,660 Q240,620 460,635 T880,670 Q940,700 1200,810 L1440,820 L1440,900 L0,900 Z" fill="url(#asphaltRoad)"/>
+  <!-- Subtle Neutral Driveways for Background Valley Homes -->
+  <g fill="#CBD5E1" opacity="0.45">
+    <polygon points="1220,516 1246,516 1265,565 1235,565"/>
+  </g>
 
-  <polygon points="145,545 210,545 240,675 120,675" fill="#E2E8F0"/>
-  <polygon points="410,540 495,540 535,665 385,665" fill="#E2E8F0"/>
-  <polygon points="770,545 845,545 885,690 750,690" fill="#E2E8F0"/>
+  <!-- ================= 3. FOREGROUND HILLS, DRIVEWAYS & CURVED ROAD ================= -->
+  <path d="M580,565 Q940,485 1440,525 L1440,900 L520,900 Z" fill="url(#lawnRightGrad)"/>
+  <path d="M0,535 Q320,505 680,565 T1440,635 L1440,900 L0,900 Z" fill="url(#lawnLeftGrad)"/>
 
-  <path d="M0,660 Q240,620 460,635 T880,670 Q940,700 1200,810 L1440,820" stroke="#94A3B8" stroke-width="3" fill="none"/>
-  <path d="M0,740 Q260,700 500,715 T900,750 T1300,860 L1440,865" stroke="#FFFFFF" stroke-width="2.5" stroke-dasharray="16 14" fill="none" opacity="0.6"/>
+  <g id="active-driveways">
+    <path d="M112,566 L195,566 L265,672 L155,698 Z" fill="url(#concreteGrad)"/>
+    <path d="M214,562 L238,562 L248,595 L205,595 Z" fill="#CBD5E1"/>
+    <line x1="132" y1="605" x2="222" y2="598" stroke="#94A3B8" stroke-width="1.2" opacity="0.6"/>
+    <line x1="145" y1="648" x2="244" y2="636" stroke="#94A3B8" stroke-width="1.2" opacity="0.6"/>
 
-  <!-- ================= 4. HIGHLIGHTED CHOICE 1: TWO-STORY SINGLE-FAMILY ================= -->
-  <g id="highlight-sfh" filter="url(#focusShadow)">
-    <rect x="70" y="542" width="215" height="6" fill="#94A3B8"/>
-    <rect x="70" y="380" width="125" height="162" fill="#FFFFFF"/>
-    <line x1="70" y1="418" x2="195" y2="418" stroke="#F1F5F9" stroke-width="1.5"/>
-    <line x1="70" y1="456" x2="195" y2="456" stroke="#F1F5F9" stroke-width="1.5"/>
-    <line x1="70" y1="494" x2="195" y2="494" stroke="#F1F5F9" stroke-width="1.5"/>
+    <path d="M398,538 L420,538 L475,612 L448,616 Z" fill="url(#concreteGrad)" opacity="0.9"/>
+    <path d="M468,538 L490,538 L545,606 L520,608 Z" fill="url(#concreteGrad)" opacity="0.9"/>
 
-    <rect x="185" y="425" width="90" height="117" fill="#F8FAFC"/>
+    <path d="M1042,562 L1076,562 C1045,615 995,665 955,705 L915,695 C965,650 1015,605 1042,562 Z" fill="url(#concreteGrad)" opacity="0.92"/>
+  </g>
 
-    <polygon points="60,382 132.5,308 205,382" fill="#00684A"/>
-    <polygon points="175,427 225,382 285,427" fill="#064E3B"/>
+  <path d="M-40,900 C60,720 260,615 540,605 C780,598 980,695 1190,900 L860,900 C730,775 590,695 430,702 C250,710 130,805 65,900 Z" fill="url(#asphaltGrad)"/>
 
-    <polygon points="132.5,338 122,358 143,358" fill="#064E3B"/>
-    <polygon points="132.5,341 125,356 140,356" fill="#A7F3D0"/>
+  <path d="M-40,900 C60,720 260,615 540,605 C780,598 980,695 1190,900" fill="none" stroke="#CBD5E1" stroke-width="6"/>
+  <path d="M-40,900 C60,720 260,615 540,605 C780,598 980,695 1190,900" fill="none" stroke="#64748B" stroke-width="1.5"/>
+  <path d="M65,900 C130,805 250,710 430,702 C590,695 730,775 860,900" fill="none" stroke="#CBD5E1" stroke-width="6"/>
 
-    <rect x="85" y="398" width="32" height="40" fill="#FFFFFF" rx="2" stroke="#00684A" stroke-width="1.5"/>
-    <rect x="88" y="401" width="26" height="34" fill="url(#activeGlass)"/>
-    <line x1="101" y1="401" x2="101" y2="435" stroke="#FFFFFF" stroke-width="1.5"/>
+  <path d="M65,900 C130,805 250,710 430,702 C590,695 730,775 860,900 Z" fill="url(#lawnLeftGrad)"/>
 
-    <rect x="140" y="398" width="32" height="40" fill="#FFFFFF" rx="2" stroke="#00684A" stroke-width="1.5"/>
-    <rect x="143" y="401" width="26" height="34" fill="url(#activeGlass)"/>
-    <line x1="156" y1="401" x2="156" y2="435" stroke="#FFFFFF" stroke-width="1.5"/>
+  <!-- ========================================================================= -->
+  <!-- 4. HIGHLIGHTED PORTFOLIO PROPERTY 1: 2-STORY SINGLE-FAMILY HOME (LEFT)    -->
+  <!-- ========================================================================= -->
+  <g id="highlighted-property-1-sfh" filter="url(#activeHouseShadow)">
+    <polygon points="48,382 88,332 88,554 48,538" fill="#C6AE8E"/>
+    <rect x="62" y="395" width="12" height="24" fill="url(#activeWindowGrad)" stroke="#F8FAFC" stroke-width="1.5" transform="skewY(-14)"/>
+    <rect x="62" y="458" width="12" height="24" fill="url(#activeWindowGrad)" stroke="#F8FAFC" stroke-width="1.5" transform="skewY(-14)"/>
 
-    <rect x="85" y="468" width="36" height="46" fill="#FFFFFF" rx="2" stroke="#00684A" stroke-width="1.5"/>
-    <rect x="88" y="471" width="30" height="40" fill="url(#activeGlass)"/>
+    <rect x="88" y="362" width="188" height="196" fill="#E8D8C0"/>
+    <polygon points="182,362 234,312 286,362 286,558 182,558" fill="#F2E5D2"/>
 
-    <rect x="136" y="460" width="36" height="8" fill="#00684A" rx="1"/>
-    <rect x="140" y="468" width="28" height="74" fill="#00684A" rx="1"/>
-    <circle cx="145" cy="505" r="2.5" fill="#FDE047"/>
+    <rect x="96" y="456" width="96" height="106" fill="#EFE0CA"/>
+    <polygon points="88,456 144,432 204,456" fill="#6E5444"/>
+    <rect x="88" y="456" width="116" height="5" fill="#F8FAFC"/>
 
-    <rect x="195" y="458" width="70" height="84" fill="#FFFFFF" rx="3" stroke="#94A3B8" stroke-width="1.5"/>
-    <g fill="url(#activeGlass)">
-      <rect x="200" y="464" width="12" height="8" rx="1"/>
-      <rect x="215" y="464" width="12" height="8" rx="1"/>
-      <rect x="230" y="464" width="12" height="8" rx="1"/>
-      <rect x="245" y="464" width="12" height="8" rx="1"/>
+    <polygon points="42,384 88,326 238,342 186,368" fill="#6E5444"/>
+    <polygon points="174,366 234,306 294,366" fill="#5A4234"/>
+    <polyline points="174,366 234,306 294,366" fill="none" stroke="#F8FAFC" stroke-width="4" stroke-linejoin="round"/>
+    <polyline points="42,384 88,326" fill="none" stroke="#F8FAFC" stroke-width="3.5"/>
+
+    <path d="M222,342 A12,12 0 0,1 246,342 Z" fill="#8C7362" stroke="#F8FAFC" stroke-width="1.5"/>
+
+    <rect x="103" y="384" width="8" height="44" fill="#6E5A4F" rx="1"/>
+    <rect x="153" y="384" width="8" height="44" fill="#6E5A4F" rx="1"/>
+    <rect x="112" y="383" width="40" height="45" fill="#F8FAFC" stroke="#8C7362" stroke-width="1.5" rx="1"/>
+    <rect x="115" y="386" width="16" height="39" fill="url(#activeWindowGrad)"/>
+    <rect x="133" y="386" width="16" height="39" fill="url(#activeWindowGrad)"/>
+    <line x1="115" y1="405" x2="149" y2="405" stroke="#F8FAFC" stroke-width="1.6"/>
+
+    <rect x="205" y="376" width="8" height="46" fill="#6E5A4F" rx="1"/>
+    <rect x="255" y="376" width="8" height="46" fill="#6E5A4F" rx="1"/>
+    <rect x="214" y="375" width="40" height="47" fill="#F8FAFC" stroke="#8C7362" stroke-width="1.5" rx="1"/>
+    <rect x="217" y="378" width="16" height="41" fill="url(#activeWindowGrad)"/>
+    <rect x="235" y="378" width="16" height="41" fill="url(#activeWindowGrad)"/>
+    <line x1="217" y1="398" x2="251" y2="398" stroke="#F8FAFC" stroke-width="1.6"/>
+
+    <rect x="108" y="478" width="68" height="82" fill="#F8FAFC" stroke="#C6AE8E" stroke-width="2" rx="1"/>
+    <line x1="108" y1="498" x2="176" y2="498" stroke="#CBD5E1" stroke-width="1.5"/>
+    <line x1="108" y1="518" x2="176" y2="518" stroke="#CBD5E1" stroke-width="1.5"/>
+    <line x1="108" y1="538" x2="176" y2="538" stroke="#CBD5E1" stroke-width="1.5"/>
+
+    <polygon points="190,458 242,442 296,458" fill="#5A4234"/>
+    <rect x="190" y="458" width="106" height="5" fill="#F8FAFC"/>
+    <rect x="196" y="463" width="6" height="90" fill="#F8FAFC"/>
+    <rect x="242" y="463" width="6" height="90" fill="#F8FAFC"/>
+    <rect x="282" y="463" width="6" height="90" fill="#F8FAFC"/>
+    <rect x="210" y="480" width="24" height="72" fill="#6E4730" stroke="#F8FAFC" stroke-width="1.5"/>
+    <circle cx="230" cy="518" r="2" fill="#FDE047"/>
+    <rect x="254" y="480" width="24" height="44" fill="#F8FAFC" stroke="#8C7362" stroke-width="1.2"/>
+    <rect x="256" y="482" width="20" height="40" fill="url(#activeWindowGrad)"/>
+    <line x1="266" y1="482" x2="266" y2="522" stroke="#F8FAFC" stroke-width="1.4"/>
+    <line x1="256" y1="502" x2="276" y2="502" stroke="#F8FAFC" stroke-width="1.4"/>
+    <rect x="92" y="556" width="196" height="6" fill="#94A3B8"/>
+    <rect x="204" y="552" width="38" height="10" fill="#CBD5E1"/>
+  </g>
+
+  <!-- ========================================================================= -->
+  <!-- 5. HIGHLIGHTED PORTFOLIO PROPERTY 2: ATTACHED MULTI-FAMILY TOWNHOMES      -->
+  <!-- ========================================================================= -->
+  <g id="highlighted-property-2-townhomes" filter="url(#activeHouseShadow)">
+    <polygon points="325,408 358,376 358,532 325,524" fill="#8D99AE"/>
+    <rect x="336" y="424" width="10" height="22" fill="url(#activeWindowGrad)" stroke="#F8FAFC" stroke-width="1.2" transform="skewY(-12)"/>
+    <rect x="336" y="472" width="10" height="22" fill="url(#activeWindowGrad)" stroke="#F8FAFC" stroke-width="1.2" transform="skewY(-12)"/>
+
+    <rect x="358" y="404" width="166" height="132" fill="#C8B8A6"/>
+    <polygon points="392,408 424,376 456,408 456,536 392,536" fill="#D8C8B4"/>
+    <polygon points="456,412 488,380 520,412 520,536 456,536" fill="#CEBEB0"/>
+
+    <polygon points="322,410 358,372 526,386 520,414" fill="#5A463C"/>
+    <polygon points="388,410 424,372 460,410" fill="#6E5444"/>
+    <polygon points="452,414 488,376 524,414" fill="#5A4234"/>
+    <polyline points="388,410 424,372 460,410" fill="none" stroke="#F8FAFC" stroke-width="3" stroke-linejoin="round"/>
+    <polyline points="452,414 488,376 524,414" fill="none" stroke="#F8FAFC" stroke-width="3" stroke-linejoin="round"/>
+
+    <rect x="368" y="422" width="16" height="28" fill="#F8FAFC" stroke="#6E5444" stroke-width="1.2"/>
+    <rect x="370" y="424" width="12" height="24" fill="url(#activeWindowGrad)"/>
+
+    <rect x="404" y="416" width="16" height="28" fill="#F8FAFC" stroke="#6E5444" stroke-width="1.2"/>
+    <rect x="406" y="418" width="12" height="24" fill="url(#activeWindowGrad)"/>
+    <rect x="426" y="416" width="16" height="28" fill="#F8FAFC" stroke="#6E5444" stroke-width="1.2"/>
+    <rect x="428" y="418" width="12" height="24" fill="url(#activeWindowGrad)"/>
+
+    <rect x="470" y="420" width="16" height="28" fill="#F8FAFC" stroke="#6E5444" stroke-width="1.2"/>
+    <rect x="472" y="422" width="12" height="24" fill="url(#activeWindowGrad)"/>
+    <rect x="492" y="420" width="16" height="28" fill="#F8FAFC" stroke="#6E5444" stroke-width="1.2"/>
+    <rect x="494" y="422" width="12" height="24" fill="url(#activeWindowGrad)"/>
+
+    <polygon points="392,472 412,462 432,472" fill="#5A4234"/>
+    <rect x="394" y="472" width="4" height="62" fill="#F8FAFC"/>
+    <rect x="426" y="472" width="4" height="62" fill="#F8FAFC"/>
+    <rect x="402" y="482" width="18" height="52" fill="#6E4730" stroke="#F8FAFC" stroke-width="1.2"/>
+    <rect x="434" y="478" width="16" height="32" fill="#F8FAFC"/>
+    <rect x="436" y="480" width="12" height="28" fill="url(#activeWindowGrad)"/>
+
+    <polygon points="458,474 478,464 498,474" fill="#5A4234"/>
+    <rect x="460" y="474" width="4" height="60" fill="#F8FAFC"/>
+    <rect x="492" y="474" width="4" height="60" fill="#F8FAFC"/>
+    <rect x="468" y="484" width="18" height="50" fill="#6E4730" stroke="#F8FAFC" stroke-width="1.2"/>
+    <rect x="500" y="480" width="15" height="30" fill="#F8FAFC"/>
+    <rect x="502" y="482" width="11" height="26" fill="url(#activeWindowGrad)"/>
+
+    <rect x="356" y="534" width="168" height="5" fill="#94A3B8"/>
+  </g>
+
+  <!-- ========================================================================= -->
+  <!-- 6. HIGHLIGHTED PORTFOLIO PROPERTY 3: SUBURBAN CRAFTSMAN BUNGALOW (RIGHT)  -->
+  <!-- ========================================================================= -->
+  <g id="highlighted-property-3-craftsman" filter="url(#activeHouseShadow)">
+    <rect x="962" y="446" width="204" height="114" fill="#9A8468"/>
+    <polygon points="1166,446 1184,458 1184,556 1166,560" fill="#6E5A44"/>
+
+    <polygon points="948,452 992,402 1178,408 1192,456" fill="#4E3B30"/>
+
+    <polygon points="946,456 1062,386 1178,456" fill="#6E5444"/>
+    <polygon points="962,454 1062,394 1162,454" fill="#A99276"/>
+    <line x1="985" y1="440" x2="1139" y2="440" stroke="#8C765C" stroke-width="1.2"/>
+    <line x1="1008" y1="426" x2="1116" y2="426" stroke="#8C765C" stroke-width="1.2"/>
+    <line x1="1030" y1="412" x2="1094" y2="412" stroke="#8C765C" stroke-width="1.2"/>
+    <polyline points="946,456 1062,386 1178,456" fill="none" stroke="#F8FAFC" stroke-width="4.5" stroke-linejoin="round"/>
+
+    <rect x="1036" y="414" width="52" height="28" fill="#F8FAFC" stroke="#5A4234" stroke-width="1.5" rx="1"/>
+    <rect x="1039" y="417" width="12" height="22" fill="url(#activeWindowGrad)"/>
+    <rect x="1054" y="417" width="16" height="22" fill="url(#activeWindowGrad)"/>
+    <rect x="1073" y="417" width="12" height="22" fill="url(#activeWindowGrad)"/>
+
+    <rect x="954" y="456" width="216" height="6" fill="#F8FAFC"/>
+    <rect x="958" y="462" width="208" height="8" fill="#5A4234"/>
+
+    <rect x="984" y="478" width="38" height="42" fill="#F8FAFC" stroke="#5A4234" stroke-width="1.5"/>
+    <rect x="987" y="481" width="32" height="36" fill="url(#activeWindowGrad)"/>
+    <line x1="1003" y1="481" x2="1003" y2="517" stroke="#F8FAFC" stroke-width="1.5"/>
+    <line x1="987" y1="496" x2="1019" y2="496" stroke="#F8FAFC" stroke-width="1.5"/>
+
+    <rect x="1102" y="478" width="38" height="42" fill="#F8FAFC" stroke="#5A4234" stroke-width="1.5"/>
+    <rect x="1105" y="481" width="32" height="36" fill="url(#activeWindowGrad)"/>
+    <line x1="1121" y1="481" x2="1121" y2="517" stroke="#F8FAFC" stroke-width="1.5"/>
+    <line x1="1105" y1="496" x2="1137" y2="496" stroke="#F8FAFC" stroke-width="1.5"/>
+
+    <rect x="1046" y="476" width="32" height="76" fill="#6E4730" stroke="#F8FAFC" stroke-width="1.8"/>
+    <rect x="1052" y="482" width="20" height="16" fill="url(#activeWindowGrad)"/>
+    <circle cx="1073" cy="518" r="2" fill="#FDE047"/>
+
+    <rect x="974" y="524" width="62" height="24" fill="#7D6752"/>
+    <g stroke="#E2E8F0" stroke-width="2">
+      <line x1="982" y1="528" x2="982" y2="546"/>
+      <line x1="990" y1="528" x2="990" y2="546"/>
+      <line x1="998" y1="528" x2="998" y2="546"/>
+      <line x1="1006" y1="528" x2="1006" y2="546"/>
+      <line x1="1014" y1="528" x2="1014" y2="546"/>
+      <line x1="1022" y1="528" x2="1022" y2="546"/>
     </g>
-    <line x1="195" y1="486" x2="265" y2="486" stroke="#E2E8F0" stroke-width="1.5"/>
-    <line x1="195" y1="506" x2="265" y2="506" stroke="#E2E8F0" stroke-width="1.5"/>
+    <rect x="1088" y="524" width="62" height="24" fill="#7D6752"/>
+    <g stroke="#E2E8F0" stroke-width="2">
+      <line x1="1098" y1="528" x2="1098" y2="546"/>
+      <line x1="1106" y1="528" x2="1106" y2="546"/>
+      <line x1="1114" y1="528" x2="1114" y2="546"/>
+      <line x1="1122" y1="528" x2="1122" y2="546"/>
+      <line x1="1130" y1="528" x2="1130" y2="546"/>
+      <line x1="1138" y1="528" x2="1138" y2="546"/>
+    </g>
 
-    <g filter="url(#glowPin)" transform="translate(120, 260)">
-      <rect x="0" y="0" width="26" height="26" rx="13" fill="#00684A"/>
-      <circle cx="13" cy="13" r="4.5" fill="#FFFFFF"/>
-      <polygon points="9,22 17,22 13,30" fill="#00684A"/>
+    <polygon points="964,470 972,470 974,518 962,518" fill="#F8FAFC"/>
+    <rect x="958" y="518" width="20" height="38" fill="#8C7A6B" stroke="#5A4234" stroke-width="1"/>
+    <polygon points="1032,470 1040,470 1042,518 1030,518" fill="#F8FAFC"/>
+    <rect x="1026" y="518" width="20" height="38" fill="#8C7A6B" stroke="#5A4234" stroke-width="1"/>
+    <polygon points="1084,470 1092,470 1094,518 1082,518" fill="#F8FAFC"/>
+    <rect x="1078" y="518" width="20" height="38" fill="#8C7A6B" stroke="#5A4234" stroke-width="1"/>
+    <polygon points="1150,470 1158,470 1160,518 1148,518" fill="#F8FAFC"/>
+    <rect x="1144" y="518" width="20" height="38" fill="#8C7A6B" stroke="#5A4234" stroke-width="1"/>
+
+    <rect x="1042" y="548" width="40" height="6" fill="#CBD5E1"/>
+    <rect x="1038" y="554" width="48" height="6" fill="#94A3B8"/>
+    <rect x="1034" y="560" width="56" height="5" fill="#64748B"/>
+  </g>
+
+  <!-- ================= 7. TREES, SHRUBS & FOREGROUND FOLIAGE ================= -->
+  <g id="suburban-trees-and-shrubs">
+    <rect x="24" y="485" width="9" height="82" fill="#6E4730" rx="2"/>
+    <circle cx="28" cy="458" r="38" fill="#235732"/>
+    <circle cx="12" cy="442" r="28" fill="#347846"/>
+    <circle cx="44" cy="446" r="26" fill="#48965A"/>
+
+    <ellipse cx="82" cy="548" rx="22" ry="12" fill="#2D6E3E"/>
+    <ellipse cx="268" cy="554" rx="26" ry="14" fill="#235732"/>
+    <ellipse cx="292" cy="558" rx="18" ry="10" fill="#347846"/>
+
+    <rect x="928" y="468" width="8" height="72" fill="#5A3A28" rx="2"/>
+    <circle cx="932" cy="442" r="34" fill="#235732"/>
+    <circle cx="918" cy="428" r="24" fill="#347846"/>
+
+    <rect x="1202" y="455" width="10" height="95" fill="#5A3A28" rx="2"/>
+    <circle cx="1207" cy="418" r="44" fill="#235732"/>
+    <circle cx="1188" cy="402" r="32" fill="#347846"/>
+    <circle cx="1226" cy="406" r="28" fill="#48965A"/>
+
+    <rect x="52" y="645" width="12" height="95" fill="#5A3A28" rx="2"/>
+    <circle cx="58" cy="608" r="46" fill="#1E4D2B"/>
+    <circle cx="38" cy="592" r="34" fill="#2D6E3E"/>
+    <circle cx="78" cy="596" r="32" fill="#48965A"/>
+
+    <rect x="1282" y="625" width="14" height="125" fill="#5A3A28" rx="2"/>
+    <circle cx="1289" cy="572" r="56" fill="#1E4D2B"/>
+    <circle cx="1264" cy="552" r="40" fill="#2D6E3E"/>
+    <circle cx="1315" cy="556" r="38" fill="#3E8450"/>
+
+    <path d="M1080,900 Q1110,855 1155,865 Q1195,825 1250,848 Q1295,815 1350,845 Q1395,830 1440,860 L1440,900 Z" fill="#1A4225"/>
+  </g>
+
+  <!-- ========================================================================= -->
+  <!-- 8. GLOWING GREEN PORTFOLIO LOCATION PINS (ONLY ON THE 3 INSPIRED HOMES)   -->
+  <!-- ========================================================================= -->
+  <g id="telemetry-badges-group">
+    <g class="pin-anim-1" transform="translate(162, 285) scale(0.6)">
+      <circle cx="0" cy="0" r="48" fill="url(#pinHaloGrad)" opacity="0.65"/>
+      <path d="M0,-32 C-18,-32 -30,-19 -30,-3 C-30,16 0,42 0,42 C0,42 30,16 30,-3 C30,-19 18,-32 0,-32 Z" fill="url(#pinBodyGrad)" stroke="#FFFFFF" stroke-width="2.5"/>
+      <circle cx="0" cy="-4" r="11" fill="#064E3B"/>
+      <circle cx="0" cy="-4" r="5" fill="#A7F3D0"/>
+    </g>
+
+    <g class="pin-anim-2" transform="translate(428, 326) scale(0.6)">
+      <circle cx="0" cy="0" r="42" fill="url(#pinHaloGrad)" opacity="0.65"/>
+      <path d="M0,-27 C-15,-27 -25,-16 -25,-2 C-25,14 0,36 0,36 C0,36 25,14 25,-2 C25,-16 15,-27 0,-27 Z" fill="url(#pinBodyGrad)" stroke="#FFFFFF" stroke-width="2.2"/>
+      <circle cx="0" cy="-3" r="9.5" fill="#064E3B"/>
+      <circle cx="0" cy="-3" r="4.2" fill="#A7F3D0"/>
+    </g>
+
+    <g class="pin-anim-3" transform="translate(1062, 334) scale(0.6)">
+      <circle cx="0" cy="0" r="46" fill="url(#pinHaloGrad)" opacity="0.65"/>
+      <path d="M0,-30 C-17,-30 -28,-18 -28,-3 C-28,15 0,40 0,40 C0,40 28,15 28,-3 C28,-18 17,-30 0,-30 Z" fill="url(#pinBodyGrad)" stroke="#FFFFFF" stroke-width="2.5"/>
+      <circle cx="0" cy="-4" r="10.5" fill="#064E3B"/>
+      <circle cx="0" cy="-4" r="4.8" fill="#A7F3D0"/>
     </g>
   </g>
 
-  <!-- ================= 5. HIGHLIGHTED CHOICE 2: MODERN ATTACHED TOWNHOMES ================= -->
-  <g id="highlight-townhome" filter="url(#focusShadow)">
-    <rect x="335" y="538" width="240" height="6" fill="#64748B"/>
-    <rect x="340" y="340" width="230" height="198" fill="#F8FAFC"/>
-    <rect x="410" y="325" width="90" height="213" fill="#FFFFFF"/>
-
-    <rect x="340" y="488" width="230" height="50" fill="#D97706" opacity="0.88"/>
-    <line x1="340" y1="488" x2="570" y2="488" stroke="#92400E" stroke-width="2"/>
-
-    <polygon points="330,342 380,285 430,342" fill="#00684A"/>
-    <polygon points="400,327 455,265 510,327" fill="#064E3B"/>
-    <polygon points="480,342 530,285 580,342" fill="#00684A"/>
-
-    <rect x="360" y="360" width="28" height="40" fill="#FFFFFF" rx="2" stroke="#00684A" stroke-width="1.5"/>
-    <rect x="363" y="363" width="22" height="34" fill="url(#activeGlass)"/>
-    <rect x="360" y="424" width="28" height="40" fill="#FFFFFF" rx="2" stroke="#00684A" stroke-width="1.5"/>
-    <rect x="363" y="427" width="22" height="34" fill="url(#activeGlass)"/>
-
-    <rect x="424" y="350" width="26" height="40" fill="#FFFFFF" rx="2" stroke="#00684A" stroke-width="1.5"/>
-    <rect x="427" y="353" width="20" height="34" fill="url(#activeGlass)"/>
-    <rect x="460" y="350" width="26" height="40" fill="#FFFFFF" rx="2" stroke="#00684A" stroke-width="1.5"/>
-    <rect x="463" y="353" width="20" height="34" fill="url(#activeGlass)"/>
-
-    <rect x="424" y="416" width="26" height="40" fill="#FFFFFF" rx="2" stroke="#00684A" stroke-width="1.5"/>
-    <rect x="427" y="419" width="20" height="34" fill="url(#activeGlass)"/>
-    <rect x="460" y="416" width="26" height="40" fill="#FFFFFF" rx="2" stroke="#00684A" stroke-width="1.5"/>
-    <rect x="463" y="419" width="20" height="34" fill="url(#activeGlass)"/>
-
-    <rect x="522" y="360" width="28" height="40" fill="#FFFFFF" rx="2" stroke="#00684A" stroke-width="1.5"/>
-    <rect x="525" y="363" width="22" height="34" fill="url(#activeGlass)"/>
-    <rect x="522" y="424" width="28" height="40" fill="#FFFFFF" rx="2" stroke="#00684A" stroke-width="1.5"/>
-    <rect x="525" y="427" width="22" height="34" fill="url(#activeGlass)"/>
-
-    <rect x="362" y="492" width="24" height="46" fill="#1E293B" rx="2"/>
-    <rect x="425" y="492" width="24" height="46" fill="#1E293B" rx="2"/>
-    <rect x="462" y="492" width="24" height="46" fill="#1E293B" rx="2"/>
-    <rect x="524" y="492" width="24" height="46" fill="#1E293B" rx="2"/>
-
-    <g filter="url(#glowPin)" transform="translate(442, 220)">
-      <rect x="0" y="0" width="26" height="26" rx="13" fill="#00684A"/>
-      <circle cx="13" cy="13" r="4.5" fill="#FFFFFF"/>
-      <polygon points="9,22 17,22 13,30" fill="#00684A"/>
-    </g>
-  </g>
-
-  <!-- ================= 6. HIGHLIGHTED CHOICE 3: SUBDIVISION CRAFTSMAN ================= -->
-  <!-- Shifted right of the sign-in bay: House 1, House 2, the form, House 3. -->
-  <g id="highlight-craftsman" filter="url(#focusShadow)" transform="translate(330 0)">
-    <rect x="695" y="542" width="255" height="6" fill="#94A3B8"/>
-    <rect x="700" y="390" width="135" height="152" fill="#FFFFFF"/>
-    <rect x="825" y="430" width="115" height="112" fill="#F1F5F9"/>
-
-    <polygon points="690,392 768,318 846,392" fill="#00684A"/>
-    <polygon points="815,432 882,374 950,432" fill="#064E3B"/>
-
-    <polygon points="695,468 770,442 845,468" fill="#047857"/>
-    <rect x="712" y="468" width="8" height="74" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1"/>
-    <rect x="825" y="468" width="8" height="74" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1"/>
-
-    <rect x="726" y="406" width="30" height="36" fill="#FFFFFF" rx="2" stroke="#00684A" stroke-width="1.5"/>
-    <rect x="729" y="409" width="24" height="30" fill="url(#activeGlass)"/>
-
-    <rect x="780" y="406" width="30" height="36" fill="#FFFFFF" rx="2" stroke="#00684A" stroke-width="1.5"/>
-    <rect x="783" y="409" width="24" height="30" fill="url(#activeGlass)"/>
-
-    <rect x="732" y="482" width="38" height="42" fill="#FFFFFF" rx="2" stroke="#00684A" stroke-width="1.5"/>
-    <rect x="735" y="485" width="32" height="36" fill="url(#activeGlass)"/>
-
-    <rect x="786" y="476" width="28" height="66" fill="#00684A" rx="2"/>
-    <rect x="791" y="482" width="18" height="16" fill="url(#activeGlass)"/>
-    <circle cx="791" cy="510" r="2.5" fill="#FDE047"/>
-
-    <rect x="838" y="464" width="90" height="78" fill="#FFFFFF" rx="3" stroke="#94A3B8" stroke-width="1.5"/>
-    <g fill="url(#activeGlass)">
-      <rect x="844" y="470" width="16" height="7" rx="1"/>
-      <rect x="866" y="470" width="16" height="7" rx="1"/>
-      <rect x="888" y="470" width="16" height="7" rx="1"/>
-      <rect x="910" y="470" width="16" height="7" rx="1"/>
-    </g>
-    <line x1="838" y1="490" x2="928" y2="490" stroke="#CBD5E1" stroke-width="1.5"/>
-    <line x1="838" y1="512" x2="928" y2="512" stroke="#CBD5E1" stroke-width="1.5"/>
-
-    <g filter="url(#glowPin)" transform="translate(755, 275)">
-      <rect x="0" y="0" width="26" height="26" rx="13" fill="#00684A"/>
-      <circle cx="13" cy="13" r="4.5" fill="#FFFFFF"/>
-      <polygon points="9,22 17,22 13,30" fill="#00684A"/>
-    </g>
-  </g>
-
-  <!-- ================= 7. LANDSCAPING TREES ================= -->
-  <g id="landscaping-trees">
-    <rect x="52" y="530" width="8" height="40" fill="#78350F" rx="2"/>
-    <circle cx="56" cy="508" r="36" fill="#14532D"/>
-    <circle cx="42" cy="492" r="26" fill="#15803D"/>
-
-    <rect x="305" y="525" width="8" height="38" fill="#78350F" rx="2"/>
-    <circle cx="309" cy="502" r="30" fill="#14532D"/>
-    <circle cx="320" cy="492" r="22" fill="#15803D"/>
-
-    <rect x="612" y="525" width="8" height="40" fill="#78350F" rx="2"/>
-    <circle cx="616" cy="498" r="36" fill="#14532D"/>
-    <circle cx="602" cy="485" r="26" fill="#15803D"/>
-
-    <rect x="1000" y="555" width="10" height="48" fill="#78350F" rx="2"/>
-    <circle cx="1006" cy="528" r="44" fill="#14532D"/>
-    <circle cx="986" cy="510" r="30" fill="#15803D"/>
-    <circle cx="1025" cy="512" r="28" fill="#16A34A" opacity="0.9"/>
-
-    <!-- Moved from the far right to cover the sign-in bay's left edge. -->
-    <g transform="translate(-660 0)">
-      <rect x="1220" y="565" width="12" height="52" fill="#78350F" rx="2"/>
-      <circle cx="1228" cy="532" r="52" fill="#14532D"/>
-      <circle cx="1205" cy="512" r="36" fill="#15803D"/>
-      <circle cx="1252" cy="516" r="32" fill="#16A34A" opacity="0.9"/>
-    </g>
-  </g>
+  <!-- ================= 9. CENTER CONTRAST RADIAL HALO FOR LOGIN LEGIBILITY ================= -->
+  <ellipse cx="720" cy="365" rx="340" ry="250" fill="url(#centerContrastHalo)"/>
 </svg>

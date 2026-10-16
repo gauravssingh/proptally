@@ -3,15 +3,7 @@
 {% block card %}
 {{ ui.card_open() }}
 <h1>Reset your password</h1>
-<p class="pt-fs-supporting pt-text-secondary">
-    This installation does not send email. For your security, reset links are issued by its
-    operator rather than shown to anyone who enters an email address here.
-</p>
-{{ ui.alert(
-    variant="info",
-    title="Ask the installation operator",
-    text="The operator can create a single-use reset link on the host with <code>python scripts/issue_password_reset.py --email &lt;your-email&gt;</code>, then give it to you over a trusted channel. The link expires after two hours."
-) }}
+{% include "components/reset_help.html" %}
 <div class="pt-form-actions">
     {{ ui.btn("Back to sign in", variant="secondary", href="/auth/login") }}
 </div>

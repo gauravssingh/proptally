@@ -4,22 +4,23 @@
 {# ---------------------------------------------------------------------------
    Embedded single-screen sign-in, with no card.
 
-   The whole viewport is one continuous scene and the form sits directly on it:
-   a narrow column of fields, each with one leading icon, over a soft wash that
-   has no edges. Below lg the scene is dropped for an ambient gradient.
+   The scene carries its own contrast halo (centerContrastHalo in
+   login-neighborhood.svg, at 720,365 of a 1440x900 viewBox), and the form sits
+   dead centre on top of it. Fields are frosted so they stay readable wherever
+   the artwork happens to be light or dark; the labels are pills for the same
+   reason.
 
    Positioning lives in `.auth-panel`'s lg rule rather than in the markup:
-   `absolute right-12 top-1/2` would offset a static form on mobile.
+   absolute coordinates would offset a static form on mobile.
    --------------------------------------------------------------------------- #}
 
 {% block shell %}
-<div class="auth-root relative h-screen w-full overflow-hidden">
+<div class="auth-root relative h-screen w-screen overflow-hidden">
     <img class="auth-scene absolute inset-0 w-full h-full object-cover z-0"
          src="/static/img/login-neighborhood.svg" alt="">
-    <div class="auth-glow" aria-hidden="true"></div>
 
     <div class="auth-panel w-full z-10">
-        <div class="auth-form">
+        <div class="auth-form" data-panes>
 
             <div class="flex items-center gap-3">
                 <span class="auth-mark">P</span>
@@ -34,64 +35,80 @@
                 </span>
             </div>
 
-            {# Heading kept for screen-reader structure only; the visible page is
-               the mark and the form. #}
-            <h1 class="pt-sr-only">Sign in to PropTally</h1>
+            <div class="auth-pane" data-pane="signin">
+                {# Heading kept for screen-reader structure only. #}
+                <h1 class="pt-sr-only" tabindex="-1" data-pane-heading>Sign in to PropTally</h1>
 
-            {% if error %}
-            <div class="mt-6">{{ ui.alert(variant="error", title="Could not sign in", text=error) }}</div>
-            {% endif %}
+                {% if error %}
+                <div class="mt-6">{{ ui.alert(variant="error", title="Could not sign in", text=error) }}</div>
+                {% endif %}
 
-            <form method="post" action="/auth/login" class="mt-6" data-loading-form>
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <input type="hidden" name="next" value="{{ next_url }}">
+                <form method="post" action="/auth/login" class="mt-6" data-loading-form>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="next" value="{{ next_url }}">
 
-                <div class="flex flex-col gap-4">
-                    <div class="pt-field">
-                        <label class="pt-field__label" for="email">Email<span class="pt-field__required" aria-hidden="true">*</span></label>
-                        <div class="auth-input">
-                            <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("mail", "md") }}</span>
-                            <input type="email" id="email" name="email" value="{{ email or '' }}"
-                                   placeholder="name@company.com"
-                                   required aria-required="true" autocomplete="email" autofocus>
+                    <div class="flex flex-col gap-4">
+                        <div class="pt-field">
+                            <label class="pt-field__label auth-label" for="email">Email<span class="pt-field__required" aria-hidden="true">*</span></label>
+                            <div class="auth-input">
+                                <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("mail", "md") }}</span>
+                                <input class="bg-white/95 backdrop-blur-xl border-2 border-white rounded-xl shadow-lg"
+                                       type="email" id="email" name="email" value="{{ email or '' }}"
+                                       placeholder="name@company.com"
+                                       required aria-required="true" autocomplete="email" autofocus>
+                            </div>
                         </div>
-                    </div>
 
-                    <div class="pt-field">
-                        <div class="auth-row">
-                            <label class="pt-field__label" for="password">Password<span class="pt-field__required" aria-hidden="true">*</span></label>
-                            <a class="auth-link" href="/auth/reset">Forgot password?</a>
+                        <div class="pt-field">
+                            <div class="auth-row">
+                                <label class="pt-field__label auth-label" for="password">Password<span class="pt-field__required" aria-hidden="true">*</span></label>
+                                {# The href is the no-JS path: this page's script upgrades it to a
+                                   pane swap so the step happens inside the box. #}
+                                <a class="auth-link" href="/auth/reset" data-pane-toggle="forgot">Forgot password?</a>
+                            </div>
+                            <div class="auth-input auth-password">
+                                <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("lock", "md") }}</span>
+                                <input class="bg-white/95 backdrop-blur-xl border-2 border-white rounded-xl shadow-lg"
+                                       type="password" id="password" name="password"
+                                       required aria-required="true" autocomplete="current-password">
+                                <button type="button" class="auth-toggle"
+                                        data-password-toggle="password"
+                                        aria-controls="password" aria-pressed="false"
+                                        aria-label="Show password">
+                                    <span class="auth-toggle__icon auth-toggle__icon--off">{{ ui.icon("eye", "md") }}</span>
+                                    <span class="auth-toggle__icon auth-toggle__icon--on">{{ ui.icon("eye-off", "md") }}</span>
+                                </button>
+                            </div>
                         </div>
-                        <div class="auth-input auth-password">
-                            <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("lock", "md") }}</span>
-                            <input type="password" id="password" name="password"
-                                   required aria-required="true" autocomplete="current-password">
-                            <button type="button" class="auth-toggle"
-                                    data-password-toggle="password"
-                                    aria-controls="password" aria-pressed="false"
-                                    aria-label="Show password">
-                                <span class="auth-toggle__icon auth-toggle__icon--off">{{ ui.icon("eye", "md") }}</span>
-                                <span class="auth-toggle__icon auth-toggle__icon--on">{{ ui.icon("eye-off", "md") }}</span>
+
+                        <div class="auth-cta" data-loading="false">
+                            <button type="submit" class="pt-btn pt-btn--block rounded-full">
+                                <span class="auth-spinner" aria-hidden="true"></span>
+                                <span data-loading-label>Sign in</span>
+                                <span class="auth-cta__arrow" aria-hidden="true">{{ ui.icon("arrow_right", "md") }}</span>
                             </button>
                         </div>
                     </div>
+                </form>
 
-                    <div class="auth-cta" data-loading="false">
-                        <button type="submit" class="pt-btn pt-btn--primary pt-btn--block">
-                            <span class="auth-spinner" aria-hidden="true"></span>
-                            <span data-loading-label>Sign in</span>
-                        </button>
-                    </div>
+                {% if registration_open %}
+                {# Only a fresh, account-less instance shows anything here: without it
+                   there is no route to /auth/register from the sign-in page. #}
+                <div class="auth-notice mt-6">
+                    <span>No account yet? <a href="/auth/register">Create a portfolio</a>.</span>
                 </div>
-            </form>
-
-            {% if registration_open %}
-            {# Only a fresh, account-less instance shows anything here: without it
-               there is no route to /auth/register from the sign-in page. #}
-            <div class="auth-notice mt-6">
-                <span>No account yet? <a href="/auth/register">Create a portfolio</a>.</span>
+                {% endif %}
             </div>
-            {% endif %}
+
+            {# The forgot-password step, in the same box. The box is centred and sized
+               by its content, so it simply grows for this pane. #}
+            <div class="auth-pane" data-pane="forgot" hidden>
+                <h2 class="auth-pane__title" tabindex="-1" data-pane-heading>Reset your password</h2>
+                <div class="mt-2">{% include "components/reset_help.html" %}</div>
+                <div class="auth-notice mt-6">
+                    <span><a class="auth-link" href="/auth/login" data-pane-toggle="signin">Back to sign in</a></span>
+                </div>
+            </div>
 
         </div>
     </div>

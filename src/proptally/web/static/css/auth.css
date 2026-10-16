@@ -6,14 +6,12 @@
 
    Brand primary: #00684A (hover #00523A, focus ring rgba(0, 104, 74, 0.4)).
 
-   There is no card. The form sits directly on the illustration: a compact
-   column of inputs with leading icons. Legibility over the artwork comes from
-   the fields' own translucent fill and from `.auth-glow`, a soft radial wash
-   with no edges to read as a panel (delete that rule for a completely bare
-   form).
+   No card. The form sits dead centre, over the radial halo baked into the SVG
+   scene (login-neighborhood.svg, centreContrastHalo at 720,365 of 1440x900), so
+   legibility comes from the artwork rather than from a panel behind the fields.
 
-   Markup uses utility class names for layout and type; the named classes below
-   carry everything a utility cannot express.
+   Markup carries utility class names for the surfaces and the type; the named
+   classes below carry structure, icons and the interactive details.
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
@@ -25,6 +23,7 @@
 .z-0 { z-index: 0; }
 .z-10 { z-index: 10; }
 .w-full { width: 100%; }
+.w-screen { width: 100vw; }
 .h-full { height: 100%; }
 .h-screen { height: 100vh; height: 100dvh; }
 .object-cover { object-fit: cover; }
@@ -47,7 +46,27 @@
 .text-slate-900 { color: #0f172a; }
 
 /* --------------------------------------------------------------------------
-   3. Scene, panel, glow
+   3. Surface utilities: frosted fields, pill labels, CTA
+   -------------------------------------------------------------------------- */
+/* Scoped to the auth form: components.css styles `.pt-field input` (specificity
+   0,1,1), so a bare `.border-2` or `.rounded-xl` on that input loses. Scoping
+   keeps the markup literal to the brief and still lands the surface. */
+.auth-form .rounded-xl { border-radius: 0.75rem; }
+.auth-form .border-2 { border-width: 2px; border-style: solid; }
+.auth-form .border-white { border-color: #ffffff; }
+.auth-form .bg-white\/95 { background-color: rgba(255, 255, 255, 0.95); }
+.auth-form .shadow-lg {
+    box-shadow:
+        0 10px 15px -3px rgba(15, 23, 42, 0.1),
+        0 4px 6px -4px rgba(15, 23, 42, 0.1);
+}
+
+/* These two only ever dress the CTA pill, which nothing else styles. */
+.rounded-full { border-radius: 9999px; }
+.backdrop-blur-xl { backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
+
+/* --------------------------------------------------------------------------
+   4. Scene, panel, form
    -------------------------------------------------------------------------- */
 /* Hidden below lg: a phone gets an ambient gradient and a bare form, not a
    cropped illustration. */
@@ -64,11 +83,12 @@
 .auth-root {
     position: relative;
     min-height: 100dvh;
-    overflow: hidden;
+    /* The browser frame hides the artwork's overflow; the form itself must stay
+       reachable when it is taller than the viewport (a landscape phone). */
+    overflow-x: hidden;
+    overflow-y: auto;
     background-image: linear-gradient(160deg, #EAF4FD 0%, #F4FAF7 55%, #E5F3EA 100%);
 }
-
-.auth-glow { display: none; }
 
 .auth-panel {
     position: relative;
@@ -80,41 +100,47 @@
     padding: 1.5rem;
 }
 
-/* The form: no background, no border, no shadow. Just a column. */
+/* The form: a minimal box. Light enough to read as glass over the scene, with a
+   thin highlight border and no chrome. The scene's centre is kept clear of
+   houses, so this only has to lift the fields, not hide anything. */
 .auth-form {
     width: 100%;
     max-width: 24rem;
+    padding: 1.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.65);
+    border-radius: 1.25rem;
+    background-color: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 24px 48px -28px rgba(15, 23, 42, 0.45);
+}
+
+/* On a phone there is nothing behind the box to blur, so it goes opaque. */
+@media (max-width: 1023px) {
+    .auth-form {
+        background-color: rgba(255, 255, 255, 0.94);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
 }
 
 @media (min-width: 1024px) {
     .auth-scene { display: block; }
 
-    .auth-root { background-image: none; }
-
-    /* An edgeless wash over the sign-in bay, so the labels and inputs keep their
-       contrast against whatever the scene is doing underneath. */
-    .auth-glow {
-        display: block;
-        position: absolute;
-        inset: 0;
-        z-index: 1;
-        background-image: radial-gradient(
-            520px 460px at 55.6% 43%,
-            rgba(255, 255, 255, 0.85),
-            rgba(255, 255, 255, 0.5) 62%,
-            rgba(255, 255, 255, 0) 100%
-        );
+    .auth-root {
+        background-image: none;
+        overflow: hidden;
     }
 
-    /* The form sits in the bay between house 2 and house 3, not out on the
-       empty right-hand lawn, and rides a little above the horizon line. */
+    /* Dead centre of the frame, and therefore of the scene's halo: the ellipse
+       is at x=720, y=365 of a 1440x900 viewBox, which is 50% / 40.6%. */
     .auth-panel {
         display: block;
         min-height: 0;
         padding: 0;
         position: absolute;
-        left: 55.6%;
-        top: 43%;
+        left: 50%;
+        top: 40.6%;
         transform: translate(-50%, -50%);
         width: 100%;
         max-width: 24rem;
@@ -122,7 +148,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   4. Brand row
+   5. Brand row
    -------------------------------------------------------------------------- */
 .auth-mark {
     display: flex;
@@ -157,7 +183,27 @@
 }
 
 /* --------------------------------------------------------------------------
-   5. Fields: compact, translucent, one leading icon each
+   6. Steps inside the box
+   -------------------------------------------------------------------------- */
+.auth-pane[hidden] { display: none; }
+
+.auth-pane__title {
+    margin-top: 1.5rem;
+    color: #0f172a;
+    font-size: 1.25rem;
+    line-height: 1.75rem;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+}
+
+.auth-pane__title:focus-visible {
+    outline: 2px solid #00684A;
+    outline-offset: 3px;
+    border-radius: 0.25rem;
+}
+
+/* --------------------------------------------------------------------------
+   7. Fields: frosted, one leading icon each
    -------------------------------------------------------------------------- */
 .auth-form .pt-field__label {
     color: #1e293b;
@@ -166,39 +212,43 @@
     font-weight: 600;
 }
 
+/* Plain label text on the box. It carried a white pill while the form sat
+   directly on the artwork; with the box behind it that pill reads as a stray
+   patch, so the contrast comes from the box instead. */
+.auth-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-bottom: 0.375rem;
+}
+
 .auth-row {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
 }
 
 .auth-input { position: relative; }
 
+/* Layout only: the frosted surface is the utility set on the input itself, so
+   these rules must not restate background, border, radius or shadow. */
 .auth-input input {
     width: 100%;
-    min-height: 2.5rem;
-    padding: 0.5rem 0.75rem 0.5rem 2.25rem;
-    border: 1px solid rgba(100, 116, 139, 0.45);
-    border-radius: 0.625rem;
-    background-color: rgba(255, 255, 255, 0.62);
+    min-height: 2.75rem;
+    padding: 0.5rem 0.875rem 0.5rem 2.375rem;
     color: #0f172a;
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
     transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
 }
 
 .auth-input input::placeholder { color: #94a3b8; }
 
-.auth-input input:hover {
-    border-color: rgba(71, 85, 105, 0.6);
-    background-color: rgba(255, 255, 255, 0.72);
-}
-
 .auth-input input:focus {
     outline: none;
     border-color: #00684A;
-    background-color: rgba(255, 255, 255, 0.85);
-    box-shadow: 0 0 0 3px rgba(0, 104, 74, 0.4);
+    background-color: #ffffff;
+    box-shadow: 0 0 0 4px rgba(0, 104, 74, 0.4);
 }
 
 .auth-input input:focus-visible {
@@ -209,7 +259,7 @@
 .auth-input input[aria-invalid="true"] { border-color: #dc2626; }
 
 .auth-input input[aria-invalid="true"]:focus {
-    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.35);
+    box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.35);
 }
 
 .auth-input__icon {
@@ -222,27 +272,27 @@
     pointer-events: none;
 }
 
-.auth-password input { padding-right: 2.5rem; }
+.auth-password input { padding-right: 2.75rem; }
 
 .auth-toggle {
     position: absolute;
-    right: 0.375rem;
+    right: 0.5rem;
     top: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 1.75rem;
-    height: 1.75rem;
+    width: 1.875rem;
+    height: 1.875rem;
     padding: 0;
     border: 0;
-    border-radius: 0.375rem;
+    border-radius: 9999px;
     background: transparent;
     color: #475569;
     cursor: pointer;
     transform: translateY(-50%);
 }
 
-.auth-toggle:hover { background-color: rgba(15, 23, 42, 0.07); color: #0f172a; }
+.auth-toggle:hover { background-color: rgba(15, 23, 42, 0.08); color: #0f172a; }
 
 .auth-toggle:focus-visible {
     outline: 2px solid #00684A;
@@ -273,17 +323,17 @@
 }
 
 /* --------------------------------------------------------------------------
-   6. Action
+   7. Action
    -------------------------------------------------------------------------- */
 .auth-cta .pt-btn {
     width: 100%;
-    min-height: 2.5rem;
-    border-radius: 0.625rem;
+    min-height: 2.75rem;
     background-color: #00684A;
     color: #ffffff;
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
     font-weight: 700;
-    transition: background-color 140ms ease;
+    box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.1), 0 4px 6px -4px rgba(15, 23, 42, 0.1);
+    transition: background-color 140ms ease, box-shadow 140ms ease;
 }
 
 .auth-cta .pt-btn:hover:not(:disabled) { background-color: #00523A; color: #ffffff; }
@@ -291,10 +341,23 @@
 .auth-cta .pt-btn:focus-visible {
     outline: 2px solid #00684A;
     outline-offset: 2px;
-    box-shadow: 0 0 0 3px rgba(0, 104, 74, 0.4);
+    box-shadow: 0 0 0 4px rgba(0, 104, 74, 0.4);
 }
 
 .auth-cta .pt-btn:disabled { opacity: 0.85; cursor: progress; }
+
+/* The arrow leans forward on hover; it stays legible when it is not. */
+.auth-cta__arrow {
+    display: flex;
+    opacity: 0.85;
+    transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.auth-cta .pt-btn:hover .auth-cta__arrow,
+.auth-cta .pt-btn:focus-visible .auth-cta__arrow {
+    opacity: 1;
+    transform: translateX(3px);
+}
 
 .auth-spinner {
     display: none;
@@ -315,11 +378,13 @@
 @media (prefers-reduced-motion: reduce) {
     .auth-spinner { animation-duration: 1600ms; }
     .auth-input input,
-    .auth-cta .pt-btn { transition: none; }
+    .auth-cta .pt-btn,
+    .auth-cta__arrow { transition: none; }
+    .auth-cta .pt-btn:hover .auth-cta__arrow { transform: none; }
 }
 
 /* --------------------------------------------------------------------------
-   7. First-run registration path: small text, no container
+   8. First-run registration path: small text, no container
    -------------------------------------------------------------------------- */
 .auth-notice {
     display: flex;

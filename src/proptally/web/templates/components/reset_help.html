@@ -1,0 +1,13 @@
+{#- How an account holder gets a reset link on an installation with no mailer.
+    Shared by the standalone /auth/reset page and the sign-in box's pane, so the
+    two cannot drift apart. -#}
+{% import "components/ui.html" as ui with context %}
+<p class="pt-fs-supporting pt-text-secondary">
+    This installation does not send email. For your security, reset links are issued by its
+    operator rather than shown to anyone who enters an email address here.
+</p>
+{{ ui.alert(
+    variant="info",
+    title="Ask the installation operator",
+    text="The operator can create a single-use reset link on the host with <code>python scripts/issue_password_reset.py --email &lt;your-email&gt;</code>, then give it to you over a trusted channel. The link expires after two hours."
+) }}

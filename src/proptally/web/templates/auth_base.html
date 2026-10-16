@@ -51,6 +51,23 @@
         });
     });
 
+    // Steps inside the same box (sign in ⇄ reset help). The control keeps its
+    // href, so with the script unavailable the link still reaches the standalone
+    // page; here it swaps panes instead and focuses the new heading.
+    document.querySelectorAll("[data-pane-toggle]").forEach(function (control) {
+        control.addEventListener("click", function (event) {
+            var host = document.querySelector("[data-panes]");
+            if (!host) { return; }
+            var wanted = control.getAttribute("data-pane-toggle");
+            event.preventDefault();
+            host.querySelectorAll("[data-pane]").forEach(function (pane) {
+                pane.hidden = pane.getAttribute("data-pane") !== wanted;
+            });
+            var heading = host.querySelector('[data-pane="' + wanted + '"] [data-pane-heading]');
+            if (heading) { heading.focus(); }
+        });
+    });
+
     // Loading state: the form posts and the browser navigates, so the only job
     // here is to say that work has started and refuse a second submission.
     document.querySelectorAll("form[data-loading-form]").forEach(function (form) {
