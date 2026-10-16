@@ -302,13 +302,6 @@
     margin-bottom: 0.375rem;
 }
 
-.auth-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-}
-
 .auth-input { position: relative; }
 
 /* Layout only: the frosted surface is the utility set on the input itself, so

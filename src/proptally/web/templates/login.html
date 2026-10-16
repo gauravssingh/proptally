@@ -85,12 +85,7 @@
                         </div>
 
                         <div class="pt-field">
-                            <div class="auth-row">
-                                <label class="pt-field__label auth-label" for="password">Password<span class="pt-field__required" aria-hidden="true">*</span></label>
-                                {# The href is the no-JS path: this page's script upgrades it to a
-                                   pane swap so the step happens inside the box. #}
-                                <a class="auth-link" href="/auth/reset" data-pane-toggle="forgot">Forgot password?</a>
-                            </div>
+                            <label class="pt-field__label auth-label" for="password">Password<span class="pt-field__required" aria-hidden="true">*</span></label>
                             <div class="auth-input auth-password">
                                 <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("lock", "md") }}</span>
                                 <input class="bg-white/95 backdrop-blur-xl border-2 border-white rounded-xl shadow-lg"
@@ -117,6 +112,15 @@
                         </div>
                     </div>
                 </form>
+
+                {# The reset path is placed after the submit in the document, so the tab
+                   order runs email, password, show-password, sign in, then this. An
+                   escape hatch should not sit between somebody and the field they are
+                   filling in. The href is the no-JS route; the script upgrades it to a
+                   pane swap so the step happens inside the box. #}
+                <div class="auth-pane__footer">
+                    <a class="auth-link" href="/auth/reset" data-pane-toggle="forgot">Forgot password?</a>
+                </div>
 
                 {% if registration_open %}
                 {# Only a fresh, account-less instance shows anything here: without it
