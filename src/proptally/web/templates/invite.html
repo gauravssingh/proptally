@@ -1,8 +1,9 @@
 {% extends "auth_base.html" %}
 {% block title %}Accept invitation — PropTally{% endblock %}
 {% block card %}
-<h1 class="pt-auth__title">Join {{ invite_tenant_name }}</h1>
-<p class="pt-auth__sub">
+{{ ui.card_open() }}
+<h1>Join {{ invite_tenant_name }}</h1>
+<p class="pt-fs-supporting pt-text-secondary">
     You have been invited as <strong>{{ invite_role }}</strong>.
     {% if invite_role == 'READ_ONLY' %}
     Read-only access: you can view and export, but not change anything.
@@ -11,28 +12,26 @@
     {% endif %}
 </p>
 
-{% if error %}<div class="pt-auth__error">{{ error }}</div>{% endif %}
+{% if error %}{{ ui.alert(variant="error", title="Could not accept the invitation", text=error) }}{% endif %}
 
-<form class="pt-auth__form" method="post" action="/auth/invite/{{ token }}">
+<form method="post" action="/auth/invite/{{ token }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="pt-auth__field">
-        <label for="display_name">Your name</label>
-        <input id="display_name" name="display_name" type="text" autocomplete="name" value="{{ display_name or '' }}">
+    <div class="pt-stack pt-gap-4">
+        {{ ui.text_field("display_name", "Your name", value=display_name or "",
+                         extra='autocomplete="name"') }}
+        {{ ui.text_field("email", "Email", value=invite_email, type="email",
+                         extra="disabled", help="Fixed by the invitation.") }}
+        {{ ui.text_field("password", "Password", type="password", required=true,
+                         extra='autocomplete="new-password"',
+                         help="At least " ~ min_password_length ~ " characters. If you already have an account here, enter that password to confirm it is you.") }}
+        <div class="pt-form-actions">
+            {{ ui.btn("Accept invitation", variant="primary", type="submit", block=true) }}
+        </div>
     </div>
-    <div class="pt-auth__field">
-        <label for="email">Email</label>
-        <input id="email" type="email" value="{{ invite_email }}" disabled>
-        <small>Fixed by the invitation.</small>
-    </div>
-    <div class="pt-auth__field">
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password" autocomplete="new-password" required>
-        <small>At least {{ min_password_length }} characters. If you already have an account here, enter that password to confirm it is you.</small>
-    </div>
-    <button class="pt-auth__submit" type="submit">Accept invitation</button>
 </form>
 
-<div class="pt-auth__links">
+<div class="pt-stack pt-gap-2 pt-fs-caption">
     <span>Already signed in? <a href="/">Go to the dashboard</a>.</span>
 </div>
+{{ ui.card_close() }}
 {% endblock %}

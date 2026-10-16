@@ -1,84 +1,67 @@
 {% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
 {% block title %}Remove {{ portfolio.name }} — PropTally{% endblock %}
+
 {% block content %}
+{% call ui.page_header(
+    "Remove “" ~ portfolio.name ~ "”",
+    "This portfolio is its own database. Removing it destroys that database and its document store, and nothing is kept."
+) %}{% endcall %}
+
+{% if error %}{{ ui.alert(variant="error", title="Not removed", text=error) }}{% endif %}
+
 <div class="pt-stack pt-gap-6">
+    {{ ui.section_open("What would be destroyed") }}
+        {% if portfolio.readable %}
+        {{ ui.table_open(label="What removing this portfolio would destroy") }}
+            <tbody>
+                <tr><th scope="row">Doors (properties)</th><td class="pt-table__num">{{ portfolio.properties }}</td></tr>
+                <tr><th scope="row">Mortgage loans</th><td class="pt-table__num">{{ portfolio.loans }}</td></tr>
+                <tr><th scope="row">Documents</th><td class="pt-table__num">{{ portfolio.documents }}</td></tr>
+                <tr><th scope="row">Transactions</th><td class="pt-table__num">{{ portfolio.transactions }}</td></tr>
+                <tr><th scope="row">Posted journal entries</th><td class="pt-table__num">{{ portfolio.journal_entries }}</td></tr>
+                <tr><th scope="row">Files on disk</th><td class="pt-table__num">{{ portfolio.stored_files }}</td></tr>
+            </tbody>
+        {{ ui.table_close() }}
+        {% else %}
+        {{ ui.alert(
+            variant="warning",
+            title="Contents cannot be listed",
+            text="This portfolio's database could not be opened, so what it holds cannot be counted. Removing it will still delete whatever is there."
+        ) }}
+        {% endif %}
+    {{ ui.section_close() }}
 
-    <div class="pt-stack pt-gap-1">
-        <h1 class="pt-fs-h2 pt-fw-bold">Remove “{{ portfolio.name }}”</h1>
-        <p class="pt-fs-caption pt-text-secondary">
-            This portfolio is its own database. Removing it destroys that database and its
-            document store, and nothing is kept.
-        </p>
-    </div>
-
-    {% if error %}{{ ui.alert(variant="error", title="Not removed", text=error) }}{% endif %}
-
-    <section class="pt-card">
-        <div class="pt-card__header">
-            <h2 class="pt-card__title">What would be destroyed</h2>
-        </div>
-        <div class="pt-card__body">
-            {% if portfolio.readable %}
-            <table class="pt-table">
-                <tbody>
-                    <tr><th>Doors (properties)</th><td>{{ portfolio.properties }}</td></tr>
-                    <tr><th>Mortgage loans</th><td>{{ portfolio.loans }}</td></tr>
-                    <tr><th>Documents</th><td>{{ portfolio.documents }}</td></tr>
-                    <tr><th>Transactions</th><td>{{ portfolio.transactions }}</td></tr>
-                    <tr><th>Posted journal entries</th><td>{{ portfolio.journal_entries }}</td></tr>
-                    <tr><th>Stored files (vault and photos)</th><td>{{ portfolio.stored_files }}</td></tr>
-                </tbody>
-            </table>
-            {% else %}
-            <p>
-                This portfolio's database could not be opened, so its contents cannot be
-                listed. Removing it will still delete whatever is there.
-            </p>
-            {% endif %}
-        </div>
-    </section>
-
-    <section class="pt-card">
-        <div class="pt-card__header">
-            <h2 class="pt-card__title">Keep a copy first</h2>
-        </div>
-        <div class="pt-card__body pt-stack pt-gap-3">
+    {{ ui.section_open("Keep a copy first", "An export is the only copy you can take before removal.") }}
+        <div class="pt-stack pt-gap-3">
             <p class="pt-fs-caption pt-text-secondary">
                 An export contains the ledger database, the documents and the photos, with a
                 manifest. Take one before removing the portfolio; it cannot be taken after.
             </p>
-            <a class="pt-btn pt-btn--secondary pt-btn--sm"
-               href="/portfolios/{{ portfolio.tenant_id }}/export">Download an export now</a>
+            {{ ui.btn("Download an export now", variant="secondary", size="sm",
+                      href="/portfolios/" ~ portfolio.tenant_id ~ "/export") }}
         </div>
-    </section>
+    {{ ui.section_close() }}
 
-    <section class="pt-card">
-        <div class="pt-card__header">
-            <h2 class="pt-card__title">Confirm</h2>
-        </div>
-        <div class="pt-card__body pt-stack pt-gap-3">
-            <form method="post" action="/portfolios/{{ portfolio.tenant_id }}/delete"
-                  class="pt-stack pt-gap-3">
-                {{ csrf_field() }}
-                {{ ui.text_field(
-                    "confirm_name",
-                    "Portfolio name",
-                    required=true,
-                    placeholder="Type it exactly",
-                    help="Type " ~ portfolio.name ~ " exactly, including capitals."
-                ) }}
-                <div class="pt-flex pt-flex-row pt-gap-2">
-                    <button class="pt-btn pt-btn--destructive pt-btn--sm" type="submit">
-                        Remove this portfolio permanently
-                    </button>
-                    <a class="pt-btn pt-btn--secondary pt-btn--sm" href="/portfolios">Cancel</a>
-                </div>
-            </form>
-            <p class="pt-fs-caption pt-text-secondary">
-                This cannot be undone and there is no recycle bin. Backups taken with
-                <code>scripts/backup.sh</code> are unaffected.
-            </p>
-        </div>
-    </section>
+    {{ ui.section_open("Confirm", "Removal cannot be undone, and there is no recycle bin.") }}
+        <form method="post" action="/portfolios/{{ portfolio.tenant_id }}/delete" class="pt-stack pt-gap-4">
+            {{ csrf_field() }}
+            {{ ui.text_field(
+                "confirm_name",
+                "Portfolio name",
+                required=true,
+                placeholder="Type it exactly",
+                help="Type " ~ portfolio.name ~ " exactly, including capitals."
+            ) }}
+            <div class="pt-form-actions">
+                {{ ui.btn("Cancel", variant="secondary", size="sm", href="/portfolios") }}
+                {{ ui.btn("Remove this portfolio permanently", variant="destructive", size="sm", type="submit") }}
+            </div>
+        </form>
+        <p class="pt-fs-caption pt-text-secondary">
+            Backups taken with <code>scripts/backup.sh</code> are unaffected.
+        </p>
+    {{ ui.section_close() }}
 </div>
 {% endblock %}

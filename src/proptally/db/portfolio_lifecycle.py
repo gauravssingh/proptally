@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from sqlmodel import Session, select
@@ -37,7 +39,7 @@ from proptally.db.system_models import (
     UserInvite,
     UserSession,
 )
-from proptally.db.tenant_manager import TenantManager
+from proptally.db.tenant_manager import TenantManager, system_db_path
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +114,86 @@ def portfolio_summary(
         stored = sum(1 for item in paths.root.rglob("*") if item.is_file())
         summary = replace(summary, stored_files=stored)
     return summary
+
+
+@dataclass(frozen=True)
+class PortfolioStatus:
+    """Where one portfolio lives, how much it occupies, and what it holds.
+
+    Read-only. It opens the portfolio's database to count rows and measures its files; an
+    unreadable database is reported through ``summary.readable`` rather than raised, so the
+    administration screen can state what is wrong instead of failing.
+    """
+
+    summary: PortfolioSummary
+    created_at: Optional[datetime]
+    root: Path
+    database: Path
+    vault: Path
+    photos: Path
+    database_bytes: int
+    wal_bytes: int
+    vault_bytes: int
+    photos_bytes: int
+    control_plane: Path
+    control_plane_bytes: int
+
+    @property
+    def portfolio_bytes(self) -> int:
+        """Everything an export of this portfolio would contain, in bytes."""
+        return self.database_bytes + self.wal_bytes + self.vault_bytes + self.photos_bytes
+
+
+def _file_bytes(path: Path) -> int:
+    return path.stat().st_size if path.is_file() else 0
+
+
+def _tree_bytes(directory: Path) -> int:
+    """Bytes on disk under ``directory``, or 0 when it does not exist."""
+    if not directory.is_dir():
+        return 0
+    return sum(item.stat().st_size for item in directory.rglob("*") if item.is_file())
+
+
+def portfolio_status(
+    control_engine, tenant_manager: TenantManager, tenant_id: str
+) -> Optional[PortfolioStatus]:
+    """Everything the administration screen reports about one portfolio.
+
+    ``None`` when the portfolio does not exist. The control-plane figures are included
+    because the whole-instance backup covers both, and an operator deciding whether to take
+    one wants to see the size of what it would contain.
+
+    The control-plane path is read from the engine that is actually open, not from the
+    environment: an engine handed a different URL (a test's temporary database, say) must
+    not be described by the path the environment would have produced.
+    """
+    summary = portfolio_summary(control_engine, tenant_manager, tenant_id)
+    if summary is None:
+        return None
+
+    with Session(control_engine) as session:
+        tenant = session.get(Tenant, tenant_id)
+    created_at = tenant.created_at if tenant is not None else None
+
+    paths = tenant_manager.paths(tenant_id)
+    database_url_path = control_engine.url.database
+    control_plane = Path(database_url_path) if database_url_path else system_db_path()
+
+    return PortfolioStatus(
+        summary=summary,
+        created_at=created_at,
+        root=paths.root,
+        database=paths.database,
+        vault=paths.vault,
+        photos=paths.photos,
+        database_bytes=_file_bytes(paths.database),
+        wal_bytes=_file_bytes(paths.database.with_name(paths.database.name + "-wal")),
+        vault_bytes=_tree_bytes(paths.vault),
+        photos_bytes=_tree_bytes(paths.photos),
+        control_plane=control_plane,
+        control_plane_bytes=_file_bytes(control_plane),
+    )
 
 
 def delete_portfolio(

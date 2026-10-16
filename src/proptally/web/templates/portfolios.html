@@ -1,82 +1,97 @@
 {% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
 {% block title %}Portfolios — PropTally{% endblock %}
+
 {% block content %}
+{% set header_meta %}
+    {% set who = current_context() %}
+    {{ ui.badge(who.role, variant="neutral", upper=true) }}
+{% endset %}
+
+{% call ui.page_header(
+    "Your portfolios",
+    "Signed in as " ~ context.user.display_name ~ " <" ~ context.user.email ~ ">. Each portfolio is a separate database, and this is the only screen that looks across them.",
+    meta=header_meta
+) %}{% endcall %}
+
+{% if error %}{{ ui.alert(variant="error", title="Not available", text=error) }}{% endif %}
+
 <div class="pt-stack pt-gap-6">
+    {{ ui.section_open(
+        "Portfolios this account reaches",
+        "Doors, net equity and debt are reported per portfolio. Opening one makes it the portfolio every other screen reports on."
+    ) }}
+        {{ ui.table_open(label="Portfolios this account reaches") }}
+            <thead>
+                <tr>
+                    {{ ui.th("Portfolio") }}
+                    {{ ui.th("Your role") }}
+                    {{ ui.th("Doors", num=true) }}
+                    {{ ui.th("Net equity", num=true) }}
+                    {{ ui.th("Debt", num=true) }}
+                    {{ ui.th("", cls="pt-table__actions") }}
+                </tr>
+            </thead>
+            <tbody>
+            {% for portfolio in portfolios %}
+                <tr>
+                    <td>
+                        <span class="pt-table__primary">{{ portfolio.name }}</span>
+                        {% if portfolio.tenant_id == context.tenant.id %}
+                        {{ ui.badge("OPEN NOW", variant="accent", upper=true) }}
+                        {% endif %}
+                        {% if not portfolio.available %}
+                        {{ ui.badge("DATA UNAVAILABLE", variant="warning", upper=true,
+                                    title="This portfolio's database could not be opened, so its figures cannot be reported. Its files are untouched.") }}
+                        {% endif %}
+                    </td>
+                    <td>{{ ui.badge(portfolio.role, variant="neutral", upper=true,
+                                    title=portfolio.role_description) }}</td>
+                    <td class="pt-table__num">{{ portfolio.property_count }}</td>
+                    <td class="pt-table__num">
+                        {{ ui.amount(portfolio.net_equity_cents, mode="plain",
+                                     unavailable_title="This portfolio's database could not be opened.") }}
+                    </td>
+                    <td class="pt-table__num">
+                        {{ ui.amount(portfolio.total_debt_cents, mode="plain",
+                                     unavailable_title="This portfolio's database could not be opened.") }}
+                    </td>
+                    <td class="pt-table__actions">
+                        <div class="pt-inline-flex pt-gap-2">
+                            {% if portfolio.tenant_id != context.tenant.id %}
+                            <form method="post" action="/portfolios/{{ portfolio.tenant_id }}/open" class="pt-inline-flex">
+                                {{ csrf_field() }}
+                                {{ ui.btn("Open", variant="subtle", size="sm", type="submit",
+                                          title="Make this the portfolio every other screen reports on") }}
+                            </form>
+                            {% endif %}
+                            {% if portfolio.can_export %}
+                            {{ ui.icon_btn("Export " ~ portfolio.name, "download", variant="ghost", size="sm",
+                                           href="/portfolios/" ~ portfolio.tenant_id ~ "/export",
+                                           title="Download this portfolio: its ledger database, documents and photos") }}
+                            {{ ui.icon_btn("Remove " ~ portfolio.name, "trash", variant="destructive", size="sm",
+                                           href="/portfolios/" ~ portfolio.tenant_id ~ "/delete",
+                                           title="Remove this portfolio permanently, after a confirmation screen") }}
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        {{ ui.table_close() }}
+    {{ ui.section_close() }}
 
-    <div class="pt-stack pt-gap-1">
-        <h1 class="pt-fs-h2 pt-fw-bold">Your portfolios</h1>
+    <div class="pt-stack pt-gap-4">
         <p class="pt-fs-caption pt-text-secondary">
-            Signed in as {{ context.user.display_name }} &lt;{{ context.user.email }}&gt;.
-            Each portfolio is a separate database; this page is the only place that looks
-            across them.
+            An export contains one portfolio: its ledger database plus its document and photo
+            stores, with a manifest describing the export. It never contains another
+            portfolio, and it excludes the control plane (accounts and sessions).
+            Only an owner can export.
         </p>
-    </div>
-
-    {% if error %}{{ ui.alert(variant="error", title="Not available", text=error) }}{% endif %}
-
-    <section class="pt-card">
-        <div class="pt-card__body">
-            <table class="pt-table">
-                <thead>
-                    <tr>
-                        <th>Portfolio</th>
-                        <th>Your role</th>
-                        <th>Doors</th>
-                        <th>Net equity</th>
-                        <th>Debt</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                {% for portfolio in portfolios %}
-                    <tr>
-                        <td>
-                            <strong>{{ portfolio.name }}</strong>
-                            {% if portfolio.tenant_id == context.tenant.id %}
-                            <span class="pt-badge pt-badge--info">current</span>
-                            {% endif %}
-                            {% if not portfolio.available %}
-                            <div class="pt-fs-caption" style="color: var(--pt-warning, #fbbf24);">
-                                This portfolio's data could not be opened.
-                            </div>
-                            {% endif %}
-                        </td>
-                        <td title="{{ portfolio.role_description }}">{{ portfolio.role }}</td>
-                        <td>{{ portfolio.property_count }}</td>
-                        <td>{% if portfolio.net_equity_cents is not none %}{{ portfolio.net_equity_cents | format_cents }}{% else %}—{% endif %}</td>
-                        <td>{% if portfolio.total_debt_cents is not none %}{{ portfolio.total_debt_cents | format_cents }}{% else %}—{% endif %}</td>
-                        <td>
-                            <div class="pt-flex pt-flex-row pt-gap-2">
-                                {% if portfolio.tenant_id != context.tenant.id %}
-                                <form method="post" action="/portfolios/{{ portfolio.tenant_id }}/open">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                    <button class="pt-btn pt-btn--secondary pt-btn--sm" type="submit">Open</button>
-                                </form>
-                                {% endif %}
-                                {% if portfolio.can_export %}
-                                <a class="pt-btn pt-btn--secondary pt-btn--sm"
-                                   href="/portfolios/{{ portfolio.tenant_id }}/export"
-                                   title="Download this portfolio's ledger database and documents">Export</a>
-                                <a class="pt-btn pt-btn--subtle pt-btn--sm"
-                                   href="/portfolios/{{ portfolio.tenant_id }}/delete"
-                                   title="Remove this portfolio permanently">Remove</a>
-                                {% endif %}
-                            </div>
-                        </td>
-                    </tr>
-                {% endfor %}
-                </tbody>
-            </table>
+        <div>
+            {{ ui.btn("Administration", variant="secondary", size="sm", href="/account") }}
         </div>
-    </section>
-
-    <p class="pt-fs-caption pt-text-secondary">
-        An export contains one portfolio: its ledger database plus its document and photo
-        stores, with a manifest describing the export. It never contains another
-        portfolio, and it excludes the control plane (accounts and sessions).
-        Only an owner can export.
-    </p>
-
-    <a class="pt-btn pt-btn--secondary pt-btn--sm" href="/account">Account &amp; invitations</a>
+    </div>
 </div>
 {% endblock %}

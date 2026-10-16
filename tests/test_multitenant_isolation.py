@@ -52,7 +52,7 @@ def _csrf(client: TestClient) -> str:
     """The signed-in session's CSRF token, read from a rendered form."""
     html = client.get("/account").text
     match = re.search(r'name="csrf_token" value="([^"]+)"', html)
-    assert match, "the account screen must expose the session's CSRF token to its forms"
+    assert match, "the shell must expose the session's CSRF token to its forms"
     return match.group(1)
 
 

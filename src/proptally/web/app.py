@@ -32,10 +32,13 @@ from proptally.web.auth import (
     current_context,
 )
 from proptally.web.helpers import (
+    asset_version,
     format_bps,
+    format_bytes,
     format_cents,
     format_cents_sign,
     format_date,
+    initials,
 )
 from proptally.web.routes.auth import get_auth_router
 from proptally.web.routes.dashboard import get_dashboard_router
@@ -87,6 +90,11 @@ def create_app(
     templates.env.filters["format_cents_sign"] = format_cents_sign
     templates.env.filters["format_bps"] = format_bps
     templates.env.filters["format_date"] = format_date
+    templates.env.filters["format_bytes"] = format_bytes
+    templates.env.filters["initials"] = initials
+    # Stylesheets are fetched with a version query, so a changed file is a changed URL and
+    # a stale cached copy cannot hide a fix (see `helpers.asset_version`).
+    templates.env.globals["asset_version"] = asset_version
     # Shell navigation: static structure plus the doors of the portfolio this
     # request is allowed to see. Read from the request context, never from a
     # process-wide engine, so one portfolio's doors can never appear in another's
@@ -184,7 +192,7 @@ def create_app(
     # --- Routers ----------------------------------------------------------
 
     # Unauthenticated: sign-in, registration, invitations, password reset.
-    app.include_router(get_auth_router(templates, control_engine, tenant_manager, rate_limiter, auth_dep))
+    app.include_router(get_auth_router(templates, control_engine, tenant_manager, rate_limiter, auth_dep, session_dep))
 
     # The cross-portfolio screen spans portfolios rather than serving the active one,
     # so it takes the authentication dependency directly instead of a tenant session.

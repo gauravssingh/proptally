@@ -374,7 +374,7 @@ def test_read_only_member_is_refused_and_anonymous_post_is_redirected(owner):
     read_only = _read_only_client(signed_in)
 
     token = re.search(r'name="csrf_token" value="([^"]+)"', read_only.get("/account").text)
-    assert token, "the account screen exposes the session's CSRF token"
+    assert token, "the shell exposes the session's CSRF token"
     refused = read_only.post(
         "/properties/create",
         data={**PROPERTY_FORM, "csrf_token": token.group(1)},

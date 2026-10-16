@@ -36,8 +36,15 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
 from proptally.db.system_models import (
+    ADMIN_ROLES,
+    CLIENT_CONFIRMATION_ROLES,
+    CPA_REVIEW_ROLES,
+    EXTERNAL_REVIEW_ROLES,
+    INVITABLE_ROLES,
     MUTATING_ROLES,
+    ROLE_MANAGER,
     ROLES,
+    WORK_ROLES,
     ROLE_CPA_REVIEWER,
     ROLE_OWNER,
     ROLE_READ_ONLY,
@@ -75,7 +82,9 @@ _HASHER = PasswordHasher()
 
 #: What each role may do, in the words the interface uses.
 ROLE_DESCRIPTIONS = {
-    ROLE_OWNER: "Full access: setup, import, posting, invitations and export.",
+    ROLE_OWNER: "Everything, including people, invitations, export and removal.",
+    ROLE_MANAGER: "Does the bookkeeping: imports, allocations, posting and setup. "
+                  "Cannot manage people or authorize on the owner's behalf.",
     ROLE_CPA_REVIEWER: "Read, plus recording the external review a deduction requires.",
     ROLE_READ_ONLY: "Read only.",
 }
@@ -153,11 +162,42 @@ class TenantContext:
 
     @property
     def can_mutate(self) -> bool:
+        """Whether this role may issue an unsafe request at all.
+
+        The coarse gate the authentication dependency applies. It is deliberately wider
+        than any single capability: a reviewer's one write is an attestation, and a
+        manager's work is the bookkeeping, so each is narrowed again at the route.
+        """
         return self.role in MUTATING_ROLES
 
     @property
+    def can_work(self) -> bool:
+        """Whether this role may do the bookkeeping: import, allocate, post, set up."""
+        return self.role in WORK_ROLES
+
+    @property
     def can_administer(self) -> bool:
-        return self.role == ROLE_OWNER
+        """Whether this role may administer the portfolio: people, roles, its fate."""
+        return self.role in ADMIN_ROLES
+
+    @property
+    def can_confirm_client(self) -> bool:
+        """CBD-1. Only the client authorizes on the client's own behalf."""
+        return self.role in CLIENT_CONFIRMATION_ROLES
+
+    @property
+    def can_attest_cpa_review(self) -> bool:
+        """Whether this role's review is recorded as a *verified* external review.
+
+        Only a CPA reviewer's is. An owner may supply the same control, and the record
+        shows that the owner attested their own deduction rather than that a CPA saw it.
+        """
+        return self.role in CPA_REVIEW_ROLES
+
+    @property
+    def can_supply_external_review(self) -> bool:
+        """Whether this role may tick the external-review control at all."""
+        return self.role in EXTERNAL_REVIEW_ROLES
 
     def require_mutation(self) -> None:
         if not self.can_mutate:
@@ -165,10 +205,31 @@ class TenantContext:
                 f"Role {self.role} may read this portfolio but not change it."
             )
 
+    def require_work(self) -> None:
+        if not self.can_work:
+            raise AuthorizationError(
+                f"Role {self.role} may read this portfolio but not do its bookkeeping. "
+                "An owner or a manager can."
+            )
+
     def require_admin(self) -> None:
         if not self.can_administer:
             raise AuthorizationError(
                 f"Role {self.role} may not administer this portfolio."
+            )
+
+    def require_client_confirmation(self) -> None:
+        if not self.can_confirm_client:
+            raise AuthorizationError(
+                f"Role {self.role} cannot give the client's authorization. CBD-1 is the "
+                "client's own decision, so only the portfolio owner can supply it."
+            )
+
+    def require_cpa_attestation(self) -> None:
+        if not self.can_attest_cpa_review:
+            raise AuthorizationError(
+                f"Role {self.role} cannot record an external review. That is the CPA "
+                "reviewer's role."
             )
 
     def actor_id(self) -> str:
@@ -532,8 +593,11 @@ def create_invite(
     invited_by_user_id: str,
 ) -> tuple[UserInvite, str]:
     """Issues a single-use invitation. Returns the row and the plain token."""
-    if role not in (ROLE_CPA_REVIEWER, ROLE_READ_ONLY):
-        raise ValueError(f"Cannot invite somebody as {role!r}.")
+    if role not in INVITABLE_ROLES:
+        raise ValueError(
+            f"Cannot invite somebody as {role!r}. Invite them as "
+            f"{' or '.join(INVITABLE_ROLES)}, then promote them if they should own it."
+        )
 
     token = new_token()
     with Session(control_engine) as session:
@@ -794,6 +858,37 @@ def cookie_is_secure(request) -> bool:
         return False
     forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
     return forwarded == "https" or request.url.scheme == "https"
+
+
+def validate_authorizations(
+    client_confirmed: bool, user_attested_cpa_review: bool
+) -> tuple[bool, bool]:
+    """Checks the authorizations a request claims, and returns what may be recorded.
+
+    The two gates are the client's own authorization and the external review of a
+    deduction, so they belong to different roles. A request that claims one it may not
+    give is refused rather than quietly downgraded: dropping it silently would post the
+    entry as though nobody had authorized it, and the user would be told about a policy
+    gate instead of about their role.
+
+    Called by every route that reads the controls, so the rule cannot differ between the
+    register and the review queue.
+    """
+    context = current_context()
+    if context is None:
+        raise AuthorizationError("No portfolio context for this request.")
+
+    if client_confirmed and not context.can_confirm_client:
+        raise AuthorizationError(
+            f"Role {context.role} cannot give the client's authorization. Confirming a "
+            "deposit on the owner's behalf is the owner's decision; ask them to confirm it."
+        )
+    if user_attested_cpa_review and not context.can_supply_external_review:
+        raise AuthorizationError(
+            f"Role {context.role} cannot record an external review. That is the CPA "
+            "reviewer's role, or the owner's own attestation."
+        )
+    return client_confirmed, user_attested_cpa_review
 
 
 def csrf_token_valid(context: TenantContext, presented: Optional[str]) -> bool:

@@ -33,6 +33,7 @@ from proptally.domain.transactions.splits import (
     post_transaction_to_ledger,
 )
 from proptally.domain.transactions.suggest import suggest_split_for_transaction
+from proptally.web.auth import validate_authorizations
 from proptally.web.auth import posting_actor_kwargs
 
 
@@ -269,7 +270,8 @@ def get_reconciliation_router(templates, get_session_dep):
                 property_id=property_id if property_id else None,
                 category=category,
                 amount_cents=target_amount,
-                tax_review_status=classification_status_for(client_confirmed, user_attested_cpa_review),
+                tax_review_status=classification_status_for(*validate_authorizations(
+                    client_confirmed, user_attested_cpa_review)),
             )
         ]
 
@@ -317,7 +319,8 @@ def get_reconciliation_router(templates, get_session_dep):
                     property_id=prop_id if prop_id else None,
                     category=cat,
                     amount_cents=amt,
-                    tax_review_status=classification_status_for(client_confirmed, user_attested_cpa_review),
+                    tax_review_status=classification_status_for(*validate_authorizations(
+                    client_confirmed, user_attested_cpa_review)),
                 ))
 
         if not splits:
@@ -363,7 +366,8 @@ def get_reconciliation_router(templates, get_session_dep):
                 property_id=sugg.property_id,
                 category=sugg.category,
                 amount_cents=abs(txn.amount_cents),
-                tax_review_status=classification_status_for(client_confirmed, user_attested_cpa_review),
+                tax_review_status=classification_status_for(*validate_authorizations(
+                    client_confirmed, user_attested_cpa_review)),
                 notes=f"Auto-applied: {sugg.rule_name}",
             )
         ]
@@ -419,7 +423,8 @@ def get_reconciliation_router(templates, get_session_dep):
                         property_id=prop_target,
                         category=category,
                         amount_cents=abs(txn.amount_cents),
-                        tax_review_status=classification_status_for(client_confirmed, user_attested_cpa_review),
+                        tax_review_status=classification_status_for(*validate_authorizations(
+                    client_confirmed, user_attested_cpa_review)),
                         notes=f"Batch Vendor Rule: {vendor_pattern}",
                     )
                 ]

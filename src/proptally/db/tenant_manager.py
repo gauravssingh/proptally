@@ -66,13 +66,18 @@ def slugify(value: str) -> str:
 
 
 def init_system_schema(engine: Engine) -> None:
-    """Creates only the control-plane tables.
+    """Creates the control-plane tables, then brings an existing one up to date.
 
     Explicitly listed rather than a blanket ``create_all``: SQLModel shares one
     metadata across the control plane and the ledger, so a plain ``create_all``
     would put empty copies of every ledger table in the control-plane database.
+    ``create_all`` only ever adds missing tables, so a change to an existing one --
+    a widened role constraint, say -- is applied by ``run_control_migrations``.
     """
+    from proptally.db.control_migrations import run_control_migrations
+
     SQLModel.metadata.create_all(engine, tables=list(SYSTEM_TABLES))
+    run_control_migrations(engine)
 
 
 def get_system_engine(db_url: Optional[str] = None) -> Engine:

@@ -25,6 +25,7 @@ from proptally.domain.transactions.policy import (
     evaluate_posting_policy,
 )
 from proptally.domain.transactions.splits import SplitItem, apply_transaction_splits
+from proptally.web.auth import validate_authorizations
 from proptally.web.auth import posting_actor_kwargs
 
 
@@ -335,8 +336,12 @@ def get_transactions_router(templates, get_session_dep):
         amount_dollars_list = form.getlist("amount_dollars[]")
         post_flag = form.get("post_to_ledger") == "true"
         # Authorization comes only from the request. No route invents it.
-        client_confirmed = form.get("client_confirmed") == "true"
-        user_attested_cpa_review = form.get("user_attested_cpa_review") == "true"
+        # The two authorizations belong to different roles, so they are validated here
+        # rather than accepted from the form.
+        client_confirmed, user_attested_cpa_review = validate_authorizations(
+            client_confirmed=form.get("client_confirmed") == "true",
+            user_attested_cpa_review=form.get("user_attested_cpa_review") == "true",
+        )
 
         proc_state = session.get(TransactionProcessingState, transaction_id)
         already_posted = proc_state is not None and proc_state.posting_status == "POSTED"

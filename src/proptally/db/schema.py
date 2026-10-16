@@ -464,6 +464,12 @@ def _applied_versions(conn) -> set:
 _DEFINED_VERSIONS = {version for version, _, _ in SCHEMA_MIGRATIONS}
 
 
+#: Engines already warned about foreign migrations, so the notice is written once per
+#: process rather than on every request. ``init_schema`` runs per request (each request
+#: ensures its portfolio's storage), so without this the same warning floods the log.
+_FOREIGN_WARNED: set = set()
+
+
 def _warn_about_foreign_migrations(engine) -> list:
     """Reports migrations recorded by a different code line.
 
@@ -476,7 +482,9 @@ def _warn_about_foreign_migrations(engine) -> list:
     with engine.begin() as conn:
         recorded = _applied_versions(conn)
     foreign = sorted(recorded - _DEFINED_VERSIONS)
-    if foreign:
+    marker = (str(getattr(engine, "url", "?")), tuple(foreign))
+    if foreign and marker not in _FOREIGN_WARNED:
+        _FOREIGN_WARNED.add(marker)
         logger.warning(
             "This database carries schema migrations from another code line: %s. "
             "This code defines %s. Numbers are a shared namespace, so nothing here "

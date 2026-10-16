@@ -145,10 +145,11 @@
     "Review, approve and import",
     "Correct a field, choose the registered account or loan a statement belongs to, then approve and import it."
 ) }}
+<div class="pt-stack pt-gap-3">
 {% for row in rows %}
 {% set extraction = row.extraction %}
 {% if extraction %}
-<div class="pt-card pt-card--flush pt-mb-3">
+<div class="pt-card pt-card--flush">
     <div class="pt-section__header">
         <div class="pt-section__heading">
             <h3 class="pt-section__title">{{ row.document.original_filename }}</h3>
@@ -239,6 +240,7 @@
 </div>
 {% endif %}
 {% endfor %}
+</div>
 {{ ui.section_close() }}
 {% endif %}
 {% endblock %}

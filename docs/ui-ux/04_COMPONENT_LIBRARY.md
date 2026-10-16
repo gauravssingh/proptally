@@ -42,6 +42,9 @@ behaviour is a requirement, not a suggestion.
 | Page header | `ui.page_header(title, subtitle, meta)` | Title + optional meta badges; caller supplies actions. |
 | Section card | `ui.section_open/close` | Card with title, subtitle, actions, flush body. |
 | Content container | `.pt-content` | 1280px cap, tokenised padding, 20px rhythm. |
+| Centred single-column layout | `.pt-auth` + `.pt-auth__card` | Standalone shell for the screens shown before a portfolio context exists: sign-in, register, invitation acceptance, password reset. `auth_base.html` provides it; the screens inside it are ordinary cards, fields and buttons from this library. |
+| Account row | `shell.account_controls()` (`.pt-account`, `.pt-account__identity`, `.pt-account__name`, `.pt-account__meta`) | Who is signed in, at the foot of the sidebar and of the drawer: a `.pt-avatar` monogram, the name, a muted second line (`ROLE · email`), and `ui.icon_btn("Sign out", "logout", variant="chrome")` beside it. The row itself links to `/account`; the sign-out control is a separate control, never nested in that link. |
+| Avatar | `.pt-avatar` (+ `--pt-avatar-size`) | Monogram circle for a person: initials, on the on-dark ramp so it reads on the chrome. A self-hosted instance has no photos to fall back on, so the initials are the image. |
 
 **Required data.** `doors` is a `Property` sequence (from `navigation.get_nav_doors`);
 the shell derives labels, order and the `(Primary)` qualifier. A door absent from
@@ -69,6 +72,7 @@ scrim and the modal scrim are real `<button>`s, so they are reachable and announ
 | `ghost` | transparent | Toolbar and header affordances, close controls. |
 | `destructive` | `--pt-error-solid` | Delete/void. Always paired with a confirmation. |
 | `subtle` | `--pt-neutral-bg` | Low-emphasis inline affordance (*Split / Assign*). |
+| `chrome` | transparent + on-dark text | Actions sitting on the dark chrome (sidebar and drawer footers). Never use `ghost` or `secondary` there: their canvas colours are unreadable or a solid white pill against `--pt-surface-chrome`. |
 
 Sizes: `md` 36px, `sm` 32px (table rows, headers), `xs` 28px (inline/chips level).
 `block=true` for full width. Disabled buttons set both `disabled` and
@@ -221,10 +225,13 @@ The active chip is accent-filled **and** carries more weight (not colour alone).
 See F9. A table that can return zero rows must render an empty state instead of a bare
 `<tbody>` (audit: `/transactions` currently renders nothing at all).
 
-### D7. Row actions — `.pt-row-action`, `ui.btn(variant="subtle", size="xs")`
+### D7. Row actions — `.pt-row-action`, `ui.btn(variant="subtle", size="sm")`
 
 One primary row action plus optional secondary actions; full row menu only when three or
-more actions exist.
+more actions exist. `size="sm"` (32px) is the row-action size because the touch-target
+table (`06_RESPONSIVE_AND_ACCESSIBILITY.md` §2.7) requires a table row action to be at
+least 32px; `size="xs"` (28px) is for inline and chip controls only. A destructive row
+action is `variant="destructive"` and confirmed (interaction standard §3).
 
 ---
 

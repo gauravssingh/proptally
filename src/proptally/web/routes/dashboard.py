@@ -93,7 +93,7 @@ def get_dashboard_router(templates, get_session_dep):
                 "financials": financials,
                 "review_count": review_count,
                 "has_properties": has_properties,
-                "can_mutate": bool(context and context.can_mutate),
+                "can_work": bool(context and context.can_work),
                 "debt_basis_label": _debt_basis_label(equity),
                 "period_label": period_label(financials),
                 "period_is_filtered": bool(start_date or end_date),

@@ -1,209 +1,521 @@
 {% extends "base.html" %}
-{% block title %}Account — PropTally{% endblock %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Administration — PropTally{% endblock %}
+
 {% block content %}
+{# ---------------------------------------------------------------------------
+   Administration for the portfolio that is open.
+
+   Four sections, each its own URL (`?section=…`), so they can be bookmarked, reloaded and
+   reached with the browser's back button, and the section navigation is ordinary links
+   (`docs/ui-ux/05_INTERACTION_STANDARDS.md` §5). Only one section renders at a time, which
+   is what keeps "user management", "portfolio status" and "backup" from becoming one
+   undifferentiated wall of cards.
+
+   Everything on this screen is read from existing data: the access list and invitations
+   from the control plane, the contents and file sizes from the portfolio itself, and the
+   backup facts from the operator scripts that actually exist. Nothing here offers an
+   action the app cannot carry out (§1: no dead affordances).
+   --------------------------------------------------------------------------- #}
+
+{% set who = current_context() %}
+
+{% set section_nav %}
+<nav class="pt-segmented" aria-label="Administration sections">
+    {% for key, label in account_sections %}
+    <a class="pt-segmented__item{% if section == key %} is-active{% endif %}"
+       href="/account?section={{ key }}"{% if section == key %} aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+</nav>
+{% endset %}
+
+{% set header_actions %}
+{% if section == 'people' and context.can_administer %}
+{{ ui.btn("Invite somebody", variant="primary", size="sm", icon_name="plus",
+          attrs='data-modal-open="invite-member-modal"') }}
+{% endif %}
+{% endset %}
+
+{% set header_meta %}
+{{ ui.badge(
+    who.role ~ (" — you may change this portfolio" if context.can_administer else " — read only"),
+    variant=("success" if context.can_administer else "neutral"),
+    upper=true
+) }}
+{% endset %}
+
+{% call ui.page_header(
+    "Administration",
+    "People, status and backup for " ~ context.tenant.name ~ ".",
+    meta=header_meta
+) %}
+    <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-2">
+        {{ section_nav }}
+        {{ header_actions }}
+    </div>
+{% endcall %}
+
+{% if message %}{{ ui.alert(variant="success", title="Done", text=message) }}{% endif %}
+{% if error %}{{ ui.alert(variant="error", title="Not saved", text=error) }}{% endif %}
+
+{% if invite_token %}
+{{ ui.alert(
+    variant="warning",
+    title="Invitation link — shown once",
+    text="Pass this on to the person you invited. This deployment sends no email, so the link is yours to deliver: <code>/auth/invite/" ~ invite_token ~ "</code> — it stops working once it is accepted, and you can withdraw it until then."
+) }}
+{% endif %}
+
 <div class="pt-stack pt-gap-6">
 
-    <div class="pt-stack pt-gap-1">
-        <h1 class="pt-fs-h2 pt-fw-bold">Account</h1>
-        <p class="pt-fs-caption pt-text-secondary">
-            Signed in as {{ context.user.display_name }} &lt;{{ context.user.email }}&gt;
-            {% if context.user.is_instance_admin %} · instance administrator{% endif %}
-        </p>
-    </div>
-
-    {% if message %}{{ ui.alert(variant="success", title="Done", text=message) }}{% endif %}
-    {% if error %}{{ ui.alert(variant="error", title="Not saved", text=error) }}{% endif %}
-
-    {# --- Portfolio membership -------------------------------------------- #}
-    <section class="pt-card">
-        <div class="pt-card__header">
-            <h2 class="pt-card__title">Your portfolios</h2>
-        </div>
-        <div class="pt-card__body">
-            <table class="pt-table">
-                <thead>
-                    <tr><th>Portfolio</th><th>Your role</th><th></th></tr>
-                </thead>
-                <tbody>
-                {% for membership in memberships %}
-                    <tr>
-                        <td>{{ membership.name }}</td>
-                        <td>{{ membership.role }}</td>
-                        <td>
-                            {% if membership.tenant_id == context.tenant.id %}
-                            <span class="pt-fs-caption pt-text-secondary">Current</span>
-                            {% else %}
-                            <form method="post" action="/auth/switch-tenant">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <input type="hidden" name="tenant_id" value="{{ membership.tenant_id }}">
-                                <button class="pt-btn pt-btn--secondary pt-btn--sm" type="submit">Switch to this portfolio</button>
-                            </form>
+{% if section == 'people' %}
+    {# --- User management: who can reach this portfolio ------------------- #}
+    {% set access_subtitle = "Everyone here signs in with their own account and sees only the portfolios they belong to. Roles decide what a person may do; a portfolio always keeps at least one owner." ~ ("" if context.can_administer else " Only an owner can invite people or change roles.") %}
+    {{ ui.section_open(
+        "People with access to " ~ context.tenant.name,
+        access_subtitle,
+        flush=true
+    ) }}
+        {{ ui.table_open(label="People with access to " ~ context.tenant.name) }}
+            <thead>
+                <tr>
+                    {{ ui.th("Person") }}
+                    {{ ui.th("Role") }}
+                    {{ ui.th("Added", cls="pt-table__date") }}
+                    {% if context.can_administer %}{{ ui.th("", cls="pt-table__actions") }}{% endif %}
+                </tr>
+            </thead>
+            <tbody>
+            {% for member in members %}
+                {% set sole_owner = member.role == 'OWNER' and owner_count == 1 %}
+                <tr>
+                    <td>
+                        <div class="pt-cell-stack pt-cell-stack--start">
+                            <div class="pt-inline-flex pt-items-center pt-gap-2">
+                                <span class="pt-table__primary">{{ member.display_name or member.email }}</span>
+                                {% if member.user_id == context.user.id %}{{ ui.badge("You", variant="accent") }}{% endif %}
+                                {% if not member.is_active %}{{ ui.badge("DISABLED", variant="warning", upper=true) }}{% endif %}
+                            </div>
+                            <span class="pt-table__sub">{{ member.email }}</span>
+                        </div>
+                    </td>
+                    <td>
+                        {% if context.can_administer and not sole_owner %}
+                        <form method="post" action="/account/members/{{ member.membership_id }}/role"
+                              class="pt-flex pt-items-center pt-gap-2">
+                            {{ csrf_field() }}
+                            {{ ui.select_field(
+                                "role", "Role for " ~ (member.display_name or member.email), role_options,
+                                selected=member.role, hidden_label=true, cls="pt-field--sm pt-flex-1"
+                            ) }}
+                            {{ ui.btn("Update", variant="subtle", size="sm", type="submit",
+                                      title="Apply the selected role to " ~ (member.display_name or member.email)) }}
+                        </form>
+                        {% else %}
+                        <div class="pt-cell-stack pt-cell-stack--start">
+                            {{ ui.badge(member.role, variant="neutral", upper=true) }}
+                            {% if sole_owner %}
+                            <span class="pt-table__sub"
+                                  title="A portfolio must keep an owner, so the last one cannot be removed or demoted.">the portfolio's only owner</span>
                             {% endif %}
-                        </td>
-                    </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </section>
-
-    {# --- Who has access to this portfolio -------------------------------- #}
-    <section class="pt-card">
-        <div class="pt-card__header">
-            <h2 class="pt-card__title">People with access to {{ context.tenant.name }}</h2>
-        </div>
-        <div class="pt-card__body">
-            {% if context.can_administer %}
-            <p class="pt-fs-caption pt-text-secondary">
-                Everyone here signs in with their own account and sees only this portfolio.
-                Roles decide what they may do; a portfolio always keeps at least one owner.
-            </p>
-            {% endif %}
-
-            <table class="pt-table">
-                <thead>
-                    <tr><th>Person</th><th>Role</th><th>Added</th>{% if context.can_administer %}<th></th>{% endif %}</tr>
-                </thead>
-                <tbody>
-                {% for member in members %}
-                    <tr>
-                        <td>
-                            <strong>{{ member.display_name or member.email }}</strong>
-                            <div class="pt-fs-caption pt-text-secondary">{{ member.email }}</div>
-                        </td>
-                        <td>
-                            {% if context.can_administer and not (member.role == 'OWNER' and owner_count == 1) %}
-                            <form method="post" action="/account/members/{{ member.membership_id }}/role"
-                                  class="pt-inline-flex">
-                                {{ csrf_field() }}
-                                <label class="pt-sr-only" for="role_{{ member.membership_id }}">Role for {{ member.email }}</label>
-                                <select id="role_{{ member.membership_id }}" name="role">
-                                    {% for role in roles %}
-                                    <option value="{{ role }}"{% if role == member.role %} selected{% endif %}>{{ role }}</option>
-                                    {% endfor %}
-                                </select>
-                                <button class="pt-btn pt-btn--secondary pt-btn--sm" type="submit">Change</button>
-                            </form>
-                            {% else %}
-                            {{ member.role }}
-                            {% if member.role == 'OWNER' and owner_count == 1 %}
-                            <div class="pt-fs-caption pt-text-secondary">the portfolio's only owner</div>
-                            {% endif %}
-                            {% endif %}
-                        </td>
-                        <td>{{ member.joined_at | format_date }}</td>
-                        {% if context.can_administer %}
-                        <td>
-                            {% if member.role == 'OWNER' and owner_count == 1 %}
-                            <span class="pt-fs-caption pt-text-secondary">—</span>
-                            {% else %}
-                            <form method="post" action="/account/members/{{ member.membership_id }}/remove"
-                                  class="pt-inline-flex">
-                                {{ csrf_field() }}
-                                <button class="pt-btn pt-btn--subtle pt-btn--sm" type="submit"
-                                        title="Remove this person's access. Their account stays.">Remove</button>
-                            </form>
-                            {% endif %}
-                        </td>
+                        </div>
                         {% endif %}
-                    </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-
-            {% if not context.can_administer %}
-            <p class="pt-fs-caption pt-text-secondary">
-                Only an owner can invite people or change roles.
-            </p>
-            {% endif %}
-
-            {# --- Pending invitations --- #}
-            {% if pending_invites %}
-            <h3 class="pt-fs-caption pt-fw-bold" style="margin-top:1.25rem">Invitations not yet accepted</h3>
-            <table class="pt-table">
-                <thead><tr><th>Email</th><th>Role</th><th>Expires</th>{% if context.can_administer %}<th></th>{% endif %}</tr></thead>
-                <tbody>
-                {% for invite in pending_invites %}
-                    <tr>
-                        <td>{{ invite.email }}</td>
-                        <td>{{ invite.role }}</td>
-                        <td>{{ invite.expires_at | format_date }}</td>
-                        {% if context.can_administer %}
-                        <td>
-                            <form method="post" action="/account/invites/{{ invite.id }}/revoke" class="pt-inline-flex">
-                                {{ csrf_field() }}
-                                <button class="pt-btn pt-btn--subtle pt-btn--sm" type="submit"
-                                        title="Withdraw this invitation, so its link stops working">Withdraw</button>
-                            </form>
-                        </td>
+                    </td>
+                    <td class="pt-table__date">{{ member.joined_at | format_date }}</td>
+                    {% if context.can_administer %}
+                    <td class="pt-table__actions">
+                        {% if sole_owner %}
+                        <span class="pt-fs-caption pt-text-secondary"
+                              title="A portfolio must keep an owner, so the last one cannot be removed or demoted.">—</span>
+                        {% else %}
+                        <form method="post" action="/account/members/{{ member.membership_id }}/remove"
+                              data-confirm="Remove {{ member.display_name or member.email }} from {{ context.tenant.name }}? They keep their own account and their sign-in, and cannot open this portfolio afterwards. You can invite them again."
+                              class="pt-inline-flex">
+                            {{ csrf_field() }}
+                            {{ ui.btn("Remove", variant="destructive", size="sm", type="submit",
+                                      title="Remove this person's access to " ~ context.tenant.name) }}
+                        </form>
                         {% endif %}
-                    </tr>
+                    </td>
+                    {% endif %}
+                </tr>
+            {% endfor %}
+            </tbody>
+        {{ ui.table_close() }}
+
+    {{ ui.section_close() }}
+
+    {# --- What the roles actually carry, as a matrix ---------------------- #}
+    {#- Four sentences in a footnote strip cannot be compared; a capabilities grid can.
+        Every row is a gate the application enforces, so this is a statement of authority
+        rather than advice. -#}
+    {{ ui.section_open(
+        "What each role can do",
+        "The four roles, and the authority each one carries. Each row is a check the app itself makes.",
+        flush=true
+    ) }}
+        {{ ui.table_open(compact=true, label="What each role can do") }}
+            <thead>
+                <tr>
+                    {{ ui.th("Capability") }}
+                    {% for role in roles %}
+                    {{ ui.th(role ~ (" · you" if role == context.role else ""), center=true) }}
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+            {% for capability, description, holders in role_capabilities %}
+            <tr>
+                <td>
+                    <div class="pt-cell-stack pt-cell-stack--start">
+                        <span class="pt-table__primary">{{ capability }}</span>
+                        <span class="pt-table__sub">{{ description }}</span>
+                    </div>
+                </td>
+                {% for role in roles %}
+                <td class="pt-table__th-center">
+                    {% if role in holders %}
+                    <span aria-hidden="true">✓</span><span class="pt-sr-only">Yes</span>
+                    {% else %}
+                    <span aria-hidden="true">—</span><span class="pt-sr-only">No</span>
+                    {% endif %}
+                </td>
                 {% endfor %}
-                </tbody>
-            </table>
-            {% endif %}
+            </tr>
+            {% endfor %}
+            </tbody>
+        {{ ui.table_close() }}
+    {{ ui.section_close() }}
 
-            {# --- Invite somebody --- #}
-            {% if context.can_administer %}
-            <h3 class="pt-fs-caption pt-fw-bold" style="margin-top:1.25rem">Invite somebody</h3>
-            <form method="post" action="/account/invites" class="pt-form-grid pt-form-grid--2">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <div class="pt-auth__field">
-                    <label for="invite_email">Email</label>
-                    <input id="invite_email" name="email" type="email" required>
-                </div>
-                <div class="pt-auth__field">
-                    <label for="invite_role">Role</label>
-                    <select id="invite_role" name="role">
-                        {% for role, description in role_descriptions.items() %}
-                        {% if role != 'OWNER' %}
-                        <option value="{{ role }}">{{ role }} — {{ description }}</option>
-                        {% endif %}
-                        {% endfor %}
-                    </select>
-                </div>
-                <div style="align-self:end">
-                    <button class="pt-btn pt-btn--primary pt-btn--sm" type="submit">Create invitation</button>
-                </div>
-            </form>
+    {% if context.can_administer %}
+    {{ ui.section_open(
+        "Invitations",
+        "An invitation grants nothing until it is accepted: the invited address holds no access while it sits here.",
+        flush=true
+    ) }}
+        {% if pending_invites %}
+        {{ ui.table_open(compact=true, label="Invitations not yet accepted") }}
+            <thead>
+                <tr>
+                    {{ ui.th("Email") }}
+                    {{ ui.th("Role offered") }}
+                    {{ ui.th("Expires", cls="pt-table__date") }}
+                    {{ ui.th("", cls="pt-table__actions") }}
+                </tr>
+            </thead>
+            <tbody>
+            {% for invite in pending_invites %}
+                <tr>
+                    <td class="pt-table__primary">{{ invite.email }}</td>
+                    <td>{{ ui.badge(invite.role, variant="neutral", upper=true) }}</td>
+                    <td class="pt-table__date">{{ invite.expires_at | format_date }}</td>
+                    <td class="pt-table__actions">
+                        <form method="post" action="/account/invites/{{ invite.id }}/revoke"
+                              data-confirm="Withdraw the invitation to {{ invite.email }}? The link stops working immediately, and nothing was granted to that address. You can invite them again."
+                              class="pt-inline-flex">
+                            {{ csrf_field() }}
+                            {{ ui.btn("Withdraw", variant="destructive", size="sm", type="submit",
+                                      title="Withdraw this invitation, so its link stops working") }}
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        {{ ui.table_close() }}
+        {% else %}
+        {{ ui.empty_state(
+            "No invitations outstanding",
+            "Every invitation sent from this portfolio has been accepted, withdrawn or expired. Invite somebody from the button above."
+        ) }}
+        {% endif %}
+    {{ ui.section_close() }}
+    {% endif %}
 
-            {% if invite_token %}
-            <div class="pt-alert pt-alert--warning" style="margin-top:1rem">
-                <strong class="pt-alert__title">Invitation link (shown once)</strong>
-                <span class="pt-alert__text" style="word-break:break-all">/auth/invite/{{ invite_token }}</span>
+{% elif section == 'portfolio' %}
+    {# --- What this portfolio holds --------------------------------------- #}
+    {% if portfolio_status and not portfolio_status.summary.readable %}
+    {{ ui.alert(
+        variant="error",
+        title="This portfolio's database could not be opened",
+        text="Its files are untouched and its figures cannot be reported until the database is readable. Take a copy from the Backup section before anything else, and check the operator log for the cause."
+    ) }}
+    {% endif %}
+
+    {% if portfolio_status %}
+    {% set s = portfolio_status.summary %}
+    {{ ui.section_open(
+        "What " ~ s.name ~ " holds",
+        "Counted from the portfolio's own database, read-only. A portfolio is one SQLite file plus its document store, so these figures are also what an export would contain."
+    ) }}
+        <div class="pt-stack pt-gap-4">
+            <div class="pt-summary-grid pt-summary-grid--3 pt-gap-4">
+                {{ ui.stat("Doors", s.properties, sub="Fixed-asset accounts each") }}
+                {{ ui.stat("Mortgage loans", s.loans, sub="Principal, clearing, escrow") }}
+                {{ ui.stat("Documents", s.documents, sub="Recorded in the vault") }}
+                {{ ui.stat("Transactions", s.transactions, sub="Ingested rows") }}
+                {{ ui.stat("Journal entries", s.journal_entries, sub="Posted entries are immutable") }}
+                {{ ui.stat("Files on disk", s.stored_files, sub="Everything under the portfolio directory") }}
             </div>
-            {% endif %}
-            {% endif %}
+            {{ ui.meta_row([
+                ui.badge("READS OK" if s.readable else "UNREADABLE",
+                         variant=("success" if s.readable else "error"), upper=true),
+                "Created " ~ (portfolio_status.created_at | format_date),
+                "Opened read-only to count these rows",
+            ]) }}
         </div>
-    </section>
+    {{ ui.section_close() }}
 
-    {# --- Password --------------------------------------------------------- #}
-    <section class="pt-card">
-        <div class="pt-card__header">
-            <h2 class="pt-card__title">Change your password</h2>
+    {# --- Where it lives, and how much it occupies ------------------------ #}
+    {{ ui.section_open(
+        "Where it lives",
+        "The parts this installation keeps for this portfolio, and the size of each. An export bundles the database, the vault and the photos."
+    ) }}
+        <div class="pt-stack pt-gap-3">
+            <div class="pt-kv">
+                <span class="pt-kv__key" title="{{ portfolio_status.database }}">Ledger database</span>
+                <span class="pt-kv__value">{{ portfolio_status.database_bytes | format_bytes }}</span>
+            </div>
+            <div class="pt-kv">
+                <span class="pt-kv__key" title="{{ portfolio_status.database }}-wal">Write-ahead log</span>
+                <span class="pt-kv__value">{{ portfolio_status.wal_bytes | format_bytes }}</span>
+            </div>
+            <div class="pt-kv">
+                <span class="pt-kv__key" title="{{ portfolio_status.vault }}">Document vault</span>
+                <span class="pt-kv__value">{{ portfolio_status.vault_bytes | format_bytes }}</span>
+            </div>
+            <div class="pt-kv">
+                <span class="pt-kv__key" title="{{ portfolio_status.photos }}">Photos</span>
+                <span class="pt-kv__value">{{ portfolio_status.photos_bytes | format_bytes }}</span>
+            </div>
+            <div class="pt-kv">
+                <span class="pt-kv__key">Export size</span>
+                <span class="pt-kv__value">{{ portfolio_status.portfolio_bytes | format_bytes }}</span>
+            </div>
+            <p class="pt-fs-caption pt-text-secondary">
+                All of it under <code>{{ portfolio_status.root }}</code>.
+            </p>
         </div>
-        <div class="pt-card__body">
-            <form method="post" action="/account/password" class="pt-form-grid pt-form-grid--2">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <div class="pt-auth__field">
-                    <label for="current_password">Current password</label>
-                    <input id="current_password" name="current_password" type="password" autocomplete="current-password" required>
-                </div>
-                <div class="pt-auth__field">
-                    <label for="new_password">New password</label>
-                    <input id="new_password" name="new_password" type="password" autocomplete="new-password" required>
-                    <small>At least {{ min_password_length }} characters. Signs out your other sessions.</small>
-                </div>
-                <div style="align-self:end">
-                    <button class="pt-btn pt-btn--primary pt-btn--sm" type="submit">Change password</button>
-                </div>
-            </form>
-        </div>
-    </section>
+    {{ ui.section_close() }}
+    {% endif %}
 
-    <form method="post" action="/auth/logout">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button class="pt-btn pt-btn--secondary pt-btn--sm" type="submit">Sign out</button>
-    </form>
+    {# --- The portfolios this account can open ---------------------------- #}
+    {{ ui.section_open(
+        "Portfolios this account reaches",
+        "A portfolio is one client's books. Opening one makes it the portfolio every other screen reports on, including this one.",
+        flush=true
+    ) }}
+        {{ ui.table_open(label="Portfolios this account reaches") }}
+            <thead>
+                <tr>
+                    {{ ui.th("Portfolio") }}
+                    {{ ui.th("Your role") }}
+                    {{ ui.th("", cls="pt-table__actions") }}
+                </tr>
+            </thead>
+            <tbody>
+            {% for membership in memberships %}
+                <tr>
+                    <td>
+                        <div class="pt-cell-stack pt-cell-stack--start">
+                            <div class="pt-inline-flex pt-items-center pt-gap-2">
+                                <span class="pt-table__primary">{{ membership.name }}</span>
+                                {% if membership.tenant_id == context.tenant.id %}
+                                {{ ui.badge("OPEN NOW", variant="accent", upper=true) }}
+                                {% endif %}
+                            </div>
+                        </div>
+                    </td>
+                    <td>{{ ui.badge(membership.role, variant="neutral", upper=true) }}</td>
+                    <td class="pt-table__actions">
+                        {% if membership.tenant_id != context.tenant.id %}
+                        <form method="post" action="/auth/switch-tenant" class="pt-inline-flex">
+                            {{ csrf_field() }}
+                            <input type="hidden" name="tenant_id" value="{{ membership.tenant_id }}">
+                            {{ ui.btn("Open", variant="subtle", size="sm", type="submit",
+                                      title="Make this portfolio the one the app reports on") }}
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        {{ ui.table_close() }}
+    {{ ui.section_close() }}
+
+    {{ ui.section_open("Remove this portfolio", "Removal destroys the database and the document store. Take an export first; nothing is kept afterwards.") }}
+        <div class="pt-stack pt-gap-3">
+            <p class="pt-fs-caption pt-text-secondary">
+                The removal screen states what would be destroyed, asks for the portfolio's name,
+                and deletes the database and its files together.
+            </p>
+            {% if can_remove_portfolio %}
+            {{ ui.btn("Review removal", variant="destructive", size="sm",
+                      href="/portfolios/" ~ context.tenant.id ~ "/delete") }}
+            {% else %}
+            {{ ui.alert(
+                variant="info",
+                title="Owner action",
+                text="Only an owner of " ~ context.tenant.name ~ " can remove the portfolio."
+            ) }}
+            {% endif %}
+        </div>
+    {{ ui.section_close() }}
+
+{% elif section == 'backup' %}
+    {# --- Per-portfolio export -------------------------------------------- #}
+    {{ ui.section_open(
+        "Export " ~ context.tenant.name,
+        "One archive of this portfolio: its ledger database, its document vault, its photos, and a manifest describing the export. The database copy is taken with VACUUM INTO, so it is consistent even while the portfolio is in use."
+    ) }}
+        <div class="pt-stack pt-gap-3">
+            {% if can_export %}
+            <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-3">
+                {{ ui.btn("Download export now", variant="primary", size="sm", icon_name="download",
+                          href="/portfolios/" ~ context.tenant.id ~ "/export") }}
+                {% if portfolio_status %}
+                {{ ui.badge("about " ~ (portfolio_status.portfolio_bytes | format_bytes), variant="neutral",
+                            title="The size of the database, write-ahead log, vault and photos this archive bundles.") }}
+                {% endif %}
+            </div>
+            <p class="pt-fs-caption pt-text-secondary">
+                The archive is built when you ask for it, downloaded, and then discarded from the
+                server. The app keeps no copy and records no export history; if you need retention,
+                keep the downloaded file (or the operator backup below) somewhere else.
+            </p>
+            {% else %}
+            {{ ui.alert(
+                variant="info",
+                title="Owner action",
+                text="Only an owner of " ~ context.tenant.name ~ " can export it, because the archive is the whole portfolio. Ask an owner if you need a copy."
+            ) }}
+            {% endif %}
+        </div>
+    {{ ui.section_close() }}
+
+    {# --- The whole installation ----------------------------------------- #}
+    {{ ui.section_open(
+        "Back up the whole installation",
+        "A portfolio export covers one portfolio. The operator script covers the control plane as well: accounts, invitations, sessions, and every portfolio database with its vault."
+    ) }}
+        <div class="pt-stack pt-gap-4">
+            {% if portfolio_status %}
+            <p class="pt-fs-caption pt-text-secondary">
+                Control plane: <code>{{ portfolio_status.control_plane }}</code> ·
+                {{ portfolio_status.control_plane_bytes | format_bytes }}. This portfolio:
+                {{ portfolio_status.portfolio_bytes | format_bytes }}.
+            </p>
+            {% endif %}
+            <div class="pt-stack pt-gap-2">
+                <p class="pt-fs-caption pt-fw-bold">Run it on the machine that hosts this installation</p>
+                <p class="pt-fs-caption pt-text-secondary">
+                    <code>scripts/backup.sh</code> copies the control plane and every portfolio database
+                    with <code>VACUUM INTO</code>, verifies each copy with <code>PRAGMA integrity_check</code>,
+                    and writes one compressed archive with a SHA-256 sidecar into
+                    <code>$PROPTALLY_BACKUP_DIR</code> (default <code>./backups</code>). Add
+                    <code>--tenant &lt;id&gt;</code> for a single portfolio.
+                </p>
+                <p class="pt-fs-caption pt-text-secondary">
+                    <code>scripts/restore.sh</code> verifies that sidecar and the integrity of every
+                    database before it writes anything, and copies an existing target aside rather
+                    than overwriting it.
+                </p>
+                <p class="pt-fs-caption pt-text-secondary">
+                    Nothing in the app schedules a backup and no backup history is recorded, so a
+                    backup is only as recent as the last time that script ran. Run it from
+                    <code>cron</code> or a timer if you want it regular.
+                </p>
+            </div>
+        </div>
+    {{ ui.section_close() }}
+
+{% else %}
+    {# --- The signed-in person ------------------------------------------- #}
+    {{ ui.section_open("Who you are", "Your sign-in, as this installation records it.") }}
+        <div class="pt-stack pt-gap-3">
+            <div class="pt-kv">
+                <span class="pt-kv__key">Name</span>
+                <span class="pt-kv__value">{{ context.user.display_name or "—" }}</span>
+            </div>
+            <div class="pt-kv">
+                <span class="pt-kv__key">Email</span>
+                <span class="pt-kv__value">{{ context.user.email }}</span>
+            </div>
+            <div class="pt-kv">
+                <span class="pt-kv__key">Role in {{ context.tenant.name }}</span>
+                <span class="pt-kv__value">{{ ui.badge(context.role, variant="neutral", upper=true) }}</span>
+            </div>
+            <div class="pt-kv">
+                <span class="pt-kv__key">Installation administrator</span>
+                <span class="pt-kv__value">
+                    {% if context.user.is_instance_admin %}
+                    {{ ui.badge("YES", variant="rule", upper=true) }}
+                    {% else %}
+                    No
+                    {% endif %}
+                </span>
+            </div>
+        </div>
+    {{ ui.section_close() }}
+
+    {{ ui.section_open("Change your password", "Changing it signs out every session except this one.") }}
+        <form method="post" action="/account/password">
+            {{ csrf_field() }}
+            <div class="pt-stack pt-gap-4">
+                <div class="pt-form-grid pt-form-grid--2">
+                    {{ ui.text_field("current_password", "Current password", type="password", required=true,
+                                     extra='autocomplete="current-password"') }}
+                    {{ ui.text_field("new_password", "New password", type="password", required=true,
+                                     extra='autocomplete="new-password"',
+                                     help="At least " ~ min_password_length ~ " characters.") }}
+                </div>
+                <div class="pt-form-actions">
+                    {{ ui.btn("Change password", variant="primary", size="sm", type="submit") }}
+                </div>
+            </div>
+        </form>
+    {{ ui.section_close() }}
+{% endif %}
+
 </div>
+
+{# --- The invite form: two fields, so it is a modal (§2) ------------------ #}
+{% if section == 'people' and context.can_administer %}
+{{ ui.modal_open(
+    "invite-member-modal",
+    "Invite somebody",
+    "They sign in with their own account. This deployment sends no email, so you pass the invitation link on yourself."
+) }}
+<form method="post" action="/account/invites" class="pt-modal__form">
+    {{ csrf_field() }}
+    <div class="pt-modal__body">
+        <div class="pt-stack pt-gap-4">
+            {{ ui.text_field("email", "Email", type="email", required=true,
+                             placeholder="name@example.com",
+                             help="The address the person signs in with. Each person has their own account.") }}
+            {{ ui.select_field("role", "Role", invitable_role_options,
+                               help="Ownership is not granted by invitation: invite somebody, then promote them to owner from the access list.") }}
+        </div>
+    </div>
+    <div class="pt-modal__footer">
+        {{ ui.btn("Cancel", variant="secondary", size="sm", type="button", attrs="data-modal-close") }}
+        {{ ui.btn("Create invitation", variant="primary", size="sm", type="submit") }}
+    </div>
+</form>
+{{ ui.modal_close() }}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  /* Destructive actions state their blast radius before they run
+     (docs/ui-ux/05_INTERACTION_STANDARDS.md §3). Same pattern as property_detail.html:
+     the message lives on the form's data-confirm. */
+  document.addEventListener('submit', function (event) {
+    var form = event.target.closest('[data-confirm]');
+    if (form && !window.confirm(form.getAttribute('data-confirm'))) {
+      event.preventDefault();
+    }
+  });
+</script>
 {% endblock %}

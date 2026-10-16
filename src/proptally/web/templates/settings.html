@@ -7,13 +7,14 @@
 {% set header_actions %}
     {% if not properties %}
         {% endif %}
-    {% if can_mutate %}
+    {% if can_work %}
     {{ ui.btn("Add property", variant="primary", size="sm", icon_name="plus", attrs='data-modal-open="create-property-modal"') }}
     {% endif %}
 {% endset %}
 {% set header_meta %}
-    {{ ui.badge("Owners and editors may change this" if can_mutate else "Read-only role",
-                variant=("success" if can_mutate else "neutral"), upper=true) }}
+    {% set who = current_context() %}
+    {{ ui.badge((who.role ~ " — you may change this") if can_work else (who.role ~ " — read only"),
+                variant=("success" if can_work else "neutral"), upper=true) }}
 {% endset %}
 
 {% call ui.page_header(
@@ -39,7 +40,7 @@
     {{ ui.empty_state(
         "No properties declared",
         "The dashboard reports on nothing until a door exists.",
-        action_label=("Add your first property" if can_mutate else none),
+        action_label=("Add your first property" if can_work else none),
         action_href="#",
         action_attrs='data-modal-open="create-property-modal"',
         icon_name="home"
@@ -52,7 +53,7 @@
    1. Properties
    --------------------------------------------------------------------------- #}
 {% set property_actions %}
-    {% if can_mutate %}
+    {% if can_work %}
     {{ ui.btn("Add property", variant="secondary", size="sm", icon_name="plus", attrs='data-modal-open="create-property-modal"') }}
     {% endif %}
 {% endset %}
@@ -112,7 +113,7 @@
     {{ ui.empty_state(
         "No properties declared",
         "Add a rental door or your primary residence to start reporting on it.",
-        action_label=("Add property" if can_mutate else none),
+        action_label=("Add property" if can_work else none),
         action_href="#",
         action_attrs='data-modal-open="create-property-modal"',
         icon_name="home"
@@ -125,7 +126,7 @@
    2. Accounts
    --------------------------------------------------------------------------- #}
 {% set account_actions %}
-    {% if can_mutate %}
+    {% if can_work %}
     {{ ui.btn("Add account", variant="secondary", size="sm", icon_name="plus", attrs='data-modal-open="create-account-modal"') }}
     {% endif %}
 {% endset %}
@@ -177,7 +178,7 @@
     {{ ui.empty_state(
         "No accounts declared",
         "Add the bank account rent lands in and the card you spend on the doors from.",
-        action_label=("Add account" if can_mutate else none),
+        action_label=("Add account" if can_work else none),
         action_href="#",
         action_attrs='data-modal-open="create-account-modal"',
         icon_name="bank"
@@ -190,7 +191,7 @@
    3. Mortgage loans
    --------------------------------------------------------------------------- #}
 {% set loan_actions %}
-    {% if can_mutate %}
+    {% if can_work %}
     {{ ui.btn("Add mortgage", variant="secondary", size="sm", icon_name="plus", attrs='data-modal-open="create-mortgage-modal"') }}
     {% endif %}
 {% endset %}
@@ -244,7 +245,7 @@
     {{ ui.empty_state(
         "No mortgage loans declared",
         "Add the loan on a door so its principal and escrow reserve are carried in the ledger.",
-        action_label=("Add mortgage" if can_mutate else none),
+        action_label=("Add mortgage" if can_work else none),
         action_href="#",
         action_attrs='data-modal-open="create-mortgage-modal"',
         icon_name="bank"
@@ -260,8 +261,9 @@
     "Opening balances",
     "One dated baseline entry for the whole portfolio. It may be recorded once per date: the ledger refuses a second entry for the same day, and this screen says so rather than failing."
 ) }}
+<div class="pt-stack pt-gap-4">
 {% if opening_entry %}
-<div class="pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-2 pt-mb-4">
+<div class="pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-2">
     <span class="pt-fs-caption pt-text-secondary">
         Most recent opening balance entry:
         <strong class="pt-num">{{ opening_entry.entry_date | format_date }}</strong>
@@ -289,7 +291,7 @@
         ) }}
         {% endfor %}
     </div>
-    {% if can_mutate %}
+    {% if can_work %}
     <div>
         {{ ui.btn("Record opening balances", variant="primary", type="submit", icon_name="ledger") }}
     </div>
@@ -307,13 +309,14 @@
     icon_name="ledger"
 ) }}
 {% endif %}
+</div>
 {{ ui.section_close() }}
 
 {# ---------------------------------------------------------------------------
    5. Vendor rules
    --------------------------------------------------------------------------- #}
 {% set rule_actions %}
-    {% if can_mutate %}
+    {% if can_work %}
     {{ ui.btn("Add rule", variant="secondary", size="sm", icon_name="plus", attrs='data-modal-open="create-vendor-rule-modal"') }}
     {% endif %}
 {% endset %}
@@ -362,7 +365,7 @@
                             variant=("success" if rule.is_active else "neutral"), upper=true) }}
             </td>
             <td class="pt-table__actions">
-                {% if can_mutate %}
+                {% if can_work %}
                 <form method="post" action="/vendor-rules/{{ rule.id }}/toggle" class="pt-inline-flex">
                     {{ csrf_field() }}
                     <button type="submit" class="pt-btn pt-btn--ghost pt-btn--sm">
@@ -380,7 +383,7 @@
     {{ ui.empty_state(
         "No vendor rules yet",
         "Add a rule for a merchant you see every month and the review queue will classify it for you.",
-        action_label=("Add rule" if can_mutate else none),
+        action_label=("Add rule" if can_work else none),
         action_href="#",
         action_attrs='data-modal-open="create-vendor-rule-modal"',
         icon_name="sliders"
@@ -398,7 +401,7 @@
 {% endfor %}
 
 {# 1. Create property #}
-{% if can_mutate %}
+{% if can_work %}
 {{ ui.modal_open("create-property-modal", "Add a property", "A rental door or your primary residence.", size="lg") }}
 <form action="/properties/create" method="POST" class="pt-modal__form">
     {{ csrf_field() }}

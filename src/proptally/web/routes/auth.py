@@ -15,15 +15,24 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
 
-from proptally.db.system_models import ROLE_OWNER
+from proptally.db.portfolio_lifecycle import portfolio_status
+from proptally.db.system_models import (
+    ADMIN_ROLES,
+    CLIENT_CONFIRMATION_ROLES,
+    CPA_REVIEW_ROLES,
+    EXTERNAL_REVIEW_ROLES,
+    INVITABLE_ROLES,
+    ROLE_OWNER,
+    WORK_ROLES,
+)
 from proptally.db.tenant_manager import TenantManager
+from proptally.web.routes.portfolios import DELETE_ROLES, EXPORT_ROLES
 from proptally.web.auth import (
     ROLES,
     AuthenticationDependency,
     LoginRateLimiter,
     MembershipError,
     ROLE_CPA_REVIEWER,
-    ROLE_DESCRIPTIONS,
     accept_invite,
     change_member_role,
     pending_invites,
@@ -54,6 +63,67 @@ from proptally.web.auth import (
 
 MIN_PASSWORD_LENGTH = 10
 
+#: The administration screen's sections. Each one is a query parameter rather than
+#: client-side state, so it is a real URL: bookmarkable, reloadable, and reachable with the
+#: browser's back button (`docs/ui-ux/05_INTERACTION_STANDARDS.md` §5).
+ACCOUNT_SECTION_PEOPLE = "people"
+ACCOUNT_SECTION_PORTFOLIO = "portfolio"
+ACCOUNT_SECTION_BACKUP = "backup"
+ACCOUNT_SECTION_SIGNIN = "signin"
+ACCOUNT_SECTIONS = (
+    ACCOUNT_SECTION_PEOPLE,
+    ACCOUNT_SECTION_PORTFOLIO,
+    ACCOUNT_SECTION_BACKUP,
+    ACCOUNT_SECTION_SIGNIN,
+)
+
+#: What each role may do, as capability rows: (capability, what it means, the roles that
+#: hold it). Every row's role list is the same tuple the gate uses — `WORK_ROLES`,
+#: `ADMIN_ROLES`, `CLIENT_CONFIRMATION_ROLES`, `CPA_REVIEW_ROLES`, `EXTERNAL_REVIEW_ROLES`
+#: and the export/removal sets the portfolio routes enforce — so the screen cannot describe
+#: authority the application does not carry out. The prose this replaces lived in
+#: `ROLE_DESCRIPTIONS` and drifted from the tuples.
+ROLE_CAPABILITIES = (
+    (
+        "Read the books",
+        "The ledger, documents, statements and reports.",
+        ROLES,
+    ),
+    (
+        "Do the bookkeeping",
+        "Import statements, allocate and post transactions, set up properties and accounts. "
+        "A reviewer's posting is the entry that records their review.",
+        WORK_ROLES,
+    ),
+    (
+        "Tick the external-review control",
+        "Record that a deduction was externally reviewed.",
+        EXTERNAL_REVIEW_ROLES,
+    ),
+    (
+        "Be the verified reviewer",
+        "A reviewer's tick is recorded as a CPA's review; an owner's is recorded as the "
+        "owner's own attestation, never as a CPA's.",
+        CPA_REVIEW_ROLES,
+    ),
+    (
+        "Manage people",
+        "Invite, change roles, withdraw invitations and remove access.",
+        ADMIN_ROLES,
+    ),
+    (
+        "Authorize on the client's behalf",
+        "CBD-1: the client's own confirmation. A manager cannot give it, however much work "
+        "they do.",
+        CLIENT_CONFIRMATION_ROLES,
+    ),
+    (
+        "Export or remove the portfolio",
+        "Download the whole portfolio, or delete it and its files.",
+        tuple(role for role in ROLES if role in EXPORT_ROLES and role in DELETE_ROLES),
+    ),
+)
+
 
 def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
@@ -76,8 +146,19 @@ def _render(templates, request: Request, name: str, context: dict, *, csrf_token
     return response
 
 
-def get_auth_router(templates, control_engine, tenant_manager: TenantManager, rate_limiter: LoginRateLimiter, auth_dep: AuthenticationDependency):
+def get_auth_router(
+    templates,
+    control_engine,
+    tenant_manager: TenantManager,
+    rate_limiter: LoginRateLimiter,
+    auth_dep: AuthenticationDependency,
+    session_dep: AuthenticationDependency = None,
+):
     router = APIRouter()
+    # Operations about the signed-in person themselves -- changing a password, choosing a
+    # portfolio -- authenticate and check CSRF but do not require a role in the portfolio:
+    # a read-only member still owns their own account.
+    session_scope = session_dep or auth_dep
 
     # --- Sign in ---------------------------------------------------------
 
@@ -361,11 +442,23 @@ def get_auth_router(templates, control_engine, tenant_manager: TenantManager, ra
         clear_session_cookie(response)
         return response
 
-    # --- Signed-in account screen ---------------------------------------
+    # --- Administration screen ------------------------------------------
 
     @router.get("/account", response_class=HTMLResponse)
-    def account_screen(request: Request, context=Depends(auth_dep)):
-        """The signed-in account: its portfolios, who can reach this one, and its access list."""
+    def account_screen(
+        request: Request,
+        section: str = ACCOUNT_SECTION_PEOPLE,
+        context=Depends(auth_dep),
+    ):
+        """Administration for the open portfolio: its people, its status and its backup.
+
+        The section is a query parameter rather than client-side state, so every section is
+        a real URL that can be bookmarked, reloaded and reached with the browser's back
+        button, and the segmented navigation is ordinary links.
+        """
+        if section not in ACCOUNT_SECTIONS:
+            section = ACCOUNT_SECTION_PEOPLE
+
         memberships = []
         for membership in memberships_for(control_engine, context.user.id):
             tenant = tenant_for(control_engine, membership.tenant_id)
@@ -382,11 +475,25 @@ def get_auth_router(templates, control_engine, tenant_manager: TenantManager, ra
             context={
                 "active_page": "account",
                 "context": context,
+                "section": section,
+                "account_sections": [
+                    (ACCOUNT_SECTION_PEOPLE, "People"),
+                    (ACCOUNT_SECTION_PORTFOLIO, "Portfolio status"),
+                    (ACCOUNT_SECTION_BACKUP, "Backup"),
+                    (ACCOUNT_SECTION_SIGNIN, "Sign-in"),
+                ],
                 "memberships": memberships,
                 "members": members,
                 "pending_invites": invites,
                 "roles": ROLES,
-                "role_descriptions": ROLE_DESCRIPTIONS,
+                # Both option lists are built here, from the model's own tuples, so a
+                # template never has to assemble them and the invite form cannot offer a
+                # role the invitation endpoint would refuse.
+                "role_options": [{"value": role, "label": role} for role in ROLES],
+                "invitable_role_options": [
+                    {"value": role, "label": role} for role in ROLES if role in INVITABLE_ROLES
+                ],
+                "role_capabilities": ROLE_CAPABILITIES,
                 # Surfaced so the screen can explain why a control is unavailable rather
                 # than let it fail when used: the portfolio must keep an owner.
                 "owner_count": len(owners),
@@ -395,6 +502,18 @@ def get_auth_router(templates, control_engine, tenant_manager: TenantManager, ra
                 "error": request.query_params.get("error"),
                 "csrf_token": context.csrf_token,
                 "min_password_length": MIN_PASSWORD_LENGTH,
+                # Only the two sections that report it read the portfolio's database and
+                # stat its files, so People and Sign-in do not pay for that work.
+                "portfolio_status": (
+                    portfolio_status(control_engine, tenant_manager, context.tenant.id)
+                    if section in (ACCOUNT_SECTION_PORTFOLIO, ACCOUNT_SECTION_BACKUP)
+                    else None
+                ),
+                # Each action's visibility mirrors the role set its route enforces, so the
+                # screen never offers a control that would be refused (`04` §E: no dead
+                # affordances). They are the same set today, and stay correct if they diverge.
+                "can_export": context.role in EXPORT_ROLES,
+                "can_remove_portfolio": context.role in DELETE_ROLES,
             },
         )
 
@@ -403,13 +522,16 @@ def get_auth_router(templates, control_engine, tenant_manager: TenantManager, ra
         request: Request,
         current_password: str = Form(...),
         new_password: str = Form(...),
-        context=Depends(auth_dep),
+        context=Depends(session_scope),
     ):
-        context.require_mutation()
+        # Deliberately no role check: changing your own password is about you, not about
+        # the portfolio, so a read-only member must be able to do it.
         try:
             change_password(control_engine, context.user, current_password, new_password)
         except ValueError as exc:
-            return RedirectResponse(url=f"/account?error={exc}", status_code=303)
+            return RedirectResponse(
+                url=f"/account?section={ACCOUNT_SECTION_SIGNIN}&error={exc}", status_code=303
+            )
         response = RedirectResponse(
             url="/auth/login?next=/account", status_code=303
         )
@@ -433,8 +555,12 @@ def get_auth_router(templates, control_engine, tenant_manager: TenantManager, ra
                 invited_by_user_id=context.user.id,
             )
         except ValueError as exc:
-            return RedirectResponse(url=f"/account?error={exc}", status_code=303)
-        return RedirectResponse(url=f"/account?invite_token={token}", status_code=303)
+            return RedirectResponse(
+                url=f"/account?section={ACCOUNT_SECTION_PEOPLE}&error={exc}", status_code=303
+            )
+        return RedirectResponse(
+            url=f"/account?section={ACCOUNT_SECTION_PEOPLE}&invite_token={token}", status_code=303
+        )
 
     @router.post("/account/members/{membership_id}/role")
     def account_change_member_role(
@@ -449,9 +575,13 @@ def get_auth_router(templates, control_engine, tenant_manager: TenantManager, ra
                 control_engine, membership_id, role, tenant_id=context.tenant.id
             )
         except MembershipError as exc:
-            return RedirectResponse(url=f"/account?error={urllib.parse.quote(str(exc))}", status_code=303)
+            return RedirectResponse(
+                url=f"/account?section={ACCOUNT_SECTION_PEOPLE}&error={urllib.parse.quote(str(exc))}",
+                status_code=303,
+            )
         return RedirectResponse(
-            url=f"/account?message={urllib.parse.quote('Role updated.')}", status_code=303
+            url=f"/account?section={ACCOUNT_SECTION_PEOPLE}&message={urllib.parse.quote('Role updated.')}",
+            status_code=303,
         )
 
     @router.post("/account/members/{membership_id}/remove")
@@ -461,9 +591,13 @@ def get_auth_router(templates, control_engine, tenant_manager: TenantManager, ra
         try:
             remove_member(control_engine, membership_id, tenant_id=context.tenant.id)
         except MembershipError as exc:
-            return RedirectResponse(url=f"/account?error={urllib.parse.quote(str(exc))}", status_code=303)
+            return RedirectResponse(
+                url=f"/account?section={ACCOUNT_SECTION_PEOPLE}&error={urllib.parse.quote(str(exc))}",
+                status_code=303,
+            )
         return RedirectResponse(
-            url=f"/account?message={urllib.parse.quote('Access removed.')}", status_code=303
+            url=f"/account?section={ACCOUNT_SECTION_PEOPLE}&message={urllib.parse.quote('Access removed.')}",
+            status_code=303,
         )
 
     @router.post("/account/invites/{invite_id}/revoke")
@@ -473,9 +607,13 @@ def get_auth_router(templates, control_engine, tenant_manager: TenantManager, ra
         try:
             revoke_invite(control_engine, invite_id, tenant_id=context.tenant.id)
         except MembershipError as exc:
-            return RedirectResponse(url=f"/account?error={urllib.parse.quote(str(exc))}", status_code=303)
+            return RedirectResponse(
+                url=f"/account?section={ACCOUNT_SECTION_PEOPLE}&error={urllib.parse.quote(str(exc))}",
+                status_code=303,
+            )
         return RedirectResponse(
-            url=f"/account?message={urllib.parse.quote('Invitation withdrawn.')}", status_code=303
+            url=f"/account?section={ACCOUNT_SECTION_PEOPLE}&message={urllib.parse.quote('Invitation withdrawn.')}",
+            status_code=303,
         )
 
     @router.post("/auth/switch-tenant")

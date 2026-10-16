@@ -14,7 +14,14 @@ import re
 from sqlmodel import Session
 from starlette.testclient import TestClient
 
-from proptally.db.system_models import ROLE_CPA_REVIEWER, ROLE_OWNER, ROLE_READ_ONLY
+from proptally.db.system_models import (
+    INVITABLE_ROLES,
+    ROLES,
+    ROLE_CPA_REVIEWER,
+    ROLE_OWNER,
+    ROLE_READ_ONLY,
+)
+from proptally.web import navigation
 
 
 
@@ -253,8 +260,18 @@ def test_the_account_screen_and_sign_out_are_reachable_from_the_shell(owner):
     assert 'action="/auth/logout"' in dashboard, "sign out must be reachable without a URL"
     assert "Sign out" in dashboard
 
-    # The navigation lists it by name too.
-    assert "Users &amp; Access" in dashboard or "Users & Access" in dashboard
+    # The navigation names it too: whatever the destination is called, the shell renders
+    # the label the navigation module declares for it.
+    administration = [
+        item
+        for section in navigation.primary_sections()
+        for item in section.items
+        if item.href == "/account"
+    ]
+    assert administration, "the administration screen must be a named navigation destination"
+    assert administration[0].label in dashboard, (
+        f"the shell must render the navigation label {administration[0].label!r}"
+    )
 
     # And signing out from there really signs out.
     response = keeper.client.post(
@@ -263,3 +280,31 @@ def test_the_account_screen_and_sign_out_are_reachable_from_the_shell(owner):
     assert response.status_code == 303
     after = keeper.client.get("/", follow_redirects=False)
     assert after.status_code == 303 and after.headers["location"].startswith("/auth/login")
+
+
+def test_the_role_controls_offer_exactly_the_roles_they_may_hand_out(owner, monkeypatch):
+    """The role dropdowns are the only way a person chooses a role, so they must be filled.
+
+    Regression this pins: the invite form's options were rendered from a name the template no
+    longer defined, so the select came out empty while the POST routes kept working — every
+    other test posts a role value directly and so never saw the empty dropdown.
+    """
+    monkeypatch.setenv("PROPTALLY_ALLOW_REGISTRATION", "true")
+    keeper = owner(email="keeper@example.com", portfolio_name="Solo Portfolio")
+    page = keeper.client.get("/account").text
+
+    invite_form = page.split('id="invite-member-modal"', 1)[1].split("</form>", 1)[0]
+    assert tuple(re.findall(r'<option value="([A-Z_]+)"', invite_form)) == INVITABLE_ROLES, (
+        "the invitation form must offer exactly the roles an invitation may carry"
+    )
+
+    # A member who is not the portfolio's only owner gets a role control, and that control is
+    # how ownership is granted, so it offers every role.
+    _invite_and_accept(keeper, owner(app=keeper.app, email="member@example.com",
+                                     password="member-password-1", portfolio_name="Member"),
+                       ROLE_CPA_REVIEWER, email="member@example.com")
+    roster = keeper.client.get("/account").text
+    roster = roster.split("People with access", 1)[1].split("What each role can do", 1)[0]
+    assert tuple(re.findall(r'<option value="([A-Z_]+)"', roster)) == ROLES, (
+        "the access list must be able to promote a member to any role, including owner"
+    )

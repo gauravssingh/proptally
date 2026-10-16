@@ -157,9 +157,11 @@ def main() -> int:
                 f"{rel}:{line}: inline event handler — bind by data attribute in a script"
             )
 
-    # The shell must load exactly the three design-system stylesheets, in order.
+    # The shell must load exactly the three design-system stylesheets, in order. A version
+    # query on the URL is expected (it is how a changed stylesheet defeats a stale cache),
+    # so the filename is what is compared.
     base = (TEMPLATES / "base.html").read_text()
-    linked = re.findall(r'href="/static/css/([^"]+)"', base)
+    linked = re.findall(r'href="/static/css/([^"?]+)', base)
     expected = [sheet.name for sheet in STYLESHEETS]
     if linked != expected:
         failures.append(

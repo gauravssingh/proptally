@@ -109,8 +109,8 @@ def primary_sections() -> list[NavSection]:
                     page="portfolios",
                 ),
                 NavItem(
-                    label="Users & Access",
-                    short="Users",
+                    label="Administration",
+                    short="Admin",
                     href="/account",
                     icon="user_check",
                     page="account",

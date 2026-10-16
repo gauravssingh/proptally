@@ -151,4 +151,80 @@ PropTally
 
 ---
 
+### 3.9 Portfolio administration (`/account`)
+
+The administration screen for the portfolio that is open: its people, its status and its
+backup. It is a portfolio-level screen, not an instance-level one, and it is reachable from
+the shell's navigation (*Administration*) and from its footer on every surface.
+
+**Sections, not one page.** Four sections, each its own URL (`/account?section=…`), so a
+section can be bookmarked, reloaded, and reached with the browser's back button, and the
+section navigation is ordinary links (`05_INTERACTION_STANDARDS.md` §5). Exactly one section
+renders at a time. The section navigation is a `.pt-segmented` control in the page header,
+with the active section carrying `is-active` and `aria-current="page"`; the shell's
+navigation marks the screen itself the same way, so both levels of the hierarchy are
+represented. A query parameter for an unknown section falls back to *People*.
+
+* **Header:** the title, the portfolio's name in the subtitle, a meta badge with the
+  caller's role (`READ ONLY` where they have no authority, rather than hiding the facts),
+  and the section navigation. The primary action appears only where it belongs: *Invite
+  somebody* in *People*, and only for an owner.
+* **People** (default): *People with access to `<portfolio>`* — one row per member (name,
+  `You` marker, email, role, the date access was granted). An owner gets a role select and a
+  confirmed **Remove** per row; the last owner cannot be demoted or removed, and the row
+  says `the portfolio's only owner` instead of showing a control that would fail. Then
+  *What each role can do*: a capabilities matrix (capability rows × the four role columns,
+  with the reader's own column marked) rather than prose, because four sentences cannot be
+  compared and the matrix is what an administrator actually needs when choosing a role.
+  Each row's role list is the very tuple its gate uses (`WORK_ROLES`, `ADMIN_ROLES`,
+  `CLIENT_CONFIRMATION_ROLES`, `CPA_REVIEW_ROLES`, `EXTERNAL_REVIEW_ROLES`, and the export
+  and removal sets the portfolio routes enforce), so the screen cannot describe authority the
+  application does not carry out. Then *Invitations*: outstanding
+  invitations with the role offered, the expiry date, a confirmed **Withdraw**, and an
+  explicit statement that an invited address holds no access until it is accepted — or an
+  empty state when none are outstanding. *Invite somebody* is a modal (two fields), opened
+  from the header; the generated link is shown once on the screen afterwards, because a
+  self-hosted deployment sends no email.
+* **Portfolio status:** what the portfolio holds, counted from its own database (doors,
+  loans, documents, transactions, journal entries, files on disk), whether the database
+  reads, and when it was created; then where it lives — the ledger database, its
+  write-ahead log, the document vault, the photos, and the resulting export size, each with
+  its path and size; then the portfolios this account reaches, with a row action to open
+  one; then the removal route, offered only to a role the removal endpoint accepts. An
+  unreadable database is reported as such, with the advice to take a copy first.
+* **Backup:** what an export of this portfolio contains (a `VACUUM INTO` database snapshot,
+  the vault, the photos, a manifest), the download action for a role the export endpoint
+  accepts, the size the archive will be, and the statement that the app keeps no copy and
+  records no export history. Then the whole-installation backup: the operator scripts
+  (`scripts/backup.sh`, `scripts/restore.sh`), what they cover (control plane and every
+  portfolio database plus vaults), that each copy is verified with `PRAGMA integrity_check`
+  and shipped with a SHA-256 sidecar, and that nothing in the app schedules a backup.
+* **Sign-in:** who you are (name, email, role in this portfolio, whether the account is an
+  installation administrator) and the password form, which every role may use — it is about
+  the person's own credentials, not about the portfolio.
+
+**Roles.** `OWNER` — everything, including people, invitations, export and removal.
+`MANAGER` — the bookkeeping (imports, allocations, posting, portfolio setup) but never
+people, and never the client's confirmation on its behalf. `CPA_REVIEWER` — read, plus
+recording the external review a deduction requires. `READ_ONLY` — read only. A member who is
+not an owner sees the same facts with the owner-only actions replaced by a sentence naming
+the role requirement, so the screen never offers an action that would be refused.
+
+**Deliberately absent.** No activity log, because the `access_events` table is never
+written; no sessions list, because there is no read helper for `user_sessions`; no
+"integrity check now" button, because no importable checker exists (the scripts do it at
+backup time); and no backup history or last-backup timestamp, because nothing records one.
+Instance-level administration (all users, all portfolios) has no authority model behind it
+today: `is_instance_admin` is a display flag, so this screen is portfolio-scoped.
+
+**Design-system sources.** Assembled from the component library
+(`docs/ui-ux/04_COMPONENT_LIBRARY.md`): `ui.page_header`, `ui.section_open/close`,
+`ui.table_open/th/table_close`, `ui.empty_state`, `ui.text_field`, `ui.select_field`,
+`ui.btn`, `ui.badge`, `ui.alert` and `ui.modal_open/close`, plus `.pt-segmented` for the
+section navigation and `.pt-cell-stack`/`.pt-table__primary`/`.pt-table__sub` inside cells.
+It declares no inline styles and no class outside the three design-system stylesheets, which
+`scripts/check_design_system.py` enforces.
+
+---
+
 *End of Product & UI/UX Specification.*

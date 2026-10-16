@@ -33,10 +33,12 @@
     <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
     <link rel="apple-touch-icon" href="/static/icons/icon.svg">
 
-    {# Design system: tokens → base → components. Load order is significant. #}
-    <link rel="stylesheet" href="/static/css/tokens.css">
-    <link rel="stylesheet" href="/static/css/base.css">
-    <link rel="stylesheet" href="/static/css/components.css">
+    {# Design system: tokens → base → components. Load order is significant. The version
+       query is derived from the files, so a changed stylesheet is a changed URL and cannot be
+       hidden by a stale cached copy. #}
+    <link rel="stylesheet" href="/static/css/tokens.css?v={{ asset_version() }}">
+    <link rel="stylesheet" href="/static/css/base.css?v={{ asset_version() }}">
+    <link rel="stylesheet" href="/static/css/components.css?v={{ asset_version() }}">
 </head>
 <body class="pt-shell">
 

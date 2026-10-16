@@ -1,38 +1,36 @@
 {% extends "auth_base.html" %}
 {% block title %}Create a portfolio — PropTally{% endblock %}
 {% block card %}
-<h1 class="pt-auth__title">Create a portfolio</h1>
-<p class="pt-auth__sub">
+{{ ui.card_open() }}
+<h1>Create a portfolio</h1>
+<p class="pt-fs-supporting pt-text-secondary">
     This creates your account and your own private portfolio. Your properties,
     statements and ledger are stored in your own database on this host.
 </p>
 
-{% if error %}<div class="pt-auth__error">{{ error }}</div>{% endif %}
+{% if error %}{{ ui.alert(variant="error", title="Could not create your portfolio", text=error) }}{% endif %}
 
-<form class="pt-auth__form" method="post" action="/auth/register">
+<form method="post" action="/auth/register">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="pt-auth__field">
-        <label for="display_name">Your name</label>
-        <input id="display_name" name="display_name" type="text" autocomplete="name" value="{{ display_name or '' }}">
+    <div class="pt-stack pt-gap-4">
+        {{ ui.text_field("display_name", "Your name", value=display_name or "",
+                         extra='autocomplete="name"') }}
+        {{ ui.text_field("portfolio_name", "Portfolio name", value=portfolio_name or "",
+                         placeholder="e.g. Bluebonnet Holdings",
+                         help="Used to label your workspace; you can change it later.") }}
+        {{ ui.text_field("email", "Email", value=email or "", type="email", required=true,
+                         extra='autocomplete="username"') }}
+        {{ ui.text_field("password", "Password", type="password", required=true,
+                         extra='autocomplete="new-password"',
+                         help="At least " ~ min_password_length ~ " characters.") }}
+        <div class="pt-form-actions">
+            {{ ui.btn("Create account", variant="primary", type="submit", block=true) }}
+        </div>
     </div>
-    <div class="pt-auth__field">
-        <label for="portfolio_name">Portfolio name</label>
-        <input id="portfolio_name" name="portfolio_name" type="text" placeholder="e.g. Bluebonnet Holdings" value="{{ portfolio_name or '' }}">
-        <small>Used to label your workspace; you can change it later.</small>
-    </div>
-    <div class="pt-auth__field">
-        <label for="email">Email</label>
-        <input id="email" name="email" type="email" autocomplete="username" required value="{{ email or '' }}">
-    </div>
-    <div class="pt-auth__field">
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password" autocomplete="new-password" required>
-        <small>At least {{ min_password_length }} characters.</small>
-    </div>
-    <button class="pt-auth__submit" type="submit">Create account</button>
 </form>
 
-<div class="pt-auth__links">
+<div class="pt-stack pt-gap-2 pt-fs-caption">
     <span>Already have an account? <a href="/auth/login">Sign in</a>.</span>
 </div>
+{{ ui.card_close() }}
 {% endblock %}

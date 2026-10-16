@@ -1,6 +1,9 @@
 """Jinja2 formatting filters and UI helpers."""
 
+import hashlib
+import re
 from datetime import date
+from pathlib import Path
 from typing import Optional
 
 
@@ -64,3 +67,56 @@ def format_date(d: Optional[date]) -> str:
     if not d:
         return "—"
     return d.strftime("%b %d, %Y")
+
+
+def asset_version() -> str:
+    """Cache-busting version for the design-system stylesheets.
+
+    Static files are served with `Last-Modified` and `ETag` but no `Cache-Control`, so
+    browsers fall back to heuristic freshness and can keep serving a stylesheet that has
+    already changed — the change is then invisible until a hard refresh. Appending this
+    to the link's URL makes a changed stylesheet a different URL, so the fix reaches the
+    reader on a normal reload. It is derived from the files themselves, so it moves with
+    them and needs no manual bump.
+    """
+    digest = hashlib.sha256()
+    for name in ("tokens.css", "base.css", "components.css"):
+        path = Path(__file__).resolve().parent / "static" / "css" / name
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        digest.update(f"{name}:{stat.st_mtime_ns}:{stat.st_size}".encode())
+    return digest.hexdigest()[:10]
+
+
+def initials(value: Optional[str]) -> str:
+    """Monogram for an avatar: 'Gaurav Singh' -> 'GS', 'gaurav.singh@example.com' -> 'GS'.
+
+    Two letters where there are two name parts to take them from, otherwise one, and never
+    an empty circle — the avatar is the only image a self-hosted instance has for a person.
+    """
+    text = (value or "").strip()
+    if not text:
+        return "?"
+    parts = [part for part in re.split(r"[\s._@-]+", text) if part]
+    if len(parts) >= 2 and parts[0][:1] and parts[1][:1]:
+        return (parts[0][:1] + parts[1][:1]).upper()
+    return parts[0][:1].upper() if parts else "?"
+
+
+def format_bytes(size: Optional[int]) -> str:
+    """Formats a byte count for the administration screen: 288000 -> 281 KB.
+
+    Binary units, one decimal place below a megabyte, because the figures this is used
+    for are database and document stores whose exact size is not the point.
+    """
+    if size is None:
+        return "—"
+    if size < 1024:
+        return f"{size} B"
+    for unit, step in (("KB", 1024), ("MB", 1024**2), ("GB", 1024**3), ("TB", 1024**4)):
+        if size < step * 1024 or unit == "TB":
+            value = size / step
+            return f"{value:,.0f} {unit}" if value >= 100 else f"{value:,.1f} {unit}"
+    return f"{size} B"

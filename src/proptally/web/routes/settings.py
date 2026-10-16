@@ -204,7 +204,7 @@ def _require_mutation() -> None:
     how the router happens to be mounted.
     """
     context = current_context()
-    if context is None or not context.can_mutate:
+    if context is None or not context.can_work:
         raise AuthorizationError("This role may read the portfolio but not change it.")
 
 
@@ -414,7 +414,7 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
             name="settings.html",
             context={
                 "active_page": "settings",
-                "can_mutate": bool(context and context.can_mutate),
+                "can_work": bool(context and context.can_work),
                 "properties": properties,
                 "property_valuations": property_valuations,
                 "accounts": accounts,

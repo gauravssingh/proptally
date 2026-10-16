@@ -60,11 +60,16 @@ class SignedInOwner:
     password: str
 
     def csrf(self) -> str:
-        """The session's CSRF token, read from a rendered form."""
+        """The session's CSRF token, read from a rendered form.
+
+        Every page carries one: the shell's sign-out form. The administration screen's own
+        forms are section-dependent, so scraping a page's *own* form would make this depend
+        on which controls the signed-in role happens to have.
+        """
         import re
 
         match = re.search(r'name="csrf_token" value="([^"]+)"', self.client.get("/account").text)
-        assert match, "the account screen must expose the session's CSRF token"
+        assert match, "the shell must expose the session's CSRF token"
         return match.group(1)
 
     def post(self, url: str, data: dict, **kwargs):

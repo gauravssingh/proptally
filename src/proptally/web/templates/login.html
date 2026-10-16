@@ -1,26 +1,27 @@
 {% extends "auth_base.html" %}
 {% block title %}Sign in — PropTally{% endblock %}
 {% block card %}
-<h1 class="pt-auth__title">Sign in</h1>
-<p class="pt-auth__sub">Self-hosted portfolio finance. Your data stays on this host.</p>
+{{ ui.card_open() }}
+<h1>Sign in</h1>
+<p class="pt-fs-supporting pt-text-secondary">Self-hosted portfolio finance. Your data stays on this host.</p>
 
-{% if error %}<div class="pt-auth__error">{{ error }}</div>{% endif %}
+{% if error %}{{ ui.alert(variant="error", title="Could not sign in", text=error) }}{% endif %}
 
-<form class="pt-auth__form" method="post" action="/auth/login">
+<form method="post" action="/auth/login">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
-    <div class="pt-auth__field">
-        <label for="email">Email</label>
-        <input id="email" name="email" type="email" autocomplete="username" required autofocus value="{{ email or '' }}">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    <div class="pt-stack pt-gap-4">
+        {{ ui.text_field("email", "Email", value=email or "", type="email", required=true,
+                         extra='autocomplete="username" autofocus') }}
+        {{ ui.text_field("password", "Password", type="password", required=true,
+                         extra='autocomplete="current-password"') }}
+        <div class="pt-form-actions">
+            {{ ui.btn("Sign in", variant="primary", type="submit", block=true) }}
+        </div>
     </div>
-    <div class="pt-auth__field">
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password" autocomplete="current-password" required>
-    </div>
-    <button class="pt-auth__submit" type="submit">Sign in</button>
 </form>
 
-<div class="pt-auth__links">
+<div class="pt-stack pt-gap-2 pt-fs-caption">
     {% if registration_open %}
     <span>No account yet? <a href="/auth/register">Create a portfolio</a>.</span>
     {% else %}
@@ -28,4 +29,5 @@
     {% endif %}
     <span><a href="/auth/reset">Forgot your password?</a></span>
 </div>
+{{ ui.card_close() }}
 {% endblock %}
