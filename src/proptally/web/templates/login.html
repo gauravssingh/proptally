@@ -58,6 +58,10 @@
                         "title": "No portfolio on this account",
                         "text": "Your sign-in worked, but this account is not in a portfolio yet. Ask the installation operator to add you to one.",
                     },
+                    "invite_dead": {
+                        "title": "That invitation cannot be used",
+                        "text": "It was already accepted, withdrawn, or has expired. Ask whoever invited you for a new one. If you already have an account on this host, sign in below instead.",
+                    },
                 } %}
                 {% if error_kind %}
                 {% set failure = failures.get(error_kind, {"title": "Could not sign in", "text": "Please try again."}) %}

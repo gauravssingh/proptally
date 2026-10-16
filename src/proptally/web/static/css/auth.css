@@ -336,6 +336,15 @@
     box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.35);
 }
 
+/* A value that is fixed rather than entered, such as the address an invitation is
+   pinned to. Read-only rather than disabled so it stays readable, selectable and
+   announced; this only says so to the eye. No surface is restated: the frosted
+   background, border and radius stay owned by the utilities on the input. */
+.auth-input input[readonly] {
+    color: #64748b;
+    cursor: default;
+}
+
 .auth-input__icon {
     position: absolute;
     left: 0.75rem;

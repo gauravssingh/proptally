@@ -1,33 +1,123 @@
 {% extends "auth_base.html" %}
-{% block title %}Accept invitation — PropTally{% endblock %}
-{% block card %}
-{{ ui.card_open() }}
-<h1>Join {{ invite_tenant_name }}</h1>
-<p class="pt-fs-supporting pt-text-secondary">
-    You have been invited as <strong>{{ invite_role }}</strong>.
-    {{ invite_role_description }}
-</p>
+{% block title %}Join {{ invite_tenant_name }} — PropTally{% endblock %}
 
-{% if error %}{{ ui.alert(variant="error", title="Could not accept the invitation", text=error) }}{% endif %}
+{# ---------------------------------------------------------------------------
+   Accepting an invitation, on the same surface as the sign-in box: the scene,
+   the centred glass form, frosted fields, one primary action.
 
-<form method="post" action="/auth/invite/{{ token }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="pt-stack pt-gap-4">
-        {{ ui.text_field("display_name", "Your name", value=display_name or "",
-                         extra='autocomplete="name"') }}
-        {{ ui.text_field("email", "Email", value=invite_email, type="email",
-                         extra="disabled", help="Fixed by the invitation.") }}
-        {{ ui.text_field("password", "Password", type="password", required=true,
-                         extra='autocomplete="new-password"',
-                         help="At least " ~ min_password_length ~ " characters. If you already have an account here, enter that password to confirm it is you.") }}
-        <div class="pt-form-actions">
-            {{ ui.btn("Accept invitation", variant="primary", type="submit", block=true) }}
+   For most people this is the first screen of this deployment they ever see, so
+   it has to look like the product rather than a form bolted onto it. Everything
+   stated here about the invitation is read from the row: the portfolio, the role,
+   the address it is pinned to, and the day the link stops working.
+   --------------------------------------------------------------------------- #}
+
+{% block shell %}
+<div class="auth-root relative h-screen w-screen overflow-hidden">
+    <img class="auth-scene absolute inset-0 w-full h-full object-cover z-0"
+         src="/static/img/login-neighborhood.svg" alt="">
+
+    <div class="auth-panel w-full z-10">
+        <div class="auth-form">
+            <div class="flex items-center gap-3">
+                <span class="auth-mark">P</span>
+                <span>
+                    <span class="block auth-wordmark font-bold text-slate-900">PropTally</span>
+                    {% if instance_name != "PropTally" %}
+                    <span class="auth-instance">
+                        <span class="auth-instance__dot" aria-hidden="true"></span>
+                        {{ instance_name }}
+                    </span>
+                    {% endif %}
+                </span>
+            </div>
+
+            <div class="auth-pane">
+                <h1 class="auth-pane__title" tabindex="-1">Join {{ invite_tenant_name }}</h1>
+                <p>
+                    You have been invited as
+                    {{ ui.badge(invite_role, variant="neutral", upper=true) }}.
+                    {{ invite_role_description }}
+                    Accepting signs you in and opens the portfolio.
+                    {% if invite_expires_at %}
+                    This link stops working on {{ invite_expires_at | format_date }}.
+                    {% endif %}
+                </p>
+
+                {% if error %}
+                <div class="auth-reveal mt-6">
+                    {{ ui.alert(variant="error", title="Could not accept the invitation", text=error) }}
+                </div>
+                {% endif %}
+
+                <form method="post" action="/auth/invite/{{ token }}" class="mt-6" data-loading-form
+                      data-loading-text="Joining…">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                    <div class="flex flex-col gap-4">
+                        <div class="pt-field">
+                            <label class="pt-field__label auth-label" for="display_name">Your name</label>
+                            <div class="auth-input">
+                                <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("user_check", "md") }}</span>
+                                <input class="bg-white/95 backdrop-blur-xl border-2 border-white rounded-xl shadow-lg"
+                                       type="text" id="display_name" name="display_name"
+                                       value="{{ display_name or '' }}"
+                                       autocomplete="name"
+                                       {% if not display_name %}autofocus{% endif %}>
+                            </div>
+                        </div>
+
+                        <div class="pt-field">
+                            <label class="pt-field__label auth-label" for="email">Email</label>
+                            <div class="auth-input">
+                                <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("mail", "md") }}</span>
+                                <input class="bg-white/95 backdrop-blur-xl border-2 border-white rounded-xl shadow-lg"
+                                       type="email" id="email" name="email" value="{{ invite_email }}"
+                                       readonly aria-describedby="email-desc">
+                            </div>
+                            {# Read-only rather than disabled: the address is the identity
+                               being granted access, so it should be readable, selectable
+                               and announced rather than greyed out of reach. #}
+                            <span class="pt-field__help" id="email-desc">Set by the invitation. This is the address you will sign in with.</span>
+                        </div>
+
+                        <div class="pt-field">
+                            <label class="pt-field__label auth-label" for="password">Password<span class="pt-field__required" aria-hidden="true">*</span></label>
+                            <div class="auth-input auth-password">
+                                <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("lock", "md") }}</span>
+                                <input class="bg-white/95 backdrop-blur-xl border-2 border-white rounded-xl shadow-lg"
+                                       type="password" id="password" name="password"
+                                       minlength="{{ min_password_length }}"
+                                       required aria-required="true" autocomplete="new-password"
+                                       aria-describedby="password-desc"
+                                       {% if display_name %}autofocus{% endif %}>
+                                <button type="button" class="auth-toggle"
+                                        data-password-toggle="password"
+                                        aria-controls="password" aria-pressed="false"
+                                        aria-label="Show password">
+                                    <span class="auth-toggle__icon auth-toggle__icon--off">{{ ui.icon("eye", "md") }}</span>
+                                    <span class="auth-toggle__icon auth-toggle__icon--on">{{ ui.icon("eye-off", "md") }}</span>
+                                </button>
+                            </div>
+                            <span class="pt-field__help" id="password-desc">
+                                At least {{ min_password_length }} characters. If you already have an account on this host, enter that account's password instead and the portfolio is added to it.
+                            </span>
+                        </div>
+
+                        <div class="auth-cta" data-loading="false">
+                            <button type="submit" class="pt-btn pt-btn--block rounded-full">
+                                <span class="auth-spinner" aria-hidden="true"></span>
+                                <span data-loading-label>Accept invitation</span>
+                                <span class="auth-cta__arrow" aria-hidden="true">{{ ui.icon("arrow_right", "md") }}</span>
+                            </button>
+                        </div>
+                    </div>
+                </form>
+
+                <div class="auth-pane__footer">
+                    <a class="auth-link" href="/auth/login">Sign in instead</a>
+                </div>
+            </div>
         </div>
     </div>
-</form>
-
-<div class="pt-stack pt-gap-2 pt-fs-caption">
-    <span>Already signed in? <a href="/">Go to the dashboard</a>.</span>
 </div>
-{{ ui.card_close() }}
 {% endblock %}

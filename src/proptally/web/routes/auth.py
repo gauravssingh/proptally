@@ -328,27 +328,48 @@ def get_auth_router(
 
     # --- Invitations -----------------------------------------------------
 
-    @router.get("/auth/invite/{token}", response_class=HTMLResponse)
-    def invite_form(token: str, request: Request):
-        invite = find_invite(control_engine, token)
-        if invite is None:
-            return _render(
-                templates, request, "login.html",
-                {"error": "This invitation is invalid, already used, or has expired.",
-                 "email": "", "next_url": "/", "registration_open": registration_is_open(control_engine)},
-                csrf_token=issue_pre_session_csrf(request)[0],
-                set_cookie=issue_pre_session_csrf(request)[1],
-            )
+    def _render_invite(
+        request: Request,
+        token: str,
+        invite,
+        *,
+        error: Optional[str] = None,
+        display_name: str = "",
+    ):
+        """Render the invitation as its holder sees it.
+
+        Everything the page says about the invitation is read from the row here, so a
+        re-render after a refused attempt cannot lose the portfolio it is for.
+        """
         tenant = tenant_for(control_engine, invite.tenant_id)
         csrf_token, set_cookie = issue_pre_session_csrf(request)
         return _render(
             templates, request, "invite.html",
-            {"error": None, "token": token, "invite_email": invite.email, "invite_role": invite.role,
+            {"error": error, "token": token, "invite_email": invite.email,
+             "invite_role": invite.role,
              "invite_role_description": ROLE_DESCRIPTIONS.get(invite.role, ""),
              "invite_tenant_name": tenant.name if tenant else "this portfolio",
-             "display_name": "", "min_password_length": MIN_PASSWORD_LENGTH},
+             "invite_expires_at": invite.expires_at,
+             "display_name": display_name, "min_password_length": MIN_PASSWORD_LENGTH},
             csrf_token=csrf_token, set_cookie=set_cookie,
         )
+
+    def _invite_is_gone(request: Request):
+        """A spent, withdrawn or expired token lands on sign-in with the reason stated.
+
+        Rendered through _render_login so an unusable invitation reads like every other
+        failure, and so the pre-session CSRF cookie is issued exactly once: issuing it
+        twice on a cookie-less request renders one token beside a different cookie, and
+        the reader's next submission is then refused as expired.
+        """
+        return _render_login(request, error_kind="invite_dead")
+
+    @router.get("/auth/invite/{token}", response_class=HTMLResponse)
+    def invite_form(token: str, request: Request):
+        invite = find_invite(control_engine, token)
+        if invite is None:
+            return _invite_is_gone(request)
+        return _render_invite(request, token, invite)
 
     @router.post("/auth/invite/{token}")
     def invite_submit(
@@ -358,24 +379,15 @@ def get_auth_router(
         display_name: str = Form(""),
         csrf_token: str = Form(None),
     ):
-        csrf_token, set_cookie = issue_pre_session_csrf(request)
+        csrf_token, _ = issue_pre_session_csrf(request)
         invite = find_invite(control_engine, token)
         if invite is None:
-            return _render(
-                templates, request, "login.html",
-                {"error": "This invitation is invalid, already used, or has expired.",
-                 "email": "", "next_url": "/", "registration_open": registration_is_open(control_engine)},
-                csrf_token=csrf_token, set_cookie=set_cookie,
-            )
+            return _invite_is_gone(request)
         if not pre_session_csrf_valid(request, csrf_token):
-            return _render(
-                templates, request, "invite.html",
-                {"error": "Your form expired. Please try again.", "token": token,
-                 "invite_email": invite.email, "invite_role": invite.role,
-                 "invite_role_description": ROLE_DESCRIPTIONS.get(invite.role, ""),
-                 "invite_tenant_name": "", "display_name": display_name,
-                 "min_password_length": MIN_PASSWORD_LENGTH},
-                csrf_token=csrf_token, set_cookie=set_cookie,
+            return _render_invite(
+                request, token, invite,
+                error="Your form expired. Please try again.",
+                display_name=display_name,
             )
         try:
             user, tenant, _ = accept_invite(
@@ -383,14 +395,8 @@ def get_auth_router(
                 password=password, display_name=display_name,
             )
         except ValueError as exc:
-            return _render(
-                templates, request, "invite.html",
-                {"error": str(exc), "token": token, "invite_email": invite.email,
-                 "invite_role": invite.role,
-                 "invite_role_description": ROLE_DESCRIPTIONS.get(invite.role, ""),
-                 "invite_tenant_name": "", "display_name": display_name,
-                 "min_password_length": MIN_PASSWORD_LENGTH},
-                csrf_token=csrf_token, set_cookie=set_cookie,
+            return _render_invite(
+                request, token, invite, error=str(exc), display_name=display_name
             )
         session_token, _ = issue_session(
             control_engine, user, tenant.id,
