@@ -843,6 +843,25 @@ def issue_password_reset(control_engine: Engine, email: str) -> Optional[str]:
     return token
 
 
+def find_reset_token(control_engine: Engine, token: str) -> Optional[PasswordResetToken]:
+    """The live reset token matching this string, or ``None``.
+
+    Read-only, so a caller can tell a usable token from a dead one *before* the
+    change-password screen spends it. It answers only about the token presented:
+    nothing here distinguishes one account from another.
+    """
+    with Session(control_engine) as session:
+        row = session.exec(
+            select(PasswordResetToken).where(
+                PasswordResetToken.token_hash == token_digest(token)
+            )
+        ).first()
+        if row is None or row.used_at is not None or row.expires_at <= utc_now():
+            return None
+        session.expunge(row)
+        return row
+
+
 def consume_password_reset(control_engine: Engine, token: str, new_password: str) -> User:
     """Sets a new password from a single-use reset token and revokes all sessions."""
     ok, reason = password_is_acceptable(new_password)

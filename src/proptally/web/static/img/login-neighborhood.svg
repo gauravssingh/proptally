@@ -324,41 +324,41 @@
   <!-- 6. HIGHLIGHTED PORTFOLIO PROPERTY 3: SUBURBAN CRAFTSMAN BUNGALOW (RIGHT)  -->
   <!-- ========================================================================= -->
   <g id="highlighted-property-3-craftsman" filter="url(#activeHouseShadow)">
-    <rect x="962" y="446" width="204" height="114" fill="#9A8468"/>
-    <polygon points="1166,446 1184,458 1184,556 1166,560" fill="#6E5A44"/>
+    <rect x="962" y="446" width="204" height="114" fill="#C6AC8D"/>
+    <polygon points="1166,446 1184,458 1184,556 1166,560" fill="#9C8367"/>
 
-    <polygon points="948,452 992,402 1178,408 1192,456" fill="#4E3B30"/>
+    <polygon points="948,452 992,402 1178,408 1192,456" fill="#7A6152"/>
 
-    <polygon points="946,456 1062,386 1178,456" fill="#6E5444"/>
-    <polygon points="962,454 1062,394 1162,454" fill="#A99276"/>
-    <line x1="985" y1="440" x2="1139" y2="440" stroke="#8C765C" stroke-width="1.2"/>
-    <line x1="1008" y1="426" x2="1116" y2="426" stroke="#8C765C" stroke-width="1.2"/>
-    <line x1="1030" y1="412" x2="1094" y2="412" stroke="#8C765C" stroke-width="1.2"/>
+    <polygon points="946,456 1062,386 1178,456" fill="#8E7159"/>
+    <polygon points="962,454 1062,394 1162,454" fill="#D8C2A2"/>
+    <line x1="985" y1="440" x2="1139" y2="440" stroke="#B49A7A" stroke-width="1.2"/>
+    <line x1="1008" y1="426" x2="1116" y2="426" stroke="#B49A7A" stroke-width="1.2"/>
+    <line x1="1030" y1="412" x2="1094" y2="412" stroke="#B49A7A" stroke-width="1.2"/>
     <polyline points="946,456 1062,386 1178,456" fill="none" stroke="#F8FAFC" stroke-width="4.5" stroke-linejoin="round"/>
 
-    <rect x="1036" y="414" width="52" height="28" fill="#F8FAFC" stroke="#5A4234" stroke-width="1.5" rx="1"/>
+    <rect x="1036" y="414" width="52" height="28" fill="#F8FAFC" stroke="#7A6152" stroke-width="1.5" rx="1"/>
     <rect x="1039" y="417" width="12" height="22" fill="url(#activeWindowGrad)"/>
     <rect x="1054" y="417" width="16" height="22" fill="url(#activeWindowGrad)"/>
     <rect x="1073" y="417" width="12" height="22" fill="url(#activeWindowGrad)"/>
 
     <rect x="954" y="456" width="216" height="6" fill="#F8FAFC"/>
-    <rect x="958" y="462" width="208" height="8" fill="#5A4234"/>
+    <rect x="958" y="462" width="208" height="8" fill="#7A6152"/>
 
-    <rect x="984" y="478" width="38" height="42" fill="#F8FAFC" stroke="#5A4234" stroke-width="1.5"/>
+    <rect x="984" y="478" width="38" height="42" fill="#F8FAFC" stroke="#7A6152" stroke-width="1.5"/>
     <rect x="987" y="481" width="32" height="36" fill="url(#activeWindowGrad)"/>
     <line x1="1003" y1="481" x2="1003" y2="517" stroke="#F8FAFC" stroke-width="1.5"/>
     <line x1="987" y1="496" x2="1019" y2="496" stroke="#F8FAFC" stroke-width="1.5"/>
 
-    <rect x="1102" y="478" width="38" height="42" fill="#F8FAFC" stroke="#5A4234" stroke-width="1.5"/>
+    <rect x="1102" y="478" width="38" height="42" fill="#F8FAFC" stroke="#7A6152" stroke-width="1.5"/>
     <rect x="1105" y="481" width="32" height="36" fill="url(#activeWindowGrad)"/>
     <line x1="1121" y1="481" x2="1121" y2="517" stroke="#F8FAFC" stroke-width="1.5"/>
     <line x1="1105" y1="496" x2="1137" y2="496" stroke="#F8FAFC" stroke-width="1.5"/>
 
-    <rect x="1046" y="476" width="32" height="76" fill="#6E4730" stroke="#F8FAFC" stroke-width="1.8"/>
+    <rect x="1046" y="476" width="32" height="76" fill="#8A5F3C" stroke="#F8FAFC" stroke-width="1.8"/>
     <rect x="1052" y="482" width="20" height="16" fill="url(#activeWindowGrad)"/>
     <circle cx="1073" cy="518" r="2" fill="#FDE047"/>
 
-    <rect x="974" y="524" width="62" height="24" fill="#7D6752"/>
+    <rect x="974" y="524" width="62" height="24" fill="#A48B72"/>
     <g stroke="#E2E8F0" stroke-width="2">
       <line x1="982" y1="528" x2="982" y2="546"/>
       <line x1="990" y1="528" x2="990" y2="546"/>
@@ -367,7 +367,7 @@
       <line x1="1014" y1="528" x2="1014" y2="546"/>
       <line x1="1022" y1="528" x2="1022" y2="546"/>
     </g>
-    <rect x="1088" y="524" width="62" height="24" fill="#7D6752"/>
+    <rect x="1088" y="524" width="62" height="24" fill="#A48B72"/>
     <g stroke="#E2E8F0" stroke-width="2">
       <line x1="1098" y1="528" x2="1098" y2="546"/>
       <line x1="1106" y1="528" x2="1106" y2="546"/>
@@ -378,13 +378,13 @@
     </g>
 
     <polygon points="964,470 972,470 974,518 962,518" fill="#F8FAFC"/>
-    <rect x="958" y="518" width="20" height="38" fill="#8C7A6B" stroke="#5A4234" stroke-width="1"/>
+    <rect x="958" y="518" width="20" height="38" fill="#AB9A8B" stroke="#7A6152" stroke-width="1"/>
     <polygon points="1032,470 1040,470 1042,518 1030,518" fill="#F8FAFC"/>
-    <rect x="1026" y="518" width="20" height="38" fill="#8C7A6B" stroke="#5A4234" stroke-width="1"/>
+    <rect x="1026" y="518" width="20" height="38" fill="#AB9A8B" stroke="#7A6152" stroke-width="1"/>
     <polygon points="1084,470 1092,470 1094,518 1082,518" fill="#F8FAFC"/>
-    <rect x="1078" y="518" width="20" height="38" fill="#8C7A6B" stroke="#5A4234" stroke-width="1"/>
+    <rect x="1078" y="518" width="20" height="38" fill="#AB9A8B" stroke="#7A6152" stroke-width="1"/>
     <polygon points="1150,470 1158,470 1160,518 1148,518" fill="#F8FAFC"/>
-    <rect x="1144" y="518" width="20" height="38" fill="#8C7A6B" stroke="#5A4234" stroke-width="1"/>
+    <rect x="1144" y="518" width="20" height="38" fill="#AB9A8B" stroke="#7A6152" stroke-width="1"/>
 
     <rect x="1042" y="548" width="40" height="6" fill="#CBD5E1"/>
     <rect x="1038" y="554" width="48" height="6" fill="#94A3B8"/>

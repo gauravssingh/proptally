@@ -51,20 +51,36 @@
         });
     });
 
-    // Steps inside the same box (sign in ⇄ reset help). The control keeps its
-    // href, so with the script unavailable the link still reaches the standalone
-    // page; here it swaps panes instead and focuses the new heading.
+    // The two steps share one box, so switching them resizes it. Animate the
+    // box's height while the incoming step fades in, so the change reads as one
+    // movement rather than a jump. Falls back to an instant swap where the
+    // animation API is missing or the reader has asked for less motion.
+    var reduceMotion = window.matchMedia
+        && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
     document.querySelectorAll("[data-pane-toggle]").forEach(function (control) {
         control.addEventListener("click", function (event) {
             var host = document.querySelector("[data-panes]");
             if (!host) { return; }
             var wanted = control.getAttribute("data-pane-toggle");
             event.preventDefault();
+
+            var from = host.offsetHeight;
             host.querySelectorAll("[data-pane]").forEach(function (pane) {
                 pane.hidden = pane.getAttribute("data-pane") !== wanted;
             });
             var heading = host.querySelector('[data-pane="' + wanted + '"] [data-pane-heading]');
             if (heading) { heading.focus(); }
+
+            var to = host.offsetHeight;
+            if (reduceMotion || from === to || !host.animate) { return; }
+
+            host.style.overflow = "hidden";
+            var settle = function () { host.style.overflow = ""; };
+            host.animate(
+                [{ height: from + "px" }, { height: to + "px" }],
+                { duration: 260, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" }
+            ).finished.then(settle, settle);
         });
     });
 

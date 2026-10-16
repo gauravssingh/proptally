@@ -37,6 +37,26 @@ def test_public_reset_never_issues_a_token(owner):
             assert response.status_code == 405
 
 
+def test_a_pasted_token_reaches_the_change_password_screen(owner):
+    """The sign-in box cannot build a path segment, so the token arrives as a
+    query parameter and is forwarded to the canonical URL."""
+    account = owner(email="token-holder@example.com", password="token-holder-1")
+
+    with TestClient(account.app) as anonymous:
+        forwarded = anonymous.get(
+            "/auth/reset", params={"token": "tok_example"}, follow_redirects=False
+        )
+        assert forwarded.status_code == 303
+        assert forwarded.headers["location"] == "/auth/reset/tok_example"
+
+        # Nothing usable pasted: the instructions render and nothing redirects.
+        blank = anonymous.get(
+            "/auth/reset", params={"token": "   "}, follow_redirects=False
+        )
+        assert blank.status_code == 200
+        assert "Ask the installation operator" in blank.text
+
+
 def test_operator_cli_issues_a_link_the_account_holder_can_use(owner):
     account = owner(email="reset-target@example.com", password="before-reset-1")
     script = Path(__file__).resolve().parents[1] / "scripts" / "issue_password_reset.py"

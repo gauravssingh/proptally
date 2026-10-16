@@ -25,7 +25,7 @@
             <div class="flex items-center gap-3">
                 <span class="auth-mark">P</span>
                 <span>
-                    <span class="block text-xl font-bold tracking-tight text-slate-900">PropTally</span>
+                    <span class="block auth-wordmark font-bold text-slate-900">PropTally</span>
                     {% if instance_name != "PropTally" %}
                     <span class="auth-instance">
                         <span class="auth-instance__dot" aria-hidden="true"></span>
@@ -105,6 +105,27 @@
             <div class="auth-pane" data-pane="forgot" hidden>
                 <h2 class="auth-pane__title" tabindex="-1" data-pane-heading>Reset your password</h2>
                 <div class="mt-2">{% include "components/reset_help.html" %}</div>
+
+                {# A plain GET form: the box cannot build a path segment, so the token
+                   travels as ?token= and the server forwards it to /auth/reset/<token>.
+                   That keeps the step working with no script at all. #}
+                <form method="get" action="/auth/reset" class="auth-token">
+                    <label class="pt-field__label auth-label" for="reset-token">Reset token</label>
+                    <div class="auth-input">
+                        <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("lock", "md") }}</span>
+                        <input class="bg-white/95 backdrop-blur-xl border-2 border-white rounded-xl shadow-lg"
+                               type="text" id="reset-token" name="token"
+                               placeholder="Paste the token from your operator"
+                               autocomplete="one-time-code" autocapitalize="off" spellcheck="false">
+                    </div>
+                    <div class="auth-cta">
+                        <button type="submit" class="pt-btn pt-btn--block rounded-full">
+                            <span>Change password</span>
+                            <span class="auth-cta__arrow" aria-hidden="true">{{ ui.icon("arrow_right", "md") }}</span>
+                        </button>
+                    </div>
+                </form>
+
                 <div class="auth-notice mt-6">
                     <span><a class="auth-link" href="/auth/login" data-pane-toggle="signin">Back to sign in</a></span>
                 </div>

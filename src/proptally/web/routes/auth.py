@@ -164,6 +164,30 @@ def get_auth_router(
 
     # --- Sign in ---------------------------------------------------------
 
+    def _render_login(
+        request: Request,
+        *,
+        error: Optional[str] = None,
+        reset_error: Optional[str] = None,
+        pane: Optional[str] = None,
+        email: str = "",
+        next_url: str = "/",
+    ):
+        """Render the sign-in box, optionally on its reset step with a verdict."""
+        csrf_token, set_cookie = issue_pre_session_csrf(request)
+        return _render(
+            templates, request, "login.html",
+            {
+                "error": error,
+                "reset_error": reset_error,
+                "pane": pane,
+                "email": email,
+                "next_url": next_url,
+                "registration_open": registration_is_open(control_engine),
+            },
+            csrf_token=csrf_token, set_cookie=set_cookie,
+        )
+
     @router.get("/auth/login", response_class=HTMLResponse)
     def login_form(request: Request, next: Optional[str] = None):
         try:
@@ -174,13 +198,7 @@ def get_auth_router(
             context = None
         if context is not None:
             return RedirectResponse(url=_safe_next(next), status_code=303)
-        csrf_token, set_cookie = issue_pre_session_csrf(request)
-        return _render(
-            templates, request, "login.html",
-            {"error": None, "email": "", "next_url": _safe_next(next),
-             "registration_open": registration_is_open(control_engine)},
-            csrf_token=csrf_token, set_cookie=set_cookie,
-        )
+        return _render_login(request, next_url=_safe_next(next))
 
     @router.post("/auth/login")
     def login_submit(
@@ -396,13 +414,47 @@ def get_auth_router(
 
     @router.get("/auth/reset", response_class=HTMLResponse)
     def reset_form(request: Request):
-        """Explains how to request an operator-issued reset link.
+        """Explains how to get a reset token, for a reader who arrived here directly.
 
         Reset tokens are never issued to an unauthenticated web requester: this
-        self-hosted deployment has no mailer, so the operator creates the one-time link
-        locally and hands it to the verified account holder out of band.
+        self-hosted deployment has no mailer, so the installation operator creates the
+        one-time link locally and hands it to the account holder out of band.
         """
         return templates.TemplateResponse(request=request, name="reset.html", context={})
+
+    @router.post("/auth/reset/token", response_class=HTMLResponse)
+    def reset_token_submit(
+        request: Request,
+        token: str = Form(""),
+        csrf_token: str = Form(None),
+    ):
+        """Check a pasted reset token, then hand the holder to the change-password screen.
+
+        A form cannot build a path segment, so the token arrives as a field: a live one
+        is forwarded to ``/auth/reset/<token>``, a dead one keeps the reader on the step
+        with the reason. Neither answer says anything about any account.
+        """
+        if not pre_session_csrf_valid(request, csrf_token):
+            return _render_login(
+                request,
+                pane="forgot",
+                reset_error="Your form expired. Please try again.",
+            )
+
+        presented = token.strip()
+        if presented and find_reset_token(control_engine, presented) is not None:
+            return RedirectResponse(
+                url="/auth/reset/" + urllib.parse.quote(presented, safe=""),
+                status_code=303,
+            )
+        return _render_login(
+            request,
+            pane="forgot",
+            reset_error=(
+                "That token is not valid." if presented
+                else "Enter the token your installation operator gave you."
+            ),
+        )
 
 
     @router.get("/auth/reset/{token}", response_class=HTMLResponse)

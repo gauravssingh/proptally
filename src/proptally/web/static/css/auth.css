@@ -40,10 +40,18 @@
 /* --------------------------------------------------------------------------
    2. Type utilities
    -------------------------------------------------------------------------- */
-.text-xl { font-size: 1.25rem; line-height: 1.75rem; }
 .font-bold { font-weight: 700; }
-.tracking-tight { letter-spacing: -0.015em; }
 .text-slate-900 { color: #0f172a; }
+
+/* One scale for the whole box, declared here rather than per element:
+   wordmark 19 / pane heading 20 / field and action text 14 / supporting copy 13
+   / labels and links 12. Sizes are set on named classes so a shared partial
+   keeps the design system's own sizing on its standalone page. */
+.auth-wordmark {
+    font-size: 1.1875rem;
+    line-height: 1.5rem;
+    letter-spacing: -0.02em;
+}
 
 /* --------------------------------------------------------------------------
    3. Surface utilities: frosted fields, pill labels, CTA
@@ -125,25 +133,36 @@
 }
 
 @media (min-width: 1024px) {
-    .auth-scene { display: block; }
+    /* Fixed rather than absolute: the reset step makes the box tall enough to
+       overflow a short window, and a scrolling page must not drag the scene
+       with it. */
+    .auth-scene {
+        display: block;
+        position: fixed;
+    }
 
     .auth-root {
         background-image: none;
-        overflow: hidden;
+        /* Fits: no scrollbar. Too tall: the box stays reachable. */
+        overflow: hidden auto;
     }
 
-    /* Dead centre of the frame, and therefore of the scene's halo: the ellipse
-       is at x=720, y=365 of a 1440x900 viewBox, which is 50% / 40.6%. */
+    /* The box's centre lands on the scene's halo (y=365 of 900 = 40.6%), which a
+       container spanning 0..81.2dvh and centring its child achieves exactly.
+       `safe center` is what keeps a tall step honest: when the box is taller
+       than that band the browser aligns it to the top instead of letting it run
+       off the top edge, and the root's scroll area covers the remainder. */
     .auth-panel {
-        display: block;
-        min-height: 0;
-        padding: 0;
         position: absolute;
-        left: 50%;
-        top: 40.6%;
-        transform: translate(-50%, -50%);
-        width: 100%;
-        max-width: 24rem;
+        inset: 0 0 auto 0;
+        height: 81.2dvh;
+        /* The mobile rule's min-height would otherwise win, and the box would
+           centre in the viewport instead of on the halo. */
+        min-height: 0;
+        display: flex;
+        align-items: safe center;
+        justify-content: center;
+        padding: 0 1.5rem;
     }
 }
 
@@ -187,11 +206,26 @@
    -------------------------------------------------------------------------- */
 .auth-pane[hidden] { display: none; }
 
+/* The incoming step fades up while the box animates its height (see the pane
+   script in auth_base.html). One movement, no jump. */
+@keyframes authPaneIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+}
+
+.auth-pane:not([hidden]) {
+    animation: authPaneIn 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .auth-pane:not([hidden]) { animation: none; }
+}
+
 .auth-pane__title {
     margin-top: 1.5rem;
     color: #0f172a;
     font-size: 1.25rem;
-    line-height: 1.75rem;
+    line-height: 1.625rem;
     font-weight: 700;
     letter-spacing: -0.015em;
 }
@@ -202,14 +236,70 @@
     border-radius: 0.25rem;
 }
 
+/* Supporting copy inside the box: one step up from the design system's caption
+   size with a readable measure, and one step down in weight from the heading. */
+.auth-pane p {
+    margin: 0.25rem 0 0;
+    color: #475569;
+    font-size: 0.8125rem;
+    line-height: 1.375rem;
+}
+
+/* The operator's command and the two steps. Wraps at spaces only: a mid-token
+   break made `scripts/issue_password_reset.py` unreadable in a 24rem box. */
+.auth-steps {
+    display: grid;
+    gap: 0.375rem;
+    margin: 0.5rem 0 0;
+    padding-left: 1.125rem;
+    color: #475569;
+    font-size: 0.8125rem;
+    line-height: 1.375rem;
+}
+
+.auth-steps li::marker {
+    color: #94a3b8;
+    font-weight: 600;
+}
+
+.auth-steps code {
+    display: block;
+    margin-top: 0.25rem;
+    padding: 0.375rem 0.5rem;
+    border-radius: 0.375rem;
+    background-color: rgba(15, 23, 42, 0.06);
+    color: #1e293b;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.6875rem;
+    line-height: 1.125rem;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
+.auth-pane .pt-alert {
+    margin-top: 0.75rem;
+    font-size: 0.75rem;
+    line-height: 1.25rem;
+}
+
+.auth-pane .pt-alert__title { letter-spacing: 0; }
+
+/* The token step: the field, then the action that spends it. */
+.auth-token {
+    margin-top: 1.25rem;
+}
+
+.auth-token .auth-cta { margin-top: 0.75rem; }
+
 /* --------------------------------------------------------------------------
    7. Fields: frosted, one leading icon each
    -------------------------------------------------------------------------- */
 .auth-form .pt-field__label {
-    color: #1e293b;
+    color: #334155;
     font-size: 0.75rem;
     line-height: 1rem;
     font-weight: 600;
+    letter-spacing: 0.01em;
 }
 
 /* Plain label text on the box. It carried a white pill while the form sat
@@ -238,7 +328,8 @@
     min-height: 2.75rem;
     padding: 0.5rem 0.875rem 0.5rem 2.375rem;
     color: #0f172a;
-    font-size: 0.9375rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
     transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
 }
 
