@@ -22,7 +22,6 @@ rejected submission leaves the portfolio exactly as it was.
 """
 
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -58,17 +57,28 @@ from proptally.domain.accounting.opening_balances import (
     OpeningAccountBalance,
     record_opening_balances,
 )
-from proptally.domain.transactions.suggest import seed_vendor_rules
+from proptally.domain.transactions.suggest import DEFAULT_VENDOR_RULES
 from proptally.web.auth import AuthorizationError, current_context
-
-#: Property classes the owner may choose between. A rental door is a Schedule E
-#: asset and a primary residence is not, and the reporting engine treats them
-#: differently everywhere, so the choice is explicit rather than defaulted.
-PROPERTY_TYPE_OPTIONS = [
-    {"value": "RENTAL_INVESTMENT", "label": "Rental investment property (Schedule E)"},
-    {"value": "PRIMARY_RESIDENCE", "label": "Primary residence (non-operating)"},
-]
-PROPERTY_TYPES = tuple(option["value"] for option in PROPERTY_TYPE_OPTIONS)
+from proptally.web.form_parsing import (
+    FormError as _FormError,
+    cents as _cents,
+    choice as _choice,
+    clean as _clean,
+    day as _day,
+    flag as _flag,
+    months as _months,
+    new_id as _new_id,
+    optional_choice as _optional_choice,
+    rate_bps as _rate_bps,
+    required as _required,
+)
+from proptally.web.property_forms import (
+    PROPERTY_TYPE_OPTIONS,
+    address_tuple,
+    apply_property_location,
+    property_from_form,
+    record_property_valuation,
+)
 
 #: Account classes. A MORTGAGE account is the servicing front end of a loan: the
 #: debt, clearing and escrow ledger accounts belong to the LoanAccount, so the
@@ -81,6 +91,14 @@ ACCOUNT_TYPE_OPTIONS = [
 ]
 ACCOUNT_TYPES = tuple(option["value"] for option in ACCOUNT_TYPE_OPTIONS)
 MORTGAGE_ACCOUNT_TYPE = "MORTGAGE"
+
+#: Whether the owner should expect the rate to change. The rate itself is the
+#: current_interest_rate_bps field on the loan.
+LOAN_RATE_TYPE_OPTIONS = [
+    {"value": "FIXED", "label": "Fixed rate"},
+    {"value": "ARM", "label": "Adjustable rate (ARM)"},
+]
+LOAN_RATE_TYPES = tuple(option["value"] for option in LOAN_RATE_TYPE_OPTIONS)
 
 MIXED_USE_OPTIONS = [
     {"value": "UNCLASSIFIED", "label": "Unclassified — usage unknown (the safe default)"},
@@ -105,95 +123,6 @@ CATEGORY_OPTIONS = [
 CATEGORIES = tuple(option["value"] for option in CATEGORY_OPTIONS)
 
 
-class _FormError(ValueError):
-    """A rejected submission, reported on the setup screen instead of as an error page."""
-
-
-# --- Parsing ---------------------------------------------------------------
-
-def _clean(value) -> str:
-    return (value or "").strip()
-
-
-def _cents(value, label: str) -> Optional[int]:
-    """Form money ("1,234.56", "$1234.56") as integer cents; blank means "not set"."""
-    text = _clean(value).replace("$", "").replace(",", "")
-    if not text:
-        return None
-    try:
-        amount = Decimal(text)
-    except InvalidOperation:
-        raise _FormError(f"{label}: {value!r} is not a money amount.")
-    return int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-
-
-def _day(value, label: str) -> Optional[date]:
-    """Form date as ``date``; blank means "not set"."""
-    text = _clean(value)
-    if not text:
-        return None
-    try:
-        return date.fromisoformat(text)
-    except ValueError:
-        raise _FormError(f"{label}: {value!r} is not a date.")
-
-
-def _months(value, label: str) -> int:
-    text = _clean(value)
-    if not text:
-        return 360
-    try:
-        months = int(text)
-    except ValueError:
-        raise _FormError(f"{label}: {value!r} is not a whole number of months.")
-    if months <= 0:
-        raise _FormError(f"{label} must be a positive number of months.")
-    return months
-
-
-def _rate_bps(value, label: str) -> Optional[int]:
-    """A percentage as typed ("3.125") into the stored thousandths of a percent."""
-    text = _clean(value).replace("%", "")
-    if not text:
-        return None
-    try:
-        rate = Decimal(text)
-    except InvalidOperation:
-        raise _FormError(f"{label}: {value!r} is not an interest rate.")
-    if rate < 0:
-        raise _FormError(f"{label} cannot be negative.")
-    return int((rate * 1000).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-
-
-def _required(value, label: str) -> str:
-    text = _clean(value)
-    if not text:
-        raise _FormError(f"{label} is required.")
-    return text
-
-
-def _choice(value, allowed: tuple, label: str) -> str:
-    text = _clean(value)
-    if text not in allowed:
-        raise _FormError(f"{label} must be one of: {', '.join(allowed)}.")
-    return text
-
-
-def _optional_choice(value, allowed: tuple, label: str) -> Optional[str]:
-    text = _clean(value)
-    if not text:
-        return None
-    return _choice(text, allowed, label)
-
-
-def _flag(value) -> bool:
-    return _clean(value).lower() in {"true", "1", "yes", "on"}
-
-
-def _new_id(prefix: str) -> str:
-    return f"{prefix}_{uuid4().hex[:12]}"
-
-
 # --- Application helpers ---------------------------------------------------
 
 def _require_mutation() -> None:
@@ -212,6 +141,26 @@ def _redirect(**params: str) -> RedirectResponse:
     """Back to the setup screen, carrying at most one message."""
     query = urlencode({key: value for key, value in params.items() if value})
     return RedirectResponse(url=f"/settings?{query}" if query else "/settings", status_code=303)
+
+
+def _return_target(form) -> str:
+    """Where a submitted setup form goes back to.
+
+    The guided wizard sets ``return_to=/setup``; every other caller gets the
+    management screen. Only paths under /setup are accepted, so a crafted form
+    cannot turn this into an open redirect.
+    """
+    target = _clean(form.get("return_to"))
+    if target == "/setup" or target.startswith("/setup/"):
+        return target
+    return "/settings"
+
+
+def _redirect_for(form, **params: str) -> RedirectResponse:
+    """Redirect to the form's return target, carrying at most one message."""
+    target = _return_target(form)
+    query = urlencode({key: value for key, value in params.items() if value})
+    return RedirectResponse(url=f"{target}?{query}" if query else target, status_code=303)
 
 
 def _find_or_404(session: Session, model, entity_id: str, label: str):
@@ -426,6 +375,7 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
                 "property_type_options": PROPERTY_TYPE_OPTIONS,
                 "account_type_options": ACCOUNT_TYPE_OPTIONS,
                 "mixed_use_options": MIXED_USE_OPTIONS,
+                "loan_rate_type_options": LOAN_RATE_TYPE_OPTIONS,
                 "category_options": CATEGORY_OPTIONS,
                 "review_count": review_count,
                 "message": request.query_params.get("message"),
@@ -440,20 +390,22 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
         _require_mutation()
         form = await request.form()
         try:
-            prop = _property_from_form(session, form, Property(
+            prop = Property(
                 id=_new_id("prop"), name="", address_line1="", city="", zip_code="",
-            ))
+            )
+            property_from_form(session, form, prop)
+            apply_property_location(prop, form)
             session.add(prop)
             session.flush()
             # The door's fixed-asset ledger account, allocated before any journal
             # line can reference it.
             ensure_entity_ledger_accounts(session)
-            _record_valuation(session, prop, form)
+            record_property_valuation(session, prop, form)
             session.commit()
         except _FormError as exc:
             session.rollback()
-            return _redirect(error=str(exc))
-        return _redirect(message=f"Property {prop.name} created.")
+            return _redirect_for(form, error=str(exc))
+        return _redirect_for(form, message=f"Property {prop.name} created.")
 
     @router.post("/properties/{property_id}/edit", dependencies=mounted)
     async def edit_property(
@@ -461,73 +413,27 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
     ):
         _require_mutation()
         prop = _find_or_404(session, Property, property_id, "Property")
+        previous_address = address_tuple(prop)
+        previous_place_id = prop.google_place_id
         form = await request.form()
         try:
-            _property_from_form(session, form, prop)
+            property_from_form(session, form, prop)
+            apply_property_location(
+                prop,
+                form,
+                previous_address=previous_address,
+                previous_place_id=previous_place_id,
+            )
             session.add(prop)
             session.flush()
             # A door created before this screen existed still needs its ledger account.
             ensure_entity_ledger_accounts(session)
-            _record_valuation(session, prop, form)
+            record_property_valuation(session, prop, form)
             session.commit()
         except _FormError as exc:
             session.rollback()
             return _redirect(error=str(exc))
         return _redirect(message=f"Property {prop.name} updated.")
-
-    def _property_from_form(session: Session, form, prop: Property) -> Property:
-        """Applies the shared property fields. Raises before anything is written."""
-        name = _required(form.get("name"), "Property name")
-        address_line1 = _required(form.get("address_line1"), "Street address")
-        city = _required(form.get("city"), "City")
-        property_type = _choice(form.get("property_type"), PROPERTY_TYPES, "Property type")
-        acquisition_date = _day(form.get("acquisition_date"), "Acquisition date")
-        purchase_price_cents = _cents(form.get("purchase_price"), "Purchase price")
-        land_basis_cents = _cents(form.get("land_basis"), "Land basis")
-        building_basis_cents = _cents(form.get("building_basis"), "Building basis")
-        # Valuation is parsed here too, so a bad value cannot be discovered after
-        # the property has already been committed by the allocator.
-        _cents(form.get("current_valuation"), "Current valuation")
-        _day(form.get("valuation_date"), "Valuation date")
-
-        prop.name = name
-        prop.address_line1 = address_line1
-        prop.address_line2 = _clean(form.get("address_line2")) or None
-        prop.city = city
-        prop.state = _clean(form.get("state")) or "IL"
-        prop.zip_code = _clean(form.get("zip_code"))
-        prop.property_type = property_type
-        prop.acquisition_date = acquisition_date
-        prop.purchase_price_cents = purchase_price_cents
-        prop.land_basis_cents = land_basis_cents
-        prop.building_basis_cents = building_basis_cents
-        prop.short_label = _clean(form.get("short_label")) or None
-        return prop
-
-    def _record_valuation(session: Session, prop: Property, form) -> None:
-        """Records the owner's stated current value as a manual valuation."""
-        value_cents = _cents(form.get("current_valuation"), "Current valuation")
-        if value_cents is None:
-            return
-        valuation_day = _day(form.get("valuation_date"), "Valuation date") or date.today()
-        latest = session.exec(
-            select(PropertyValuation)
-            .where(PropertyValuation.property_id == prop.id)
-            .order_by(PropertyValuation.valuation_date.desc())
-        ).first()
-        if latest is not None and latest.valuation_date == valuation_day:
-            latest.estimated_value_cents = value_cents
-            latest.valuation_source = "CLIENT_MANUAL"
-            session.add(latest)
-            return
-        session.add(PropertyValuation(
-            id=_new_id("val"),
-            property_id=prop.id,
-            valuation_date=valuation_day,
-            estimated_value_cents=value_cents,
-            valuation_source="CLIENT_MANUAL",
-            notes="Owner-declared value from the portfolio setup screen",
-        ))
 
     # --- Accounts ---------------------------------------------------------
 
@@ -549,8 +455,8 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
             session.commit()
         except _FormError as exc:
             session.rollback()
-            return _redirect(error=str(exc))
-        return _redirect(message=f"Account {account.account_name} created.")
+            return _redirect_for(form, error=str(exc))
+        return _redirect_for(form, message=f"Account {account.account_name} created.")
 
     @router.post("/accounts/{account_id}/edit", dependencies=mounted)
     async def edit_account(
@@ -581,6 +487,30 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
             form.get("mixed_use_status"), MIXED_USE_STATUSES, "Mixed-use status"
         ) or "UNCLASSIFIED"
         institution = _institution_for(session, form.get("institution_name"))
+
+        # Two rows for the same account double-count cash or debt. A masked number
+        # is the strongest key; when neither row has one, the account name is the
+        # only available key, and a duplicate name at the same institution and type
+        # is refused rather than silently creating a second "Checking".
+        for other in session.exec(
+            select(FinancialAccount).where(
+                FinancialAccount.id != account.id,
+                FinancialAccount.institution_id == institution.id,
+                FinancialAccount.account_type == account_type,
+            )
+        ).all():
+            other_masked = _clean(other.account_number_masked)
+            if masked and other_masked:
+                if masked.casefold() == other_masked.casefold():
+                    raise _FormError(
+                        f"An account with this number already exists at {institution.name}."
+                    )
+            elif not masked and not other_masked:
+                if account_name.casefold() == other.account_name.casefold():
+                    raise _FormError(
+                        f"An account named {account_name} already exists at "
+                        f"{institution.name}. Add the masked number to distinguish them."
+                    )
 
         account.institution_id = institution.id
         account.account_name = account_name
@@ -624,6 +554,7 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
         origination_date = _day(form.get("origination_date"), "Origination date")
         original_principal_cents = _cents(form.get("original_principal"), "Original principal")
         term_months = _months(form.get("term_months"), "Loan term")
+        rate_type = _choice(form.get("rate_type") or "FIXED", LOAN_RATE_TYPES, "Rate type")
         rate_bps = _rate_bps(form.get("interest_rate"), "Interest rate")
 
         account.institution_id = institution.id
@@ -636,6 +567,7 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
         loan.origination_date = origination_date
         loan.original_principal_cents = original_principal_cents
         loan.term_months = term_months
+        loan.rate_type = rate_type
         loan.current_interest_rate_bps = rate_bps
         session.add(account)
         session.add(loan)
@@ -684,11 +616,11 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
             session.commit()
         except _FormError as exc:
             session.rollback()
-            return _redirect(error=str(exc))
+            return _redirect_for(form, error=str(exc))
         except PropTallyError as exc:
             session.rollback()
-            return _redirect(error=str(exc))
-        return _redirect(message=f"Mortgage loan {loan.loan_number} created.")
+            return _redirect_for(form, error=str(exc))
+        return _redirect_for(form, message=f"Mortgage loan {loan.loan_number} created.")
 
     @router.post("/mortgages/{loan_id}/edit", dependencies=mounted)
     async def edit_mortgage(
@@ -761,11 +693,11 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
             )
         except _FormError as exc:
             session.rollback()
-            return _redirect(error=str(exc))
+            return _redirect_for(form, error=str(exc))
         except PropTallyError as exc:
             session.rollback()
-            return _redirect(error=str(exc))
-        return _redirect(message=f"Opening balances recorded as at {as_of.isoformat()}.")
+            return _redirect_for(form, error=str(exc))
+        return _redirect_for(form, message=f"Opening balances recorded as at {as_of.isoformat()}.")
 
     # --- Vendor rules -----------------------------------------------------
 
@@ -776,6 +708,16 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
         form = await request.form()
         try:
             pattern = _required(form.get("pattern"), "Match pattern")
+            # A seeded default may be overridden once by the owner's own rule; a
+            # second owner-defined rule with the same pattern is a duplicate.
+            default_ids = {rule["id"] for rule in DEFAULT_VENDOR_RULES}
+            for existing in session.exec(select(VendorRule)).all():
+                if existing.id in default_ids:
+                    continue
+                if existing.pattern.strip().casefold() == pattern.casefold():
+                    raise _FormError(
+                        f"A rule matching {pattern!r} already exists in this portfolio."
+                    )
             property_id = _clean(form.get("default_property_id")) or None
             if property_id is not None and session.get(Property, property_id) is None:
                 raise _FormError("The rule's target property is not in this portfolio.")

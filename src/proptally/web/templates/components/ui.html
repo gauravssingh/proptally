@@ -189,6 +189,14 @@
     "awaiting_data":("neutral", "AWAITING DATA","No records ingested for this period yet."),
 } %}
 
+{% macro progress(value, label="Progress") -%}
+<div class="pt-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+     aria-valuenow="{{ value }}" aria-label="{{ label }}">
+    <div class="pt-progress__bar" style="width: {{ value }}%"></div>
+</div>
+{%- endmacro %}
+
+
 {% macro evidence(kind, label=None, title=None, upper=true) -%}
 {%- set spec = _EVIDENCE.get(kind, ("neutral", kind | upper, None)) -%}
 {{- badge(label or spec[1], variant=spec[0], upper=upper, mono=true, title=(title or spec[2])) -}}
@@ -246,14 +254,14 @@
 {# ---------------------------------------------------------------------------
    C1/C2. Page header and section
    --------------------------------------------------------------------------- #}
-{% macro page_header(title, subtitle=None, meta=None) -%}
+{% macro page_header(title, subtitle=None, meta=None, subtitle_cls="") -%}
 <div class="pt-page-header">
     <div class="pt-page-header__main">
         <div class="pt-page-header__title-row">
             <h1>{{ title }}</h1>
             {%- if meta %}{{ meta | safe }}{% endif -%}
         </div>
-        {%- if subtitle %}<p class="pt-page-header__subtitle">{{ subtitle }}</p>{% endif -%}
+        {%- if subtitle %}<p class="pt-page-header__subtitle {{ subtitle_cls }}">{{ subtitle }}</p>{% endif -%}
     </div>
     {%- set actions = caller() if caller else "" -%}
     {%- if actions | trim %}<div class="pt-page-header__actions">{{ actions | safe }}</div>{% endif -%}

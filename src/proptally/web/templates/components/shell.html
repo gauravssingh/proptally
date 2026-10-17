@@ -75,7 +75,13 @@
 
 
 {% macro mode_badge() -%}
-{{ ui.badge("LIVE", variant="accent", upper=true, title="Real portfolio data on this host") }}
+{% if portfolio_is_draft() %}
+{{ ui.badge("DRAFT", variant="warning", upper=true,
+            title="Portfolio setup is in progress; publish when ready") }}
+{% else %}
+{{ ui.badge("LIVE", variant="accent", upper=true,
+            title="Portfolio is published") }}
+{% endif %}
 {%- endmacro %}
 
 
@@ -341,6 +347,11 @@
     window.PT.openModal = function (id, focusSelector) {
         var modal = document.getElementById(id);
         if (!modal) return;
+        if (modal._closeTimer) {
+            window.clearTimeout(modal._closeTimer);
+            modal._closeTimer = null;
+        }
+        modal.classList.remove('is-closing');
         modal._returnFocus = document.activeElement;
         modal.hidden = false;
         openStack.push(modal);
@@ -352,12 +363,34 @@
 
     window.PT.closeModal = function (id) {
         var modal = id ? document.getElementById(id) : openStack[openStack.length - 1];
-        if (!modal) return;
-        modal.hidden = true;
-        openStack = openStack.filter(function (m) { return m !== modal; });
-        if (modal._returnFocus && document.contains(modal._returnFocus)) {
-            modal._returnFocus.focus();
-        }
+        if (!modal || modal.hidden || modal.classList.contains('is-closing')) return;
+
+        var finish = function () {
+            if (modal._closeTimer) {
+                window.clearTimeout(modal._closeTimer);
+                modal._closeTimer = null;
+            }
+            modal.hidden = true;
+            modal.classList.remove('is-closing');
+            openStack = openStack.filter(function (m) { return m !== modal; });
+            if (modal._returnFocus && document.contains(modal._returnFocus)) {
+                modal._returnFocus.focus();
+            }
+        };
+
+        modal.classList.add('is-closing');
+        var onEnd = function (event) {
+            if (!modal.contains(event.target)) return;
+            modal.removeEventListener('animationend', onEnd);
+            finish();
+        };
+        modal.addEventListener('animationend', onEnd);
+        // Reduced motion, a background tab, or a browser that skips the animation
+        // must not leave the modal stuck on screen.
+        modal._closeTimer = window.setTimeout(function () {
+            modal.removeEventListener('animationend', onEnd);
+            if (modal.classList.contains('is-closing')) finish();
+        }, 260);
     };
 
     document.addEventListener('click', function (event) {

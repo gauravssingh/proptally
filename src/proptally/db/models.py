@@ -28,9 +28,25 @@ class Property(SQLModel, table=True):
     purchase_price_cents: Optional[int] = None
     land_basis_cents: Optional[int] = None
     building_basis_cents: Optional[int] = None
+    # Acquisition costs entered by the owner or read from a closing statement.
+    down_payment_cents: Optional[int] = None
+    closing_costs_cents: Optional[int] = None
+    furnishing_costs_cents: Optional[int] = None
     is_active: bool = Field(default=True)
     description: Optional[str] = Field(default=None)
     google_maps_url: Optional[str] = Field(default=None)
+    #: Google Places identifier for the confirmed location. Place IDs may be cached
+    #: indefinitely, so the map preview and the Google Maps link depend on this rather
+    #: than on coordinates, which Google permits us to cache for only 30 days.
+    google_place_id: Optional[str] = Field(default=None)
+    #: How the address was established: MANUAL (typed, no Google location attached)
+    #: or GOOGLE (a Places suggestion was selected and confirmed).
+    address_source: str = Field(default="MANUAL")
+    #: Coordinates are a cache, not the property record. They are written when a
+    #: suggestion is selected, and are only exposed while less than 30 days old.
+    latitude: Optional[float] = Field(default=None)
+    longitude: Optional[float] = Field(default=None)
+    location_cached_at: Optional[datetime] = Field(default=None)
     cover_photo_id: Optional[str] = Field(default=None)
     # The property's fixed-asset ledger account. Allocated on creation by
     # domain.accounting.coa; readers use it instead of assuming a code per door.
@@ -39,6 +55,28 @@ class Property(SQLModel, table=True):
     # from the street address rather than matching on the property's id.
     short_label: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class PortfolioSetup(SQLModel, table=True):
+    """Where the owner is in the guided portfolio setup.
+
+    Completion itself is derived from the portfolio's data, never stored here: a
+    stored "done" tick would lie after a property or account was removed. This row
+    only remembers intent that cannot be inferred -- which optional steps the owner
+    explicitly skipped -- and marks a portfolio as enrolled in the guided flow.
+    """
+
+    __tablename__ = "portfolio_setup"
+
+    id: str = Field(primary_key=True, default="portfolio")
+    #: Comma-separated step keys the owner explicitly skipped (currently only
+    #: ``mortgage``). An empty string means no step has been skipped.
+    skipped_steps: str = Field(default="")
+    #: When the owner published the portfolio. ``None`` is the draft stage:
+    #: setup and data entry continue, and the dashboard says so.
+    published_at: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
 
 class PropertyPhoto(SQLModel, table=True):
@@ -130,6 +168,9 @@ class LoanAccount(SQLModel, table=True):
     origination_date: Optional[date] = None
     original_principal_cents: Optional[int] = None
     term_months: int = Field(default=360)
+    # FIXED or ARM. The rate itself is stored in current_interest_rate_bps; this
+    # says whether the owner should expect it to change.
+    rate_type: str = Field(default="FIXED")
     # Legacy field name; stored in thousandths of a percent (2500 = 2.500%).
     current_interest_rate_bps: Optional[int] = None
     is_active: bool = Field(default=True)

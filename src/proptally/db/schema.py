@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import CheckConstraint, MetaData, text
 from sqlalchemy.schema import CreateIndex, CreateTable
-from sqlmodel import Session, SQLModel
+from sqlmodel import Session, SQLModel, select
 
 # Import for the registration side effect: create_all() and the migrations below
 # read SQLModel.metadata, which is empty unless the models have been imported.
@@ -159,6 +159,56 @@ COLUMN_MIGRATIONS = [
         "properties",
         "google_maps_url",
         _sql("ALTER TABLE properties ADD COLUMN google_maps_url TEXT"),
+    ),
+    (
+        "properties",
+        "google_place_id",
+        _sql("ALTER TABLE properties ADD COLUMN google_place_id TEXT"),
+    ),
+    (
+        "properties",
+        "address_source",
+        _sql("ALTER TABLE properties ADD COLUMN address_source VARCHAR NOT NULL DEFAULT 'MANUAL'"),
+    ),
+    (
+        "properties",
+        "latitude",
+        _sql("ALTER TABLE properties ADD COLUMN latitude REAL"),
+    ),
+    (
+        "properties",
+        "longitude",
+        _sql("ALTER TABLE properties ADD COLUMN longitude REAL"),
+    ),
+    (
+        "properties",
+        "location_cached_at",
+        _sql("ALTER TABLE properties ADD COLUMN location_cached_at TIMESTAMP"),
+    ),
+    (
+        "properties",
+        "down_payment_cents",
+        _sql("ALTER TABLE properties ADD COLUMN down_payment_cents INTEGER"),
+    ),
+    (
+        "properties",
+        "closing_costs_cents",
+        _sql("ALTER TABLE properties ADD COLUMN closing_costs_cents INTEGER"),
+    ),
+    (
+        "properties",
+        "furnishing_costs_cents",
+        _sql("ALTER TABLE properties ADD COLUMN furnishing_costs_cents INTEGER"),
+    ),
+    (
+        "loan_accounts",
+        "rate_type",
+        _sql("ALTER TABLE loan_accounts ADD COLUMN rate_type VARCHAR NOT NULL DEFAULT 'FIXED'"),
+    ),
+    (
+        "portfolio_setup",
+        "published_at",
+        _sql("ALTER TABLE portfolio_setup ADD COLUMN published_at TIMESTAMP"),
     ),
     (
         "properties",
@@ -373,6 +423,25 @@ def _migrate_constraints(engine) -> int:
     return len(needing)
 
 
+def _create_portfolio_setup(engine) -> int:
+    """Creates the guided-setup state table and enrolls empty portfolios.
+
+    New portfolios get the table from ``create_all``. An existing portfolio with
+    doors is deliberately not enrolled: its owner is not retroactively sent back
+    through onboarding. An empty portfolio is enrolled because it has nothing to
+    manage yet.
+    """
+    from proptally.db.models import PortfolioSetup, Property
+
+    SQLModel.metadata.create_all(engine, tables=[PortfolioSetup.__table__])
+    with Session(engine) as session:
+        if session.exec(select(Property)).first() is None:
+            if session.get(PortfolioSetup, "portfolio") is None:
+                session.add(PortfolioSetup(id="portfolio"))
+                session.commit()
+    return 1
+
+
 def _migrate_vendor_rules(engine) -> int:
     """Creates vendor_rules table if not present and seeds standard rules."""
     from proptally.domain.transactions.suggest import seed_vendor_rules
@@ -437,6 +506,10 @@ SCHEMA_MIGRATIONS = (
     (101, "add per-entity ledger account code columns", lambda engine: _apply(engine, _migrate_columns)),
     (102, "allocate per-entity ledger accounts", _allocate_entity_ledger_accounts),
     (103, "add reviewer identity columns to posting authorizations", lambda engine: _apply(engine, _migrate_columns)),
+    (104, "create portfolio setup table", _create_portfolio_setup),
+    (105, "add property location columns", lambda engine: _apply(engine, _migrate_columns)),
+    (106, "add portfolio setup publish state", lambda engine: _apply(engine, _migrate_columns)),
+    (107, "add acquisition costs and loan rate type", lambda engine: _apply(engine, _migrate_columns)),
 )
 
 

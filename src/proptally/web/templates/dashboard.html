@@ -18,11 +18,50 @@
                    "Add a property, then its accounts and mortgage details; you can edit them later.") }}
 <div class="pt-stack">
     <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-3">
+        {% if setup_progress %}
+        {{ ui.btn("Start guided setup", variant="primary", href="/setup", icon_name="sliders") }}
+        {% else %}
         {{ ui.btn("Set up your portfolio", variant="primary", href="/settings", icon_name="sliders") }}
+        {% endif %}
+        {{ ui.btn("Manage portfolio data", variant="ghost", href="/settings") }}
     </div>
+    {% if setup_progress %}
+    <div class="pt-stack-2">
+        <div class="pt-flex pt-items-center pt-justify-between">
+            <span class="pt-fs-caption pt-text-muted">{{ setup_progress.done_count }} of {{ setup_progress.total }} steps</span>
+            <strong class="pt-num">{{ setup_progress.percent }}%</strong>
+        </div>
+        {{ ui.progress(setup_progress.percent, "Portfolio setup progress") }}
+    </div>
+    {% endif %}
 </div>
 {{ ui.section_close() }}
 {% else %}
+{% if setup_progress and setup_progress.enrolled and not setup_progress.published %}
+{% set next_href = "/setup/" ~ setup_progress.next_step if setup_progress.next_step else "/setup" %}
+<div class="pt-setup-strip pt-no-print">
+    <div class="pt-setup-strip__label">
+        <strong>{% if setup_progress.publishable %}Setup essentials complete{% else %}Finish portfolio setup{% endif %}</strong>
+        <span>{{ setup_progress.done_count }} of {{ setup_progress.total }} steps · {{ setup_progress.percent }}%</span>
+    </div>
+    <div class="pt-setup-strip__progress">
+        {{ ui.progress(setup_progress.percent, "Portfolio setup progress") }}
+    </div>
+    <div class="pt-setup-strip__action">
+        {% if setup_progress.publishable %}
+        <form method="post" action="/setup/publish" class="pt-inline-flex">
+            {{ csrf_field() }}
+            {{ ui.btn("Publish portfolio", variant="primary", size="sm",
+                      type="submit", icon_name="check_circle") }}
+        </form>
+        <a class="pt-btn pt-btn--ghost pt-btn--sm" href="{{ next_href }}">Continue</a>
+        {% else %}
+        {{ ui.btn("Continue setup", variant="primary", size="sm",
+                  href=next_href, icon_name="sliders") }}
+        {% endif %}
+    </div>
+</div>
+{% endif %}
 {% set actions %}
     {{ ui.btn("New Transaction", variant="neutral", href="/transactions", icon_name="plus") }}
 {% endset %}
@@ -230,11 +269,20 @@
     {{ ui.card_open() }}
     <div class="pt-card__body pt-stack-3">
         <h2 class="pt-section__title">This period</h2>
-        {{ ui.statement_open() }}
-            {{ ui.statement_row("Period", period_label ~ (" (filtered)" if period_is_filtered else "")) }}
-            {{ ui.statement_row("Debt basis", debt_basis_label) }}
-            {{ ui.statement_row("Doors", equity.property_metrics | length) }}
-        {{ ui.statement_close() }}
+        <dl class="pt-period-list">
+            <div>
+                <dt>Period</dt>
+                <dd>{{ period_label }}{% if period_is_filtered %} (filtered){% endif %}</dd>
+            </div>
+            <div>
+                <dt>Debt basis</dt>
+                <dd>{{ debt_basis_label }}</dd>
+            </div>
+            <div>
+                <dt>Doors</dt>
+                <dd>{{ equity.property_metrics | length }}</dd>
+            </div>
+        </dl>
     </div>
     {{ ui.card_close() }}
 

@@ -13,6 +13,7 @@ path that opens a portfolio chosen by the client.
 
 import logging
 import os
+import urllib.parse
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,8 +21,9 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlmodel import Session
+from sqlmodel import Session, select
 
+from proptally.db.models import Property
 from proptally.db.tenant_manager import (
     TenantManager,
     get_system_engine,
@@ -47,6 +49,8 @@ from proptally.web.helpers import (
     format_date,
     initials,
 )
+from proptally.domain.setup_state import load as load_setup
+from proptally.web.property_forms import fresh_coordinates, google_maps_url
 from proptally.web.routes.admin import get_admin_router
 from proptally.web.routes.auth import get_auth_router
 from proptally.web.routes.dashboard import get_dashboard_router
@@ -56,6 +60,7 @@ from proptally.web.routes.portfolios import get_portfolios_router
 from proptally.web.routes.properties import get_properties_router
 from proptally.web.routes.reconciliation import get_reconciliation_router
 from proptally.web.routes.settings import get_settings_router
+from proptally.web.routes.setup import get_setup_router
 from proptally.web.routes.tax import get_tax_router
 from proptally.web.routes.transactions import get_transactions_router
 from proptally.web.routes.vault import get_vault_router
@@ -109,6 +114,60 @@ def create_app(
     templates.env.globals["instance_name"] = (
         os.environ.get("PROPTALLY_INSTANCE_NAME", "").strip() or "PropTally"
     )
+
+    # Google Maps is optional infrastructure. An empty browser key disables address
+    # search and the map preview; the manual address fields remain the only path.
+    # The key is public by design and restricted by HTTP referrer and API, so it is
+    # exposed to the page rather than proxied through a server credential.
+    google_maps_browser_key = os.environ.get(
+        "PROPTALLY_GOOGLE_MAPS_BROWSER_KEY", ""
+    ).strip()
+    templates.env.globals["google_maps_browser_key"] = google_maps_browser_key
+    templates.env.globals["property_coordinates"] = fresh_coordinates
+    # Named to avoid colliding with the ``google_maps_url`` context value rendered by
+    # the property detail route; templates need both the helper and the saved link.
+    templates.env.globals["property_maps_url"] = google_maps_url
+
+    def _google_maps_embed_url(prop) -> str | None:
+        """The Maps Embed API URL for a property, or None when it has no location.
+
+        The place ID is used whenever present because Google permits retaining it;
+        coordinates are only a fallback and only while their 30-day cache is fresh.
+        """
+        if not google_maps_browser_key or prop is None:
+            return None
+        if prop.google_place_id:
+            query = "place_id:" + urllib.parse.quote(prop.google_place_id, safe="")
+        else:
+            coordinates = fresh_coordinates(prop)
+            if coordinates is None:
+                return None
+            query = f"{coordinates[0]},{coordinates[1]}"
+        return (
+            "https://www.google.com/maps/embed/v1/place?key="
+            + urllib.parse.quote(google_maps_browser_key, safe="")
+            + "&q=" + query
+            + "&zoom=16&maptype=roadmap"
+        )
+
+    templates.env.globals["google_maps_embed_url"] = _google_maps_embed_url
+
+    def _portfolio_is_draft() -> bool:
+        """Whether the shell should label the portfolio DRAFT.
+
+        A portfolio with a setup row is a draft until it is published. A legacy
+        portfolio with no row is already live; an empty one is still a draft.
+        """
+        context = current_context()
+        if context is None:
+            return False
+        with Session(context.engine) as session:
+            setup = load_setup(session)
+            if setup is not None:
+                return setup.published_at is None
+            return session.exec(select(Property).limit(1)).first() is None
+
+    templates.env.globals["portfolio_is_draft"] = _portfolio_is_draft
     # Shell navigation: static structure plus the doors of the portfolio this
     # request is allowed to see. Read from the request context, never from a
     # process-wide engine, so one portfolio's doors can never appear in another's
@@ -247,6 +306,7 @@ def create_app(
         get_reconciliation_router(templates, get_session),
         get_tax_router(templates, get_session),
         get_settings_router(templates, get_session),
+        get_setup_router(templates, get_session),
         get_ingestion_router(templates, get_session),
         get_vault_router(templates, get_session),
     ]

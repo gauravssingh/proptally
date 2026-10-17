@@ -11,7 +11,8 @@
 <div class="pt-stack-3">
     {{ ui.page_header(
         "Document Vault",
-        "Every document this portfolio holds, in the folder it belongs to. Open a folder rather than filter for it — the tree shows where everything is, and the pane on the right describes the document you choose."
+        "Every document this portfolio holds, in the folder it belongs to. Open a folder rather than filter for it — the tree shows where everything is, and the pane on the right describes the document you choose.",
+        subtitle_cls="pt-page-header__subtitle--compact"
     ) }}
 
     {% if message %}{{ ui.alert(message_variant, text=message) }}{% endif %}

@@ -1,9 +1,12 @@
 {% extends "base.html" %}
 {% import "components/ui.html" as ui with context %}
+{% import "components/property_location.html" as location with context %}
+{% import "components/mortgage_progress.html" as mortgage_progress with context %}
 
 {% block title %}{{ property.name }} — PropTally{% endblock %}
 
 {% block content %}
+{% if error %}{{ ui.alert(variant="error", title="Not saved", text=error) }}{% endif %}
 {# ===========================================================================
    1. Property Header (Dominant name, restrained navy identity, grouped actions)
    =========================================================================== #}
@@ -56,50 +59,322 @@
 </section>
 
 {# ===========================================================================
-   2. Property Financial Summary (Primary KPIs + 5-column secondary basis)
+   2. Property Financial Overview
+   Three cards: the property and its equity, the mortgage and repayment
+   progress, and value / LTV / appreciation. Every figure comes from the route's
+   persisted data or the existing metrics service; missing data is stated, never
+   invented.
    =========================================================================== #}
-{% set fin_header_actions %}
-    {% if valuation %}
-    {{ ui.badge("Valuation: Estimated", variant="warning", upper=false, mono=false) }}
-    {% endif %}
-{% endset %}
+<section class="pt-overview" aria-label="Property financial overview">
 
-{{ ui.section_open(
-    "Property Financial Summary",
-    "Asset equity, market valuation, and capitalized cost basis.",
-    actions=fin_header_actions
-) }}
-<div class="pt-stack">
-    <!-- Primary KPIs (Top Row: 2 Emphasized Cards, 28px Typography) -->
-    <div class="pt-grid pt-sm-grid-cols-2 pt-gap-4">
-        {{ ui.kpi(
-            "Estimated Property Equity",
-            ui.amount(net_equity_cents, mode="plain") if net_equity_cents is not none else "—",
-            sub=("LTV: " ~ ltv_percent ~ "%" if ltv_percent is not none else "Debt-Free"),
-            evidence_kind="calculated",
-            evidence_title="Estimated market value minus outstanding loan debt."
+    {# --- Card 1: property and equity ---------------------------------- #}
+    <article class="pt-overview-card pt-overview-card--primary">
+        <div class="pt-overview-card__media">
+            {% if cover_photo %}
+            <img class="pt-overview-card__image"
+                 src="{{ cover_photo.storage_path }}"
+                 alt="{{ cover_photo.caption or property.name }}">
+            {% else %}
+            <div class="pt-overview-card__image pt-overview-card__image--empty" aria-hidden="true">
+                {{ ui.icon("home", "lg") }}
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="pt-overview-card__identity">
+            <span class="pt-overview-card__eyebrow">{{ property_type_label }}</span>
+            <h2 class="pt-overview-card__title">{{ property.name }}</h2>
+            <p class="pt-overview-card__address" title="{{ address_full }}">{{ address_short }}</p>
+            <div class="pt-overview-card__badges">
+                {{ ui.badge("MORTGAGE-FREE" if is_mortgage_free else "FINANCED",
+                            variant=("success" if is_mortgage_free else "neutral"), upper=true) }}
+                {% if lease %}
+                {{ ui.badge("TENANTED", variant="accent", upper=true) }}
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="pt-overview-card__primary">
+            {% if net_equity_cents is not none %}
+            <span class="pt-overview-card__primary-label">
+                {{ "Estimated value" if is_mortgage_free else "Estimated equity" }}
+            </span>
+            <span class="pt-overview-card__primary-value">
+                {{ ui.amount(net_equity_cents, mode="plain", cls="pt-overview-card__amount") }}
+            </span>
+            <span class="pt-overview-card__meta">
+                {{ "Owned free and clear" if is_mortgage_free else "Current value less outstanding mortgage" }}
+            </span>
+            {% else %}
+            <span class="pt-overview-card__primary-label">Estimated equity</span>
+            <span class="pt-overview-card__primary-value pt-overview-card__primary-value--empty">—</span>
+            <span class="pt-overview-card__meta">A current valuation is needed.</span>
+            {% endif %}
+        </div>
+
+        {% if net_equity_cents is not none %}
+        <dl class="pt-overview-breakdown">
+            <div>
+                <dt>Current value</dt>
+                <dd>{{ ui.amount(valuation.estimated_value_cents, mode="plain") }}</dd>
+            </div>
+            <div>
+                <dt>Outstanding mortgage</dt>
+                <dd>
+                    {{ ui.amount(authoritative_principal_cents, mode="plain")
+                       if authoritative_principal_cents is not none else "Mortgage-free" }}
+                </dd>
+            </div>
+            {% if property.purchase_price_cents %}
+            <div>
+                <dt>Purchase price</dt>
+                <dd>{{ ui.amount(property.purchase_price_cents, mode="plain") }}</dd>
+            </div>
+            {% endif %}
+            <div>
+                <dt>Equity share</dt>
+                <dd>{{ equity_percent }}%</dd>
+            </div>
+        </dl>
+        {% else %}
+        <p class="pt-overview-card__empty-text">
+            Add a current valuation to calculate equity. The purchase price and
+            mortgage data are already recorded.
+        </p>
+        {% endif %}
+
+        <div class="pt-overview-card__actions">
+            {{ ui.btn("Edit property", variant="secondary", size="sm",
+                      attrs='data-modal-open="edit-details-modal"') }}
+            <a class="pt-btn pt-btn--ghost pt-btn--sm"
+               href="{{ google_maps_url }}" target="_blank" rel="noopener noreferrer">
+                Google Maps ↗
+            </a>
+        </div>
+    </article>
+
+    {# --- Card 2: mortgage and repayment ------------------------------- #}
+    <article class="pt-overview-card pt-overview-card--mortgage">
+        <div class="pt-overview-card__head">
+            <h2 class="pt-overview-card__heading">Mortgage</h2>
+            {% if is_mortgage_free %}
+            {{ ui.badge("MORTGAGE-FREE", variant="success", upper=true) }}
+            {% endif %}
+        </div>
+
+        {% if is_mortgage_free %}
+        <div class="pt-overview-card__empty">
+            <span class="pt-overview-card__empty-icon" aria-hidden="true">{{ ui.icon("bank", "lg") }}</span>
+            <p><strong>No mortgage recorded.</strong> This property is owned free and clear.</p>
+            {{ ui.btn("Add a mortgage", variant="secondary", size="sm", href="/setup/mortgage") }}
+        </div>
+        {% else %}
+        <div class="pt-overview-card__section">
+            <span class="pt-overview-card__section-title">Loan terms</span>
+            <dl class="pt-overview-breakdown">
+                <div><dt>Lender</dt><dd>{{ institution_name }}</dd></div>
+                <div>
+                    <dt>Total loan</dt>
+                    <dd>{{ ui.amount(loan.original_principal_cents, mode="plain")
+                           if loan.original_principal_cents is not none else "—" }}</dd>
+                </div>
+                <div>
+                    <dt>Rate</dt>
+                    <dd>
+                        {{ loan.current_interest_rate_bps | format_bps
+                           if loan.current_interest_rate_bps is not none else "—" }}
+                        · {{ rate_type_label or "Not recorded" }}
+                    </dd>
+                </div>
+                <div><dt>Term</dt><dd>{{ loan.term_months }} months</dd></div>
+                <div>
+                    <dt>Started</dt>
+                    <dd>{{ loan_start_month | format_date if loan_start_month else "Not recorded" }}</dd>
+                </div>
+                <div>
+                    <dt>Loan period</dt>
+                    <dd>
+                        {% if loan_month_number %}
+                        Month {{ loan_month_number }} of {{ loan.term_months }}
+                        · {{ loan_schedule_percent }}% elapsed
+                        {% else %}
+                        Start month not recorded
+                        {% endif %}
+                    </dd>
+                </div>
+            </dl>
+        </div>
+
+        <div class="pt-overview-card__section">
+            <span class="pt-overview-card__section-title">Position</span>
+            <dl class="pt-overview-breakdown">
+                <div>
+                    <dt>Outstanding</dt>
+                    <dd>{{ ui.amount(authoritative_principal_cents, mode="plain")
+                           if authoritative_principal_cents is not none else "—" }}</dd>
+                </div>
+                <div>
+                    <dt>Principal repaid</dt>
+                    <dd>{{ principal_repaid_percent ~ "%" if principal_repaid_percent is not none else "—" }}</dd>
+                </div>
+                <div>
+                    <dt>Monthly payment</dt>
+                    <dd>{{ ui.amount(monthly_payment_cents, mode="plain")
+                           if monthly_payment_cents is not none else "No statement" }}</dd>
+                </div>
+                <div>
+                    <dt>Next due</dt>
+                    <dd>
+                        {% if next_payment_due %}
+                        {{ next_payment_due | format_date }}{% if next_payment_overdue %} · past due{% endif %}
+                        {% else %}
+                        Not tracked
+                        {% endif %}
+                    </dd>
+                </div>
+            </dl>
+        </div>
+
+        {% if instalment_progress_percent is not none and payments_recorded > 0 %}
+        {{ mortgage_progress.widget(
+            instalment_progress_percent,
+            instalments_paid,
+            instalments_remaining,
+            instalments_total,
+            last_payment_cents,
+            last_payment_date,
+            instalments_over_term
         ) }}
+        {% else %}
+        <p class="pt-overview-card__empty-text">
+            No servicer payments recorded yet. Import a mortgage statement to populate
+            this progress.
+        </p>
+        {% endif %}
 
-        {{ ui.kpi(
-            "Estimated Market Value",
-            ui.amount(valuation.estimated_value_cents, mode="plain") if valuation else "Not Recorded",
-            sub=("As of " ~ (valuation.valuation_date | format_date) if valuation else "Awaiting Appraisal"),
-            evidence_kind="estimated",
-            evidence_label="ESTIMATED",
-            evidence_title="Unrealized market valuation estimate for portfolio reporting."
-        ) }}
-    </div>
+        <div class="pt-overview-card__actions">
+            {{ ui.btn("View mortgage", variant="secondary", size="sm", href="/mortgages") }}
+        </div>
+        {% endif %}
+    </article>
 
-    <!-- Secondary Metrics (Bottom Row: Compact 5-column grid) -->
-    <div class="pt-summary-grid pt-summary-grid--5 pt-gap-4">
-        {{ ui.stat("Total Cost Basis", ui.amount(property.purchase_price_cents, mode="plain") if property.purchase_price_cents else "—", sub="Acquisition Price") }}
-        {{ ui.stat("Land Basis", ui.amount(property.land_basis_cents, mode="plain") if property.land_basis_cents else "—", sub="Non-Depreciable") }}
-        {{ ui.stat("Building Basis" if property.property_type == 'PRIMARY_RESIDENCE' else "Building Basis (27.5-Yr)", ui.amount(property.building_basis_cents, mode="plain") if property.building_basis_cents else "—", sub="Primary Residence" if property.property_type == 'PRIMARY_RESIDENCE' else "Depreciable Asset") }}
-        {{ ui.stat("Loan Balance", ui.amount(authoritative_principal_cents, mode="plain") if authoritative_principal_cents else "—", sub="Servicer Reported" if servicer_reported_principal_cents else ("Ledger Derived" if authoritative_principal_cents else "Debt-Free")) }}
-        {{ ui.stat("Loan-to-Value (LTV)", (ltv_percent ~ "%") if ltv_percent is not none else "0.0%", sub="High Leverage" if ltv_percent is not none and ltv_percent > 80 else ("Conservative" if ltv_percent else "Unencumbered")) }}
-    </div>
-</div>
-{{ ui.section_close() }}
+    {# --- Card 3: value and financial position ------------------------- #}
+    <article class="pt-overview-card pt-overview-card--value">
+        <div class="pt-overview-card__head">
+            <h2 class="pt-overview-card__heading">Value &amp; position</h2>
+            {% if valuation_is_stale %}
+            {{ ui.badge("VALUATION STALE", variant="warning", upper=true,
+                        title="The latest valuation is more than 12 months old.") }}
+            {% endif %}
+        </div>
+
+        {% if valuation %}
+        <div class="pt-overview-card__primary pt-overview-card__primary--small">
+            <span class="pt-overview-card__primary-label">Current estimated value</span>
+            <span class="pt-overview-card__primary-value">
+                {{ ui.amount(valuation.estimated_value_cents, mode="plain",
+                             cls="pt-overview-card__amount pt-overview-card__amount--small") }}
+            </span>
+            <span class="pt-overview-card__meta">
+                As of {{ valuation.valuation_date | format_date }}
+                {%- if valuation_age_months and valuation_age_months > 0 %} · {{ valuation_age_months }} mo old{% endif %}
+            </span>
+        </div>
+
+        <div class="pt-overview-card__section">
+            <span class="pt-overview-card__section-title">Acquisition</span>
+            {% if acquisition_costs_recorded %}
+            <div class="pt-overview-mini-grid">
+                <div>
+                    <span>Down payment</span>
+                    <strong>{{ ui.amount(down_payment_cents, mode="plain")
+                              if down_payment_cents is not none else "—" }}</strong>
+                </div>
+                <div>
+                    <span>Closing costs</span>
+                    <strong>{{ ui.amount(closing_costs_cents, mode="plain")
+                              if closing_costs_cents is not none else "—" }}</strong>
+                </div>
+                <div>
+                    <span>Furnishing</span>
+                    <strong>{{ ui.amount(furnishing_costs_cents, mode="plain")
+                              if furnishing_costs_cents is not none else "—" }}</strong>
+                </div>
+                <div>
+                    <span>Cash invested</span>
+                    <strong>{{ ui.amount(acquisition_cash_cents, mode="plain")
+                              if acquisition_cash_cents is not none else "—" }}</strong>
+                </div>
+            </div>
+            {% else %}
+            <p class="pt-overview-card__empty-text">
+                Down payment, closing costs and furnishing costs are not recorded.
+            </p>
+            <button type="button" class="pt-btn pt-btn--ghost pt-btn--sm"
+                    data-modal-open="edit-details-modal">
+                Add acquisition costs
+            </button>
+            {% endif %}
+        </div>
+
+        <div class="pt-overview-card__section">
+            <span class="pt-overview-card__section-title">Position</span>
+            <dl class="pt-overview-breakdown">
+                <div>
+                    <dt>Purchase price</dt>
+                    <dd>{{ ui.amount(property.purchase_price_cents, mode="plain")
+                           if property.purchase_price_cents else "—" }}</dd>
+                </div>
+                <div>
+                    <dt>Total acquisition cost</dt>
+                    <dd>{{ ui.amount(total_acquisition_cost_cents, mode="plain")
+                           if total_acquisition_cost_cents is not none else "—" }}</dd>
+                </div>
+                <div>
+                    <dt>Outstanding mortgage</dt>
+                    <dd>{{ ui.amount(authoritative_principal_cents, mode="plain")
+                           if authoritative_principal_cents is not none else "Mortgage-free" }}</dd>
+                </div>
+                <div>
+                    <dt>Loan-to-value</dt>
+                    <dd>{{ ltv_percent ~ "%" if ltv_percent is not none else "—" }}</dd>
+                </div>
+                <div>
+                    <dt>Appreciation</dt>
+                    <dd>
+                        {% if appreciation_cents is not none %}
+                        {{ ui.amount(appreciation_cents, mode="signed") }}
+                        {%- if appreciation_percent is not none %} · {{ appreciation_percent }}%{% endif %}
+                        {% else %}
+                        —
+                        {% endif %}
+                    </dd>
+                </div>
+            </dl>
+        </div>
+
+        {% if equity_percent is not none %}
+        <div class="pt-overview-progress">
+            <div class="pt-overview-progress__head">
+                <span>Equity share</span>
+                <strong>{{ equity_percent }}%</strong>
+            </div>
+            {{ ui.progress(equity_percent, "Equity share") }}
+        </div>
+        {% endif %}
+
+        <div class="pt-overview-card__actions">
+            {{ ui.btn("Manage valuation", variant="secondary", size="sm", href="/settings") }}
+        </div>
+        {% else %}
+        <div class="pt-overview-card__empty">
+            <span class="pt-overview-card__empty-icon" aria-hidden="true">{{ ui.icon("scale", "lg") }}</span>
+            <p><strong>Valuation not recorded.</strong> Add a current value to see equity, LTV and appreciation.</p>
+            {{ ui.btn("Add a valuation", variant="secondary", size="sm", href="/settings") }}
+        </div>
+        {% endif %}
+    </article>
+</section>
 
 {# ===========================================================================
    3. Property Notes (7 cols) & Property Photos (5 cols)
@@ -134,7 +409,7 @@
             <div class="pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-2 pt-fs-caption pt-text-muted">
                 <span class="pt-flex pt-items-center pt-gap-1">
                     <span class="pt-dot pt-dot--accent"></span>
-                    <span>Verified Property Coordinates</span>
+                    <span>{{ "Pinned location" if property.google_place_id else "Manual address" }}</span>
                 </span>
                 <a href="{{ google_maps_url }}" target="_blank" rel="noopener noreferrer" class="pt-btn pt-btn--ghost pt-btn--xs">
                     <span>View on Google Maps</span>
@@ -146,7 +421,10 @@
     </div>
 
     <!-- Property Photos (5 cols) -->
-    <div class="pt-lg-col-span-5" id="gallery-section">
+    <div class="pt-lg-col-span-5 pt-stack-3" id="gallery-section">
+        <div class="pt-location-card">
+            {{ location.preview(property, google_maps_url) }}
+        </div>
         {% set photos_actions %}
             <button type="button" class="pt-btn pt-btn--secondary pt-btn--sm" data-modal-open="upload-photo-modal">
                 {{ ui.icon("plus", "sm") }}
@@ -620,10 +898,24 @@
    5. Modals: Edit Property, Upload Photo, Lightbox
    =========================================================================== #}
 <!-- Modal 1: Edit Property Details & Google Maps Link -->
-{{ ui.modal_open("edit-details-modal", "Edit Property", subtitle=property.name, size="md") }}
+{{ ui.modal_open("edit-details-modal", "Edit Property", subtitle=property.name, size="lg") }}
 <form action="/properties/{{ property.id }}/update-details" method="POST" class="pt-modal__form">
         {{ csrf_field() }}
     <div class="pt-modal__body pt-stack">
+        {{ location.picker("detail-", property) }}
+
+        <div class="pt-form-grid pt-form-grid--3">
+            {{ ui.number_field("down_payment", "Down payment ($)",
+                               value=("%.2f" | format(property.down_payment_cents / 100) if property.down_payment_cents else ""),
+                               placeholder="85000.00") }}
+            {{ ui.number_field("closing_costs", "Closing costs ($)",
+                               value=("%.2f" | format(property.closing_costs_cents / 100) if property.closing_costs_cents else ""),
+                               placeholder="12000.00") }}
+            {{ ui.number_field("furnishing_costs", "Furnishing costs ($)",
+                               value=("%.2f" | format(property.furnishing_costs_cents / 100) if property.furnishing_costs_cents else ""),
+                               placeholder="5000.00") }}
+        </div>
+
         {{ ui.text_field(
             "google_maps_url",
             "Custom Google Maps Link (optional)",
@@ -798,6 +1090,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/property-location.js" defer></script>
 <script>
 (function () {
     /* Photo lightbox viewer */

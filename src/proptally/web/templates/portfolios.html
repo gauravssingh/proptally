@@ -37,7 +37,7 @@
                     {{ ui.th("Doors", num=true) }}
                     {{ ui.th("Net equity", num=true) }}
                     {{ ui.th("Debt", num=true) }}
-                    {{ ui.th("", cls="pt-table__actions") }}
+                    {{ ui.th("", cls="pt-table__actions pt-portfolio-actions") }}
                 </tr>
             </thead>
             <tbody>
@@ -64,8 +64,8 @@
                         {{ ui.amount(portfolio.total_debt_cents, mode="plain",
                                      unavailable_title="This portfolio's database could not be opened.") }}
                     </td>
-                    <td class="pt-table__actions">
-                        <div class="pt-inline-flex pt-gap-2">
+                    <td class="pt-table__actions pt-portfolio-actions">
+                        <div class="pt-table__actions-inline">
                             {% if portfolio.tenant_id != context.tenant.id or choose_portfolio %}
                             <form method="post" action="/portfolios/{{ portfolio.tenant_id }}/open" class="pt-inline-flex">
                                 {{ csrf_field() }}

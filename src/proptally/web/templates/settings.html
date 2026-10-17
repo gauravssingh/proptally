@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "components/ui.html" as ui with context %}
+{% import "components/property_location.html" as location with context %}
 
 {% block title %}Portfolio Setup — PropTally{% endblock %}
 
@@ -410,15 +411,7 @@
             {{ ui.text_field("name", "Property name", required=true, placeholder="e.g. 12307 Larkspur St") }}
             {{ ui.select_field("property_type", "Property type", property_type_options, selected="RENTAL_INVESTMENT") }}
         </div>
-        <div class="pt-form-grid pt-form-grid--2">
-            {{ ui.text_field("address_line1", "Street address", required=true, placeholder="12307 Larkspur St") }}
-            {{ ui.text_field("address_line2", "Address line 2", placeholder="Unit, building, etc.") }}
-        </div>
-        <div class="pt-form-grid pt-form-grid--3">
-            {{ ui.text_field("city", "City", required=true, placeholder="Westbrook") }}
-            {{ ui.text_field("state", "State", value="IL", placeholder="IL") }}
-            {{ ui.text_field("zip_code", "ZIP code", placeholder="60196") }}
-        </div>
+        {{ location.picker("create-", none) }}
         <div class="pt-form-grid pt-form-grid--2">
             {{ ui.date_field("acquisition_date", "Acquisition date") }}
             {{ ui.text_field("short_label", "Short label", placeholder="Larkspur",
@@ -430,6 +423,14 @@
                                help="Non-depreciable portion.") }}
             {{ ui.number_field("building_basis", "Building basis ($)", placeholder="340000.00",
                                help="Depreciable portion.") }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--3">
+            {{ ui.number_field("down_payment", "Down payment ($)", placeholder="85000.00",
+                               help="Cash paid at closing.") }}
+            {{ ui.number_field("closing_costs", "Closing costs ($)", placeholder="12000.00",
+                               help="Title, lender, recording and other closing costs.") }}
+            {{ ui.number_field("furnishing_costs", "Furnishing costs ($)", placeholder="5000.00",
+                               help="Furniture and setup for a rental.") }}
         </div>
         <div class="pt-form-grid pt-form-grid--2">
             {{ ui.number_field("current_valuation", "Current value ($)", placeholder="465000.00",
@@ -456,15 +457,7 @@
             {{ ui.text_field("name", "Property name", value=p.name, required=true) }}
             {{ ui.select_field("property_type", "Property type", property_type_options, selected=p.property_type) }}
         </div>
-        <div class="pt-form-grid pt-form-grid--2">
-            {{ ui.text_field("address_line1", "Street address", value=p.address_line1, required=true) }}
-            {{ ui.text_field("address_line2", "Address line 2", value=(p.address_line2 or "")) }}
-        </div>
-        <div class="pt-form-grid pt-form-grid--3">
-            {{ ui.text_field("city", "City", value=p.city, required=true) }}
-            {{ ui.text_field("state", "State", value=p.state) }}
-            {{ ui.text_field("zip_code", "ZIP code", value=p.zip_code) }}
-        </div>
+        {{ location.picker("edit-" ~ p.id ~ "-", p) }}
         <div class="pt-form-grid pt-form-grid--2">
             {{ ui.date_field("acquisition_date", "Acquisition date",
                              value=(p.acquisition_date.isoformat() if p.acquisition_date else "")) }}
@@ -478,6 +471,14 @@
                                value=("%.2f" | format(p.land_basis_cents / 100) if p.land_basis_cents else "")) }}
             {{ ui.number_field("building_basis", "Building basis ($)",
                                value=("%.2f" | format(p.building_basis_cents / 100) if p.building_basis_cents else "")) }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--3">
+            {{ ui.number_field("down_payment", "Down payment ($)",
+                               value=("%.2f" | format(p.down_payment_cents / 100) if p.down_payment_cents else "")) }}
+            {{ ui.number_field("closing_costs", "Closing costs ($)",
+                               value=("%.2f" | format(p.closing_costs_cents / 100) if p.closing_costs_cents else "")) }}
+            {{ ui.number_field("furnishing_costs", "Furnishing costs ($)",
+                               value=("%.2f" | format(p.furnishing_costs_cents / 100) if p.furnishing_costs_cents else "")) }}
         </div>
         <div class="pt-form-grid pt-form-grid--2">
             {{ ui.number_field("current_valuation", "Current value ($)",
@@ -572,6 +573,8 @@
             {{ ui.number_field("original_principal", "Original principal ($)", placeholder="340000.00") }}
             {{ ui.number_field("escrow_opening_balance", "Escrow opening reserve ($)", placeholder="2840.00") }}
         </div>
+        {{ ui.select_field("rate_type", "Rate type", loan_rate_type_options, selected="FIXED",
+                           help="Fixed for the life of the loan, or adjustable (ARM).") }}
         {{ ui.number_field("opening_principal", "Opening principal owed ($)", placeholder="310450.00",
                            help="Declared once, as at origination: it is posted to the ledger as the loan's opening balance and plugged through owner equity. Leave blank if the loan's history is already posted.") }}
     </div>
@@ -617,6 +620,9 @@
             {{ ui.number_field("escrow_opening_balance", "Escrow opening reserve ($)",
                                value=("%.2f" | format(row.escrow.opening_balance_cents / 100) if row.escrow else "")) }}
         </div>
+        {{ ui.select_field("rate_type", "Rate type", loan_rate_type_options,
+                           selected=loan.rate_type,
+                           help="Fixed for the life of the loan, or adjustable (ARM).") }}
         {{ ui.alert(
             variant="info",
             title="Opening principal is ledger history",
@@ -665,4 +671,8 @@
 <datalist id="institution-names">
     {% for name in institution_names %}<option value="{{ name }}"></option>{% endfor %}
 </datalist>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/property-location.js" defer></script>
 {% endblock %}

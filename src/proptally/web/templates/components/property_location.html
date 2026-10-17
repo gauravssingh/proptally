@@ -1,0 +1,180 @@
+{# ===========================================================================
+   Property location component
+   ---------------------------------------------------------------------------
+   One search field, one set of structured address fields and one map, shared by
+   property creation, property editing and the property detail page.
+
+   Google Maps is optional. With no browser key the picker renders the manual
+   address fields only, and a property can still be created and saved.
+   =========================================================================== #}
+{% import "components/ui.html" as ui with context %}
+
+
+{% macro _formatted_address(prop) -%}
+{{ prop.address_line1 }}{% if prop.address_line2 %}, {{ prop.address_line2 }}{% endif %}, {{ prop.city }}, {{ prop.state }} {{ prop.zip_code }}
+{%- endmacro %}
+
+
+{% macro picker(prefix, prop=None) -%}
+{% set place_id = (prop.google_place_id or "") if prop else "" %}
+{% set coordinates = property_coordinates(prop) if prop else none %}
+{% set embed = google_maps_embed_url(prop) if prop else none %}
+{% set key = google_maps_browser_key %}
+{% set has_selection = place_id or coordinates %}
+<section class="pt-location"
+         data-location-picker
+         data-maps-key="{{ key }}"
+         data-prefix="{{ prefix }}">
+    <div class="pt-location__head">
+        <span class="pt-location__icon" aria-hidden="true">{{ ui.icon("pin", "sm") }}</span>
+        <div>
+            <h3 class="pt-location__title">Property location</h3>
+            <p class="pt-location__note">
+                Search for the address, or enter it manually. A map is a confirmation,
+                not a requirement; every field below remains editable.
+            </p>
+        </div>
+    </div>
+
+    {% if key %}
+    <div class="pt-field">
+        <label class="pt-field__label" for="{{ prefix }}location-search">Search address</label>
+        <input class="pt-location__search"
+               type="search"
+               id="{{ prefix }}location-search"
+               data-location-search
+               autocomplete="off"
+               spellcheck="false"
+               placeholder="Start typing an address, building, or landmark"
+               aria-autocomplete="list"
+               aria-controls="{{ prefix }}location-suggestions"
+               aria-expanded="false">
+        <span class="pt-field__help">Powered by Google. Selecting a result fills the address fields below.</span>
+        <div class="pt-location__suggestions"
+             id="{{ prefix }}location-suggestions"
+             data-location-suggestions
+             role="listbox"
+             hidden></div>
+        <p class="pt-field__help" data-location-status role="status"></p>
+    </div>
+    {% else %}
+    {{ ui.alert(
+        variant="neutral",
+        title="Address search is off",
+        text="Enter the address manually below. No Google location will be attached."
+    ) }}
+    {% endif %}
+
+    <div class="pt-form-grid pt-form-grid--2">
+        {{ ui.text_field("address_line1", "Street address", required=true,
+                         value=(prop.address_line1 if prop else ""),
+                         placeholder="12307 Larkspur St",
+                         id=prefix ~ "address_line1") }}
+        {{ ui.text_field("address_line2", "Address line 2", value=(prop.address_line2 or "") if prop else "",
+                         placeholder="Unit, building, etc.",
+                         id=prefix ~ "address_line2") }}
+    </div>
+    <div class="pt-form-grid pt-form-grid--3">
+        {{ ui.text_field("city", "City", required=true,
+                         value=(prop.city if prop else ""),
+                         placeholder="Westbrook",
+                         id=prefix ~ "city") }}
+        {{ ui.text_field("state", "State", value=(prop.state if prop else "IL"),
+                         placeholder="IL",
+                         id=prefix ~ "state") }}
+        {{ ui.text_field("zip_code", "ZIP code", value=(prop.zip_code if prop else ""),
+                         placeholder="60196",
+                         id=prefix ~ "zip_code") }}
+    </div>
+
+    <input type="hidden" name="google_place_id" value="{{ place_id }}" data-location-place-id>
+    <input type="hidden" name="latitude"
+           value="{{ coordinates[0] if coordinates else '' }}" data-location-latitude>
+    <input type="hidden" name="longitude"
+           value="{{ coordinates[1] if coordinates else '' }}" data-location-longitude>
+    <input type="hidden" name="address_source"
+           value="{{ (prop.address_source if prop else 'MANUAL') }}" data-location-source>
+    <input type="hidden" name="clear_location" value="" data-location-clear-flag>
+
+    <div class="pt-location__selected" data-location-selected {% if not has_selection %}hidden{% endif %}>
+        <div class="pt-location__selected-head">
+            <span class="pt-badge pt-badge--success pt-badge--upper">Location pinned</span>
+            <button type="button" class="pt-btn pt-btn--ghost pt-btn--sm" data-location-clear>
+                Clear location
+            </button>
+        </div>
+        <p class="pt-location__formatted" data-location-formatted>
+            {%- if prop -%}{{ _formatted_address(prop) }}{%- endif -%}
+        </p>
+        <div class="pt-location__map" data-location-map {% if not embed %}hidden{% endif %}>
+            {% if embed %}
+            <iframe src="{{ embed }}"
+                    title="Map showing {{ prop.name if prop else 'the selected property' }}"
+                    loading="lazy"
+                    referrerpolicy="strict-origin-when-cross-origin"
+                    allowfullscreen
+                    data-location-iframe></iframe>
+            {% endif %}
+        </div>
+        <div class="pt-location__fallback" data-location-fallback hidden>
+            <p class="pt-location__fallback-text">
+                The map could not load. The address is still stored, and you can open
+                it in Google Maps instead.
+            </p>
+            <a class="pt-btn pt-btn--ghost pt-btn--sm"
+               href="{{ property_maps_url(prop) if prop else '#' }}"
+               target="_blank" rel="noopener noreferrer"
+               data-location-maps-link>
+                Open in Google Maps ↗
+            </a>
+        </div>
+    </div>
+</section>
+{%- endmacro %}
+
+
+{% macro preview(prop, maps_url) -%}
+{% set embed = google_maps_embed_url(prop) %}
+<section class="pt-location pt-location--preview pt-location--compact">
+    <div class="pt-location__head">
+        <span class="pt-location__icon" aria-hidden="true">{{ ui.icon("pin", "sm") }}</span>
+        <div>
+            <h3 class="pt-location__title">Location</h3>
+            <p class="pt-location__formatted">{{ _formatted_address(prop) }}</p>
+        </div>
+        <div class="pt-location__preview-actions">
+            {% if prop.google_place_id %}
+            {{ ui.badge("PINNED LOCATION", variant="success", upper=true,
+                        title="Confirmed from a Google Places result") }}
+            {% else %}
+            {{ ui.badge("MANUAL ADDRESS", variant="neutral", upper=true,
+                        title="No Google location is attached; the address was entered by hand") }}
+            {% endif %}
+        </div>
+    </div>
+
+    {% if embed %}
+    <div class="pt-location__map" data-location-map>
+        <iframe src="{{ embed }}"
+                title="Map showing {{ prop.name }}"
+                loading="lazy"
+                referrerpolicy="strict-origin-when-cross-origin"
+                allowfullscreen></iframe>
+    </div>
+    {% else %}
+    <div class="pt-location__fallback">
+        <p class="pt-location__fallback-text">
+            No pinned location yet. Edit the property to search for its address and
+            confirm it on a map.
+        </p>
+    </div>
+    {% endif %}
+
+    <div class="pt-location__footer">
+        <a class="pt-btn pt-btn--ghost pt-btn--sm"
+           href="{{ maps_url }}" target="_blank" rel="noopener noreferrer">
+            Open in Google Maps ↗
+        </a>
+    </div>
+</section>
+{%- endmacro %}

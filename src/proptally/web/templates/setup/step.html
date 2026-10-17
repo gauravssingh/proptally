@@ -1,0 +1,349 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+{% import "components/property_location.html" as location with context %}
+
+{% block title %}{{ step.title }} — Portfolio setup{% endblock %}
+
+{% block content %}
+{% set header_meta %}
+    <span class="pt-inline-flex pt-items-center pt-gap-2">
+        {{ ui.badge("LIVE" if progress.published else "DRAFT",
+                    variant=("accent" if progress.published else "warning"), upper=true) }}
+        {{ ui.badge(progress.percent ~ "% COMPLETE",
+                    variant=("success" if progress.percent == 100 else "accent"), upper=true) }}
+    </span>
+{% endset %}
+{{ ui.page_header(
+    "Portfolio setup",
+    "Five essentials, one at a time. Every completed step is saved; you can leave and return from Guided Setup.",
+    meta=header_meta
+) }}
+
+<div class="pt-wizard">
+    <aside class="pt-wizard__rail" aria-label="Setup steps">
+        <div class="pt-wizard__progress">
+            <div class="pt-flex pt-items-center pt-justify-between">
+                <span class="pt-fs-caption pt-text-muted">{{ progress.done_count }} of {{ progress.total }} steps</span>
+                <strong class="pt-num">{{ progress.percent }}%</strong>
+            </div>
+            {{ ui.progress(progress.percent, "Portfolio setup progress") }}
+        </div>
+
+        <ol class="pt-wizard__steps">
+            {% for item in progress.steps %}
+            <li>
+                <a class="pt-wizard__step{% if item.step.key == step.key %} is-current{% endif %}{% if item.done %} is-done{% endif %}{% if item.skipped %} is-skipped{% endif %}"
+                   href="/setup/{{ item.step.key }}"
+                   {% if item.step.key == step.key %}aria-current="step"{% endif %}>
+                    <span class="pt-wizard__marker" aria-hidden="true">
+                        {%- if item.done -%}✓{%- elif item.skipped -%}–{%- else -%}{{ loop.index }}{%- endif -%}
+                    </span>
+                    <span class="pt-wizard__step-text">
+                        <span class="pt-wizard__step-title">{{ item.step.short }}</span>
+                        <span class="pt-wizard__step-state">
+                            {%- if item.done -%}Done
+                            {%- elif item.skipped -%}Skipped
+                            {%- elif item.step.key == step.key -%}In progress
+                            {%- else -%}Not started{%- endif -%}
+                        </span>
+                    </span>
+                </a>
+            </li>
+            {% endfor %}
+        </ol>
+
+        <a class="pt-btn pt-btn--ghost pt-btn--sm pt-btn--block" href="/settings">
+            Manage all portfolio data
+        </a>
+    </aside>
+
+    <section class="pt-wizard__body" aria-labelledby="setup-step-title">
+        {% if message %}{{ ui.alert(variant="success", title="Saved", text=message) }}{% endif %}
+        {% if error %}{{ ui.alert(variant="error", title="Not saved", text=error) }}{% endif %}
+
+        {% if progress.publishable and not progress.published %}
+        <div class="pt-wizard__publish">
+            <div>
+                <strong>Essentials complete</strong>
+                <span class="pt-fs-caption pt-text-muted">
+                    You can publish now; statements and review continue afterwards.
+                </span>
+            </div>
+            <form method="post" action="/setup/publish" class="pt-inline-flex">
+                {{ csrf_field() }}
+                {{ ui.btn("Publish portfolio", variant="primary", size="sm",
+                          type="submit", icon_name="check_circle") }}
+            </form>
+        </div>
+        {% endif %}
+
+        {% if state.done %}
+        {{ ui.alert(
+            variant="success",
+            title="Step complete",
+            text="You can add more below; this step is already counted."
+        ) }}
+        {% endif %}
+
+        <div class="pt-wizard__step-head">
+            <span class="pt-wizard__eyebrow">
+                {% if step_number %}Step {{ step_number }} of {{ step_total }}{% else %}Optional step{% endif %}
+            </span>
+            <h2 class="pt-wizard__title" id="setup-step-title">{{ step.title }}</h2>
+            <p class="pt-wizard__why">{{ step.why }}</p>
+        </div>
+
+        {% if not can_work %}
+        {{ ui.alert(
+            variant="neutral",
+            title="Read-only role",
+            text="Your role may read this portfolio but not change its setup."
+        ) }}
+        {% endif %}
+
+        {% if state.skipped %}
+        {{ ui.alert(
+            variant="info",
+            title="Marked as not applicable",
+            text="You told PropTally this portfolio has no mortgage. Add one below if that changes, or undo the skip."
+        ) }}
+        <form method="post" action="/setup/mortgage/unskip" class="pt-wizard__secondary-action">
+            {{ csrf_field() }}
+            {{ ui.btn("I do have a mortgage", variant="secondary", size="sm", type="submit") }}
+        </form>
+        {% endif %}
+
+        {% if step.key == "property" %}
+        {% if existing_properties %}
+        <div class="pt-wizard__existing">
+            <span class="pt-fs-caption pt-text-muted">Already in this portfolio</span>
+            <ul class="pt-wizard__existing-list">
+                {% for p in existing_properties %}
+                <li><strong>{{ p.name }}</strong> <span>{{ p.city }}, {{ p.state }}</span></li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+        <form action="/properties/create" method="POST" class="pt-stack">
+            {{ csrf_field() }}
+            <input type="hidden" name="return_to" value="/setup">
+            <div class="pt-form-grid pt-form-grid--2">
+                {{ ui.text_field("name", "Property name", required=true,
+                                 placeholder="e.g. 12307 Larkspur St") }}
+                {{ ui.select_field("property_type", "Property type", property_type_options,
+                                   selected="RENTAL_INVESTMENT") }}
+            </div>
+            {{ location.picker("setup-", none) }}
+            <div class="pt-form-grid pt-form-grid--2">
+                {{ ui.date_field("acquisition_date", "Acquisition date") }}
+                {{ ui.text_field("short_label", "Short label", placeholder="Larkspur",
+                                 help="Optional compact name for the navigation rail.") }}
+            </div>
+            <div class="pt-form-grid pt-form-grid--3">
+                {{ ui.number_field("purchase_price", "Purchase price ($)", placeholder="425000.00") }}
+                {{ ui.number_field("land_basis", "Land basis ($)", placeholder="85000.00",
+                                   help="Non-depreciable portion.") }}
+                {{ ui.number_field("building_basis", "Building basis ($)", placeholder="340000.00",
+                                   help="Depreciable portion.") }}
+            </div>
+            <div class="pt-form-grid pt-form-grid--3">
+                {{ ui.number_field("down_payment", "Down payment ($)", placeholder="85000.00",
+                                   help="Cash paid at closing.") }}
+                {{ ui.number_field("closing_costs", "Closing costs ($)", placeholder="12000.00",
+                                   help="Title, lender and recording costs.") }}
+                {{ ui.number_field("furnishing_costs", "Furnishing costs ($)", placeholder="5000.00",
+                                   help="Furniture and rental setup.") }}
+            </div>
+            <div class="pt-form-grid pt-form-grid--2">
+                {{ ui.number_field("current_valuation", "Current value ($)", placeholder="465000.00",
+                                   help="Recorded as a manual valuation, flagged as an estimate.") }}
+                {{ ui.date_field("valuation_date", "Valuation date",
+                                 help="Defaults to today when a value is given.") }}
+            </div>
+            <div class="pt-wizard__actions">
+                {{ ui.btn("Add another property" if state.done else "Save and continue",
+                          variant="primary", type="submit", icon_name="check_circle") }}
+                <a class="pt-btn pt-btn--ghost" href="/">Finish later</a>
+            </div>
+        </form>
+
+        {% elif step.key == "accounts" %}
+        {% if existing_accounts %}
+        <div class="pt-wizard__existing">
+            <span class="pt-fs-caption pt-text-muted">Already in this portfolio</span>
+            <ul class="pt-wizard__existing-list">
+                {% for a in existing_accounts %}
+                <li><strong>{{ a.account_name }}</strong> <span>{{ a.account_type }}</span></li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+        <form action="/accounts/create" method="POST" class="pt-stack">
+            {{ csrf_field() }}
+            <input type="hidden" name="return_to" value="/setup">
+            <div class="pt-form-grid pt-form-grid--2">
+                {{ ui.text_field("institution_name", "Institution", required=true,
+                                 placeholder="Bank of America",
+                                 help="An institution that does not exist yet is created for you.",
+                                 extra='list="setup-institution-names"') }}
+                {{ ui.text_field("account_name", "Account name", required=true,
+                                 placeholder="BoA Core Checking") }}
+            </div>
+            <div class="pt-form-grid pt-form-grid--2">
+                {{ ui.select_field("account_type", "Account type", account_type_options,
+                                   selected="CHECKING") }}
+                {{ ui.text_field("account_number_masked", "Masked number", placeholder="...9456",
+                                 help="Only the last digits you are comfortable storing.") }}
+            </div>
+            {{ ui.select_field("mixed_use_status", "Usage", mixed_use_options,
+                               selected="UNCLASSIFIED",
+                               help="A card used only for rental costs needs no external review; a mixed-use card does.") }}
+            <div class="pt-wizard__actions">
+                {{ ui.btn("Add another account" if state.done else "Save and continue",
+                          variant="primary", type="submit", icon_name="check_circle") }}
+                <a class="pt-btn pt-btn--ghost" href="/">Finish later</a>
+            </div>
+        </form>
+        <datalist id="setup-institution-names">
+            {% for name in institution_names %}<option value="{{ name }}"></option>{% endfor %}
+        </datalist>
+
+        {% elif step.key == "mortgage" %}
+        {% if existing_loans %}
+        <div class="pt-wizard__existing">
+            <span class="pt-fs-caption pt-text-muted">Already in this portfolio</span>
+            <ul class="pt-wizard__existing-list">
+                {% for loan in existing_loans %}
+                <li><strong>Loan {{ loan.loan_number }}</strong> <span>{{ loan.term_months }} months</span></li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+        {% if properties %}
+        <form action="/mortgages/create" method="POST" class="pt-stack">
+            {{ csrf_field() }}
+            <input type="hidden" name="return_to" value="/setup">
+            <div class="pt-form-grid pt-form-grid--2">
+                {{ ui.select_field("property_id", "Property", property_options, required=true) }}
+                {{ ui.text_field("institution_name", "Servicer / lender", required=true,
+                                 placeholder="Rocket Mortgage",
+                                 extra='list="setup-institution-names"') }}
+            </div>
+            <div class="pt-form-grid pt-form-grid--2">
+                {{ ui.text_field("account_name", "Servicing account name", required=true,
+                                 placeholder="Rocket Mortgage Loan") }}
+                {{ ui.text_field("loan_number", "Loan number", required=true,
+                                 placeholder="0700000001") }}
+            </div>
+            <div class="pt-form-grid pt-form-grid--3">
+                {{ ui.text_field("account_number_masked", "Masked number", placeholder="...5035") }}
+                {{ ui.date_field("origination_date", "Origination date") }}
+                {{ ui.number_field("term_months", "Term (months)", value="360", step="1") }}
+            </div>
+            <div class="pt-form-grid pt-form-grid--3">
+                {{ ui.number_field("interest_rate", "Interest rate (%)", placeholder="3.125", step="0.001") }}
+                {{ ui.number_field("original_principal", "Original principal ($)", placeholder="340000.00") }}
+                {{ ui.number_field("escrow_opening_balance", "Escrow opening reserve ($)", placeholder="2840.00") }}
+            </div>
+            {{ ui.select_field("rate_type", "Rate type", loan_rate_type_options, selected="FIXED",
+                               help="Fixed for the life of the loan, or adjustable (ARM).") }}
+            {{ ui.number_field("opening_principal", "Opening principal owed ($)", placeholder="310450.00",
+                               help="Declared once, as at origination: it is posted to the ledger as the loan's opening balance and plugged through owner equity. Leave blank if the loan's history is already posted.") }}
+            <div class="pt-wizard__actions">
+                {{ ui.btn("Add another loan" if state.done else "Save and continue",
+                          variant="primary", type="submit", icon_name="check_circle") }}
+                <a class="pt-btn pt-btn--ghost" href="/">Finish later</a>
+            </div>
+        </form>
+        <datalist id="setup-institution-names">
+            {% for name in institution_names %}<option value="{{ name }}"></option>{% endfor %}
+        </datalist>
+
+        {% if not state.skipped and can_work %}
+        <form method="post" action="/setup/mortgage/skip" class="pt-wizard__secondary-action">
+            {{ csrf_field() }}
+            <p class="pt-fs-caption pt-text-muted">
+                Owned free and clear? Skipping removes this step from the completion total.
+            </p>
+            {{ ui.btn("I don't have a mortgage", variant="secondary", size="sm", type="submit") }}
+        </form>
+        {% endif %}
+
+        {% else %}
+        {{ ui.alert(
+            variant="info",
+            title="Add a property first",
+            text="A mortgage is attached to a door. Complete the property step, then return here."
+        ) }}
+        <a class="pt-btn pt-btn--secondary" href="/setup/property">Add a property</a>
+        {% endif %}
+
+        {% elif step.key == "opening-balances" %}
+        {% if opening_entry %}
+        <div class="pt-wizard__existing">
+            <span class="pt-fs-caption pt-text-muted">Most recent opening balance</span>
+            <p class="pt-fs-body">{{ opening_entry.entry_date | format_date }} · {{ opening_entry.description }}</p>
+        </div>
+        {% endif %}
+        {% if opening_targets %}
+        <form action="/opening-balances" method="POST" class="pt-stack">
+            {{ csrf_field() }}
+            <input type="hidden" name="return_to" value="/setup">
+            <div class="pt-form-grid pt-form-grid--2">
+                {{ ui.date_field("as_of", "Balance date", required=true,
+                                 help="The date the portfolio's books start.") }}
+            </div>
+            <div class="pt-form-grid pt-form-grid--2">
+                {% for target in opening_targets %}
+                {{ ui.number_field(
+                    target.field,
+                    target.label ~ (" — debit" if target.side == 'DEBIT' else " — credit"),
+                    placeholder="0.00"
+                ) }}
+                {% endfor %}
+            </div>
+            <div class="pt-wizard__actions">
+                {{ ui.btn("Record another balance" if state.done else "Record opening balances",
+                          variant="primary", type="submit", icon_name="ledger") }}
+                <a class="pt-btn pt-btn--ghost" href="/">Finish later</a>
+            </div>
+        </form>
+        {% else %}
+        {{ ui.alert(
+            variant="info",
+            title="No ledger accounts to set a balance on yet",
+            text="Opening balances are recorded against a property's cost basis and a bank or card account."
+        ) }}
+        <div class="pt-flex pt-flex-wrap pt-gap-2">
+            <a class="pt-btn pt-btn--secondary" href="/setup/property">Add a property</a>
+            <a class="pt-btn pt-btn--secondary" href="/setup/accounts">Add an account</a>
+        </div>
+        {% endif %}
+
+        {% elif step.key == "records" %}
+        <div class="pt-wizard__choices">
+            <a class="pt-wizard__choice" href="/statements">
+                <span class="pt-wizard__choice-title">Import a statement</span>
+                <span class="pt-wizard__choice-text">
+                    Upload a bank or card statement and let PropTally extract the transactions.
+                </span>
+            </a>
+            <a class="pt-wizard__choice" href="/transactions">
+                <span class="pt-wizard__choice-title">Enter a transaction</span>
+                <span class="pt-wizard__choice-text">
+                    Record one rent deposit or expense by hand. It is enough to open the review queue.
+                </span>
+            </a>
+        </div>
+        <p class="pt-fs-caption pt-text-muted">
+            {{ statement_count }} statement(s) and {{ transaction_count }} transaction(s) recorded.
+            <a href="/setup/records">Check again</a> after adding one.
+        </p>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/property-location.js" defer></script>
+{% endblock %}

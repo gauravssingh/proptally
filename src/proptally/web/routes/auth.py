@@ -631,15 +631,21 @@ def get_auth_router(
     @router.get("/account", response_class=HTMLResponse)
     def account_screen(
         request: Request,
-        section: str = ACCOUNT_SECTION_PEOPLE,
+        section: str | None = None,
         context=Depends(auth_dep),
     ):
         """Administration for the open portfolio: its people, its status and its backup.
 
         The section is a query parameter rather than client-side state, so every section is
         a real URL that can be bookmarked, reloaded and reached with the browser's back
-        button, and the segmented navigation is ordinary links.
+        button, and the segmented navigation is ordinary links. A bare /account redirects
+        to the People section so the default is visible in the URL as well as on screen.
         """
+        if section is None:
+            return RedirectResponse(
+                url=f"/account?section={ACCOUNT_SECTION_PEOPLE}",
+                status_code=303,
+            )
         if section not in ACCOUNT_SECTIONS:
             section = ACCOUNT_SECTION_PEOPLE
 

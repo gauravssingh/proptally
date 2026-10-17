@@ -16,6 +16,7 @@ from proptally.domain.accounting.metrics import (
     calculate_portfolio_equity,
     calculate_property_financials,
 )
+from proptally.domain.setup_progress import evaluate as evaluate_setup
 from proptally.web.auth import current_context
 from proptally.web.helpers import period_label
 
@@ -93,6 +94,7 @@ def get_dashboard_router(templates, get_session_dep):
                 "financials": financials,
                 "review_count": review_count,
                 "has_properties": has_properties,
+                "setup_progress": evaluate_setup(session),
                 "can_work": bool(context and context.can_work),
                 "debt_basis_label": _debt_basis_label(equity),
                 "period_label": period_label(financials),

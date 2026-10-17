@@ -30,6 +30,14 @@ from proptally.domain.transactions.suggest import suggest_split_for_transaction
 from proptally.ingestion.service import MAX_UPLOAD_BYTES, store_document
 from proptally.web.auth import current_context
 from proptally.web.helpers import format_cents, period_label
+from proptally.web.form_parsing import cents as _cents
+from proptally.web.property_forms import (
+    FormError,
+    address_tuple,
+    apply_address,
+    apply_property_location,
+    google_maps_url as get_google_maps_url,
+)
 
 
 def _tenant_photos_dir() -> Path:
@@ -43,18 +51,6 @@ def _tenant_photos_dir() -> Path:
     if context is None:
         raise HTTPException(status_code=503, detail="No portfolio context for this request.")
     return context.paths.photos
-
-
-def get_google_maps_url(prop: Property) -> str:
-    """Return configured or auto-detected Google Maps URL for property."""
-    if prop.google_maps_url and prop.google_maps_url.strip():
-        return prop.google_maps_url.strip()
-    parts = [prop.address_line1]
-    if prop.address_line2:
-        parts.append(prop.address_line2)
-    parts.append(f"{prop.city}, {prop.state} {prop.zip_code}")
-    full_address = ", ".join(p for p in parts if p)
-    return f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote_plus(full_address)}"
 
 
 #: Split categories that represent rent received on a door.
@@ -235,6 +231,172 @@ def get_properties_router(templates, get_session_dep):
 
         financials = calculate_property_financials(session, property_id=property_id)
 
+        today = date.today()
+        valuation_age_months = None
+        if val and val.valuation_date:
+            valuation_age_months = (
+                (today.year - val.valuation_date.year) * 12
+                + today.month
+                - val.valuation_date.month
+            )
+            if today.day < val.valuation_date.day:
+                valuation_age_months -= 1
+            valuation_age_months = max(0, valuation_age_months)
+        valuation_is_stale = (
+            valuation_age_months is not None and valuation_age_months >= 12
+        )
+
+        equity_percent = None
+        if val and val.estimated_value_cents and net_equity_cents is not None:
+            equity_percent = round(
+                net_equity_cents / val.estimated_value_cents * 100, 1
+            )
+
+        appreciation_cents = None
+        appreciation_percent = None
+        if val and prop.purchase_price_cents:
+            appreciation_cents = (
+                val.estimated_value_cents - prop.purchase_price_cents
+            )
+            if prop.purchase_price_cents > 0:
+                appreciation_percent = round(
+                    appreciation_cents / prop.purchase_price_cents * 100, 1
+                )
+
+        principal_repaid_cents = None
+        principal_repaid_percent = None
+        if loan and loan.original_principal_cents and authoritative_principal_cents is not None:
+            principal_repaid_cents = max(
+                0, loan.original_principal_cents - authoritative_principal_cents
+            )
+            principal_repaid_percent = round(
+                principal_repaid_cents / loan.original_principal_cents * 100, 1
+            )
+
+        monthly_payment_cents = (
+            latest_period.total_amount_billed_cents if latest_period else None
+        )
+        settled_periods = [
+            period for period in mortgage_periods if period.status == "FULLY_SETTLED"
+        ]
+        last_payment_period = (
+            max(settled_periods, key=lambda period: period.statement_date)
+            if settled_periods
+            else None
+        )
+        last_payment_cents = (
+            last_payment_period.total_amount_applied_cents
+            if last_payment_period
+            else None
+        )
+        last_payment_date = (
+            last_payment_period.payment_due_date if last_payment_period else None
+        )
+        unsettled_periods = [
+            period for period in mortgage_periods if period.status != "FULLY_SETTLED"
+        ]
+        next_period = (
+            min(unsettled_periods, key=lambda period: period.payment_due_date)
+            if unsettled_periods
+            else None
+        )
+        next_payment_due = next_period.payment_due_date if next_period else None
+        next_payment_overdue = bool(
+            next_payment_due is not None and next_payment_due < today
+        )
+        payments_recorded = len(settled_periods)
+
+        instalments_paid = payments_recorded
+        instalments_total = loan.term_months if loan else None
+        instalments_remaining = (
+            max(0, instalments_total - instalments_paid)
+            if instalments_total
+            else None
+        )
+        instalment_progress_percent = None
+        if instalments_total and instalments_total > 0:
+            instalment_progress_percent = min(
+                100.0, round(instalments_paid / instalments_total * 100, 1)
+            )
+        instalments_over_term = bool(
+            instalments_total and instalments_paid > instalments_total
+        )
+
+        rate_type = (loan.rate_type or "FIXED") if loan else None
+        rate_type_label = (
+            "Fixed" if rate_type == "FIXED"
+            else "Adjustable (ARM)" if rate_type == "ARM"
+            else rate_type
+        )
+        loan_start_month = loan.origination_date if loan else None
+        loan_months_elapsed = None
+        loan_month_number = None
+        loan_months_remaining = None
+        loan_schedule_percent = None
+        if loan and loan.origination_date and loan.term_months:
+            elapsed = (
+                (today.year - loan.origination_date.year) * 12
+                + today.month
+                - loan.origination_date.month
+            )
+            if today.day < loan.origination_date.day:
+                elapsed -= 1
+            elapsed = max(0, min(loan.term_months, elapsed))
+            loan_months_elapsed = elapsed
+            loan_month_number = min(loan.term_months, elapsed + 1)
+            loan_months_remaining = max(0, loan.term_months - elapsed)
+            loan_schedule_percent = round(elapsed / loan.term_months * 100, 1)
+
+        down_payment_cents = prop.down_payment_cents
+        closing_costs_cents = prop.closing_costs_cents
+        furnishing_costs_cents = prop.furnishing_costs_cents
+        acquisition_costs_recorded = any(
+            value is not None
+            for value in (
+                down_payment_cents,
+                closing_costs_cents,
+                furnishing_costs_cents,
+            )
+        )
+        acquisition_cash_cents = (
+            sum(
+                value
+                for value in (
+                    down_payment_cents,
+                    closing_costs_cents,
+                    furnishing_costs_cents,
+                )
+                if value is not None
+            )
+            if acquisition_costs_recorded
+            else None
+        )
+        total_acquisition_cost_cents = None
+        if prop.purchase_price_cents is not None:
+            total_acquisition_cost_cents = (
+                prop.purchase_price_cents
+                + (closing_costs_cents or 0)
+                + (furnishing_costs_cents or 0)
+            )
+
+        address_full = ", ".join(
+            part
+            for part in (
+                prop.address_line1,
+                prop.address_line2,
+                f"{prop.city}, {prop.state} {prop.zip_code}".strip(),
+            )
+            if part
+        )
+        address_short = ", ".join(
+            part for part in (prop.address_line1, prop.city) if part
+        )
+        property_type_label = (
+            "Rental investment"
+            if prop.property_type == "RENTAL_INVESTMENT"
+            else "Primary residence"
+        )
+
         unallocated_states = session.exec(
             select(TransactionProcessingState).where(
                 TransactionProcessingState.allocation_status != "FULLY_ALLOCATED"
@@ -291,6 +453,41 @@ def get_properties_router(templates, get_session_dep):
                 "calculated_escrow_balance_cents": calculated_escrow_balance_cents,
                 "net_equity_cents": net_equity_cents,
                 "ltv_percent": ltv_percent,
+                "equity_percent": equity_percent,
+                "valuation_age_months": valuation_age_months,
+                "valuation_is_stale": valuation_is_stale,
+                "appreciation_cents": appreciation_cents,
+                "appreciation_percent": appreciation_percent,
+                "principal_repaid_cents": principal_repaid_cents,
+                "principal_repaid_percent": principal_repaid_percent,
+                "monthly_payment_cents": monthly_payment_cents,
+                "last_payment_cents": last_payment_cents,
+                "last_payment_date": last_payment_date,
+                "next_payment_due": next_payment_due,
+                "next_payment_overdue": next_payment_overdue,
+                "payments_recorded": payments_recorded,
+                "instalments_paid": instalments_paid,
+                "instalments_total": instalments_total,
+                "instalments_remaining": instalments_remaining,
+                "instalment_progress_percent": instalment_progress_percent,
+                "instalments_over_term": instalments_over_term,
+                "rate_type": rate_type,
+                "rate_type_label": rate_type_label,
+                "loan_start_month": loan_start_month,
+                "loan_month_number": loan_month_number,
+                "loan_months_elapsed": loan_months_elapsed,
+                "loan_months_remaining": loan_months_remaining,
+                "loan_schedule_percent": loan_schedule_percent,
+                "down_payment_cents": down_payment_cents,
+                "closing_costs_cents": closing_costs_cents,
+                "furnishing_costs_cents": furnishing_costs_cents,
+                "acquisition_costs_recorded": acquisition_costs_recorded,
+                "acquisition_cash_cents": acquisition_cash_cents,
+                "total_acquisition_cost_cents": total_acquisition_cost_cents,
+                "is_mortgage_free": loan is None,
+                "address_full": address_full,
+                "address_short": address_short,
+                "property_type_label": property_type_label,
                 "lease": lease,
                 "lease_document": lease_document,
                 "property_documents": property_documents,
@@ -301,21 +498,59 @@ def get_properties_router(templates, get_session_dep):
                 "google_maps_url": maps_url,
                 "photos": photos,
                 "cover_photo": cover_photo,
+                "error": request.query_params.get("error"),
             },
         )
 
     @router.post("/properties/{property_id}/update-details")
-    def update_property_details(
+    async def update_property_details(
         property_id: str,
-        description: str = Form(None),
-        google_maps_url: str = Form(None),
+        request: Request,
         session: Session = Depends(get_session_dep),
     ):
         prop = session.get(Property, property_id)
         if not prop:
             raise HTTPException(status_code=404, detail="Property not found")
-        prop.description = description.strip() if description and description.strip() else None
-        prop.google_maps_url = google_maps_url.strip() if google_maps_url and google_maps_url.strip() else None
+
+        form = await request.form()
+        previous_address = address_tuple(prop)
+        previous_place_id = prop.google_place_id
+        try:
+            # Parse and validate the whole form before changing the row, so a bad
+            # address or location cannot leave the notes half-updated. A form that
+            # carries only notes (an older caller) leaves address and location alone.
+            if "address_line1" in form:
+                apply_address(prop, form)
+            apply_property_location(
+                prop,
+                form,
+                previous_address=previous_address,
+                previous_place_id=previous_place_id,
+            )
+            if any(
+                field in form
+                for field in ("down_payment", "closing_costs", "furnishing_costs")
+            ):
+                prop.down_payment_cents = _cents(
+                    form.get("down_payment"), "Down payment"
+                )
+                prop.closing_costs_cents = _cents(
+                    form.get("closing_costs"), "Closing costs"
+                )
+                prop.furnishing_costs_cents = _cents(
+                    form.get("furnishing_costs"), "Furnishing costs"
+                )
+            description = (form.get("description") or "").strip()
+            custom_maps_url = (form.get("google_maps_url") or "").strip()
+        except FormError as exc:
+            session.rollback()
+            return RedirectResponse(
+                url=f"/properties/{property_id}?error={urllib.parse.quote(str(exc))}",
+                status_code=303,
+            )
+
+        prop.description = description or None
+        prop.google_maps_url = custom_maps_url or None
         session.add(prop)
         session.commit()
         return RedirectResponse(url=f"/properties/{property_id}", status_code=303)

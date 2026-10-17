@@ -165,7 +165,15 @@ For unattended rebuilds there is still one environment variable,
 It is the lesser path: no per-recipient expiry, use count, or record of who was given it.
 
 For installations shared by several people, set `PROPTALLY_INSTANCE_NAME` to a name they
-recognize; it appears on the sign-in screen. Password recovery does not send email: a local
+recognize; it appears on the sign-in screen.
+
+Property address search and the mini map are optional. Set
+`PROPTALLY_GOOGLE_MAPS_BROWSER_KEY` to a referrer-restricted browser key; leave it unset
+and property creation falls back to manual address entry. See
+[docs/google-maps-setup.md](docs/google-maps-setup.md) for Cloud setup, key restrictions,
+storage policy and cost.
+
+Password recovery does not send email: a local
 operator issues a single-use link on the host with
 `python scripts/issue_password_reset.py --email user@example.com` and gives it to the
 verified account holder over a trusted channel. The public reset page never reveals or

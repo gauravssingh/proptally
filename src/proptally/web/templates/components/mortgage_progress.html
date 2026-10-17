@@ -1,0 +1,54 @@
+{# ===========================================================================
+   Mortgage repayment widget
+   ---------------------------------------------------------------------------
+   Instalment progress from the servicer periods actually recorded in the
+   portfolio. The original term supplies the denominator; the note says so, so
+   a restructured loan does not silently look 100% complete or 0% complete.
+   =========================================================================== #}
+{% import "components/ui.html" as ui with context %}
+
+
+{% macro widget(percent, paid, remaining, total, last_amount=None, last_date=None,
+                over_term=false) -%}
+<div class="pt-mortgage-progress">
+    <div class="pt-mortgage-progress__head">
+        <span class="pt-mortgage-progress__label">Mortgage repayment</span>
+        <strong class="pt-mortgage-progress__percent">{{ percent }}%</strong>
+    </div>
+
+    {{ ui.progress(percent, "Mortgage repayment progress") }}
+
+    <div class="pt-mortgage-progress__stats">
+        <div>
+            <span>Instalments paid</span>
+            <strong>{{ paid }}</strong>
+        </div>
+        <div>
+            <span>Instalments remaining</span>
+            <strong>{{ remaining }}</strong>
+        </div>
+        <div>
+            <span>Total payments</span>
+            <strong>{{ total }}</strong>
+        </div>
+    </div>
+
+    <p class="pt-mortgage-progress__meta">
+        {%- if last_date -%}
+        Last EMI recorded {{ ui.amount(last_amount, mode="plain") }}
+        on {{ last_date | format_date }} ·
+        {%- endif -%}
+        {{ percent }}% of scheduled instalments completed.
+        <span class="pt-mortgage-progress__source">
+            Based on servicer periods recorded in this portfolio.
+        </span>
+    </p>
+
+    {% if over_term %}
+    <p class="pt-mortgage-progress__warning">
+        More payments are recorded than the original term. Check the loan's term
+        after any restructuring.
+    </p>
+    {% endif %}
+</div>
+{%- endmacro %}
