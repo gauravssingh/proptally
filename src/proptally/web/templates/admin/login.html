@@ -1,0 +1,116 @@
+{% extends "auth_base.html" %}
+{% block title %}Super admin — PropTally{% endblock %}
+
+{# ---------------------------------------------------------------------------
+   The console's door.
+
+   Same surface as the tenant sign-in — the neighbourhood scene, the frosted
+   field, the same one-sentence failure with a way forward — because it is the
+   same product. What differs is what the page is for: this signs in the
+   platform's operator, not a tenant. There is no self-service here at all: no
+   reset step, no registration, no account creation. A super admin is made on
+   the host.
+   --------------------------------------------------------------------------- #}
+
+{% block shell %}
+<div class="auth-root relative h-screen w-screen overflow-hidden">
+    <img class="auth-scene absolute inset-0 w-full h-full object-cover z-0"
+         src="/static/img/login-neighborhood.svg" alt="">
+
+    <div class="auth-panel w-full z-10">
+        <div class="auth-form">
+
+            <div class="flex items-center gap-3">
+                <span class="auth-mark">P</span>
+                <span>
+                    <span class="block auth-wordmark font-bold text-slate-900">PropTally</span>
+                    <span class="auth-instance">
+                        <span class="auth-instance__dot" aria-hidden="true"></span>
+                        Super admin
+                    </span>
+                </span>
+            </div>
+
+            <div class="auth-pane">
+                <h1 class="pt-sr-only" tabindex="-1" data-pane-heading>Super admin sign-in</h1>
+
+                {% set failures = {
+                    "credentials": {
+                        "title": "That email and password did not match",
+                        "text": "This is the platform's super admin sign-in. It is not the portfolio sign-in, and an account that owns a portfolio cannot use it.",
+                    },
+                    "throttled": {
+                        "title": "One moment",
+                        "text": "Too many attempts just now, so sign-in is paused for a few minutes. Nothing is wrong with the account.",
+                    },
+                    "expired": {
+                        "title": "That took a while",
+                        "text": "The form timed out and nothing was submitted. Try again.",
+                    },
+                } %}
+                {% if error_kind %}
+                {% set failure = failures.get(error_kind, {"title": "Could not sign in", "text": "Please try again."}) %}
+                <div class="auth-reveal mt-6">
+                    {{ ui.alert(variant="error", title=failure.title, text=failure.text) }}
+                </div>
+                {% endif %}
+
+                <form method="post" action="/admin/login" class="mt-6" data-loading-form>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                    <div class="flex flex-col gap-4">
+                        <div class="pt-field">
+                            <label class="pt-field__label auth-label" for="email">Email<span class="pt-field__required" aria-hidden="true">*</span></label>
+                            <div class="auth-input">
+                                <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("mail", "md") }}</span>
+                                <input class="bg-white/95 backdrop-blur-xl border-2 border-white rounded-xl shadow-lg"
+                                       type="email" id="email" name="email" value="{{ email or '' }}"
+                                       placeholder="name@example.com"
+                                       {% if error_kind == 'credentials' %}aria-invalid="true"{% endif %}
+                                       required aria-required="true" autocomplete="email"
+                                       {% if not error_kind %}autofocus{% endif %}>
+                            </div>
+                        </div>
+
+                        <div class="pt-field">
+                            <label class="pt-field__label auth-label" for="password">Password<span class="pt-field__required" aria-hidden="true">*</span></label>
+                            <div class="auth-input auth-password">
+                                <span class="auth-input__icon" aria-hidden="true">{{ ui.icon("lock", "md") }}</span>
+                                <input class="bg-white/95 backdrop-blur-xl border-2 border-white rounded-xl shadow-lg"
+                                       type="password" id="password" name="password"
+                                       {% if error_kind == 'credentials' %}aria-invalid="true"{% endif %}
+                                       required aria-required="true" autocomplete="current-password"
+                                       {% if error_kind == 'credentials' %}autofocus{% endif %}>
+                                <button type="button" class="auth-toggle"
+                                        data-password-toggle="password"
+                                        aria-controls="password" aria-pressed="false"
+                                        aria-label="Show password">
+                                    <span class="auth-toggle__icon auth-toggle__icon--off">{{ ui.icon("eye", "md") }}</span>
+                                    <span class="auth-toggle__icon auth-toggle__icon--on">{{ ui.icon("eye-off", "md") }}</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="auth-cta" data-loading="false">
+                            <button type="submit" class="pt-btn pt-btn--block rounded-full">
+                                <span class="auth-spinner" aria-hidden="true"></span>
+                                <span data-loading-label>Sign in</span>
+                                <span class="auth-cta__arrow" aria-hidden="true">{{ ui.icon("arrow_right", "md") }}</span>
+                            </button>
+                        </div>
+                    </div>
+                </form>
+
+                <div class="auth-notice mt-6">
+                    <span>
+                        Backend console — accounts, portfolios and their lifecycle, and no access
+                        to any portfolio's ledger. There is no self-service here: a super admin is
+                        created on the host with <code>scripts/create_super_admin.py</code>.
+                    </span>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+{% endblock %}

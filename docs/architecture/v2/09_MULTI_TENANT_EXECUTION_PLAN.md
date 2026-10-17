@@ -2,7 +2,7 @@
 
 **Document:** `docs/architecture/v2/09_MULTI_TENANT_EXECUTION_PLAN.md`  
 **Author:** Principal Systems & Financial Architecture  
-**Status:** Implemented (Milestones 1–5) — see §5 for implementation status, §8 for decisions taken  
+**Status:** Implemented (Milestones 1–5, plus the platform console) — see §5 for implementation status, §8 for decisions taken  
 **Date:** October 2026  
 **Context:** End-to-end technical specification and phased execution plan to transform PropTally from a bespoke single-portfolio deployment into a self-hosted, multi-tenant platform supporting multiple independent users, accounts, logins, and isolated real estate portfolios.
 
@@ -152,7 +152,7 @@ flowchart LR
 
 #### Scope & Deliverables
 1. **Control Plane Schema (`src/proptally/db/system_models.py`):**
-   * `User`: `id` (`usr_...`), `email` (unique, lowercase indexed), `password_hash` (Argon2id via `argon2-cffi`), `display_name`, `is_instance_admin` (bool), `is_active` (bool), `created_at`.
+   * `User`: `id` (`usr_...`), `email` (unique, lowercase indexed), `password_hash` (Argon2id via `argon2-cffi`), `display_name`, `is_super_admin` (bool — the platform's own operator, not a portfolio role), `is_active` (bool), `created_at`.
    * `Tenant`: `id` (`tnt_...`), `name`, unique `slug`, lifecycle `status` (`PENDING`, `PROVISIONING`, `ACTIVE`, `FAILED`, `DELETING`, `DELETED`), deletion claim metadata, and `created_at`. A tenant is one portfolio in the current product.
    * `TenantMembership`: `id`, `user_id` (FK), `tenant_id` (FK), `role` (`OWNER` | `MANAGER` | `CPA_REVIEWER` | `READ_ONLY`), `created_at` — `UNIQUE(user_id, tenant_id)`.
    * `UserSession`: `id` (SHA-256 of 32-byte random token), `user_id` (FK), `active_tenant_id` (FK), `csrf_token`, `ip_address`, `user_agent`, `expires_at`, `created_at`, `revoked_at`. Session tokens are compared by hash, rotated on login and on privilege change, and invalidated wholesale when the owner's password changes.
@@ -165,7 +165,7 @@ flowchart LR
 3. **Authentication & Session Dependencies (`src/proptally/web/auth.py`):**
    * Cookie-based session (`pt_session`, `HttpOnly`, `SameSite=Lax`, `Secure` when behind HTTPS).
    * Rate-limited login (`POST /auth/login` — max 5 failed attempts per 15 min per IP/email).
-   * Self-registration is open only while the instance has no accounts (first-user bootstrap) or when `PROPTALLY_ALLOW_REGISTRATION=true`; the first account becomes `is_instance_admin=True`.
+   * Self-registration is the door to a **tenant** and confers no platform authority: it is open while the instance has no tenant yet (a super admin does not count) or when `PROPTALLY_ALLOW_REGISTRATION=true`. The platform's own operator, the **super admin**, is created on the host by `scripts/create_super_admin.py`, signs in at `/admin/login`, and no web route can mint one (`12_SUPER_ADMIN_CONSOLE.md`).
    * Logout (`POST /auth/logout`, revokes the session row), password change (`POST /account/password`, re-verifies the current password and revokes all other sessions), and password reset via single-use `PasswordResetToken`. With no SMTP transport, a local operator runs `scripts/issue_password_reset.py` and hands the link to the verified account holder; the public reset page never reveals whether an account exists or issues a token.
    * Invite lifecycle: portfolio owners issue single-use `UserInvite` records for `MANAGER`, `CPA_REVIEWER`, or `READ_ONLY`; atomic acceptance creates the `TenantMembership`. Ownership is granted only through an explicit owner role change, not an invitation.
    * **CSRF enforcement, not just a stored token:** every state-changing route requires the double-submit token from `UserSession.csrf_token`; requests failing validation are rejected before any domain call. `SameSite=Lax` alone is not treated as CSRF protection.
@@ -284,6 +284,15 @@ states what was verified, not merely what was written.
 | **M3 Onboarding & Portfolio Setup** | **Done** | `tests/test_onboarding_ui.py` (6 tests): a fresh portfolio shows the onboarding empty state; creating a property, deposit account, card and mortgage loan through the POST routes creates the rows *and* allocates distinct ledger accounts to each; opening balances are accepted once and refused for the same date; a `READ_ONLY` member is refused and an anonymous POST is redirected; the sample portfolio seeds into one owner's database only. |
 | **M4 Statement Ingestion** | **Done** | `tests/test_multitenant_ingestion.py` (9 tests) drives it through the browser: a synthetic servicer statement is uploaded, matched to the portfolio's own `LoanAccount` by the loan number printed on it, approved and imported into that portfolio only; the same document against a portfolio without that loan lands `NEEDS_REVIEW` with the actionable reason and imports nothing; a synthetic BofA-shaped checking statement is recognised by the institution's template, unmatched, then registered from the statement itself on the review screen and imported with its transactions; non-PDF uploads, unauthenticated uploads and token-less POSTs are refused. `tests/test_ingestion.py` (21) and `tests/test_bank_ingestion.py` (4) re-expressed through in-test fixtures. |
 | **M5 Roles, Migration & Operations** | **Done** | `tests/test_roles_and_migration.py` (11 tests): a posting on behalf of a verified `CPA_REVIEWER` records that identity and role while an owner self-attestation is never promoted to it; the migrator preserves metrics and journal-line count and refuses a second run; a two-tenant backup/restore round trip (driven as subprocesses) leaves both portfolios intact. |
+
+### After M5 — the platform console and onboarding codes
+
+The operator surface and per-grant onboarding codes are specified and tracked in
+`12_SUPER_ADMIN_CONSOLE.md` (Phases 1–3 implemented). They are post-M5 work and change
+nothing in M1–M5's shape: the control plane gained one table
+(`tenant_onboarding_invites`) and one column rename (`users.is_instance_admin` →
+`users.is_super_admin`, control migration 6, rows preserved). `/auth/register` now also
+accepts a minted code, and `web.auth.registration_requires_code` decides whether it must.
 
 ### End-to-end verification (live server, not tests)
 `python main.py` was run against a temporary storage root and driven over real HTTP.
@@ -435,10 +444,13 @@ to reversal.
    Reversal cost is high: the alternative (a `tenant_id` predicate on every query in
    `metrics.py`, `schedule_e.py` and all routers) is a different and larger change.
 2. **Onboarding rate: invite-or-flag, closed by default — taken.** Registration is open
-   only while the instance has no accounts (so a fresh deployment is bootstrapable
-   without a shipped default password) or when `PROPTALLY_ALLOW_REGISTRATION=true`. The
-   first account becomes the instance administrator; everybody else joins an existing
-   portfolio through a single-use invitation. Reversible with one environment variable.
+   while the instance has no *tenant* (so a fresh deployment is bootstrapable without a
+   shipped default password) or when `PROPTALLY_ALLOW_REGISTRATION=true`. It creates a
+   tenant and confers no platform authority; everybody else joins an existing portfolio
+   through a single-use invitation. Reversible with one environment variable. The
+   platform's own operator is separate from all of it: the **super admin** is created on
+   the host by `scripts/create_super_admin.py` and signs in at `/admin/login`
+   (`12_SUPER_ADMIN_CONSOLE.md`).
 3. **Shared-instance trust: isolation only, no per-portfolio encryption — kept as
    planned.** Portfolios on one host share the process, the OS user and the volume-level
    encryption. `ADR-009` states this explicitly as a limit rather than implying

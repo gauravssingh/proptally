@@ -1,0 +1,128 @@
+{% extends "admin_base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Onboarding — Super admin{% endblock %}
+
+{#
+  The codes that start new portfolios.
+
+  A portfolio invitation (on a portfolio's own screen) joins somebody to an existing
+  tenant. These do the opposite: one code, one new portfolio, spent on redemption. The
+  list keeps spent and expired rows on purpose — "who was let in, and did they come" is
+  the question this screen answers.
+#}
+
+{% block content %}
+{{ ui.page_header(
+    "Onboarding codes",
+    "A single-use code that starts exactly one new portfolio. Mint one per person you are letting in; it confers no platform authority and no access to anybody else's books."
+) }}
+
+{% if message %}{{ ui.alert(variant="success", title="Done", text=message) }}{% endif %}
+{% if error %}{{ ui.alert(variant="error", title="Not done", text=error) }}{% endif %}
+
+{% if code %}
+{{ ui.alert(
+    variant="info",
+    title="Onboarding link — shown once",
+    text="Only its hash is stored, so it cannot be shown again. Pass it to the person by hand:<br><code>/auth/join?code=" ~ code ~ "</code>"
+) }}
+{% endif %}
+
+{{ ui.section_open(
+    "Mint a code",
+    "Pinned to an address when you give one; a bearer token when you leave it empty. Expires in 14 days."
+) }}
+    <form method="post" action="/admin/onboarding">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="pt-stack pt-gap-4">
+            <div class="pt-form-grid pt-form-grid--2">
+                {{ ui.text_field("email", "Email address", type="email",
+                                 help="Optional. Set it to pin this code to one person.") }}
+                {{ ui.text_field("portfolio_name", "Suggested portfolio name",
+                                 placeholder="e.g. Bluebonnet Holdings",
+                                 help="Optional. Prefilled on the redemption form, and editable there.") }}
+            </div>
+            <div>
+                {{ ui.btn("Create onboarding link", variant="primary", size="sm", type="submit", icon_name="tag") }}
+            </div>
+        </div>
+    </form>
+{{ ui.section_close() }}
+
+{{ ui.section_open("Codes issued", "Newest first. A redeemed code names the portfolio it created.") }}
+    {% if invites %}
+    {{ ui.table_open(compact=true, label="Onboarding codes") }}
+        <thead>
+            <tr>
+                {{ ui.th("Issued to") }}
+                {{ ui.th("State") }}
+                {{ ui.th("Expires", cls="pt-table__date") }}
+                {{ ui.th("Portfolio") }}
+                {{ ui.th("", cls="pt-table__actions") }}
+            </tr>
+        </thead>
+        <tbody>
+        {% for invite in invites %}
+            <tr>
+                <td>
+                    <span class="pt-table__primary" title="{{ invite.id }}">{{ invite.email if invite.email else "Bearer token" }}</span>
+                    <span class="pt-table__sub">
+                        {%- if invite.email -%}
+                            Pinned to this address
+                        {%- else -%}
+                            Anyone holding the link
+                        {%- endif -%}
+                        {%- if invite.portfolio_name_hint %} · suggests “{{ invite.portfolio_name_hint }}”{% endif -%}
+                    </span>
+                </td>
+                <td>
+                    {% if invite.accepted_at %}
+                        {{ ui.badge("USED", variant="success", upper=true) }}
+                        <span class="pt-table__sub">Issued {{ invite.created_at | format_date }}</span>
+                    {% elif invite.expires_at <= now %}
+                        {{ ui.badge("EXPIRED", variant="neutral", upper=true) }}
+                        <span class="pt-table__sub">Issued {{ invite.created_at | format_date }}</span>
+                    {% else %}
+                        {{ ui.badge("LIVE", variant="accent", upper=true) }}
+                        <span class="pt-table__sub">Issued {{ invite.created_at | format_date }}</span>
+                    {% endif %}
+                </td>
+                <td class="pt-table__date">
+                    {% if invite.accepted_at %}
+                        Used {{ invite.accepted_at | format_date }}
+                    {% elif invite.expires_at <= now %}
+                        Ended {{ invite.expires_at | format_date }}
+                    {% else %}
+                        {{ invite.expires_at | format_date }}
+                    {% endif %}
+                </td>
+                <td>
+                    {% if invite.accepted_tenant_id %}
+                        <a class="pt-table__primary" href="/admin/tenants/{{ invite.accepted_tenant_id }}">Open portfolio</a>
+                    {% else %}
+                        <span class="pt-text-muted">—</span>
+                    {% endif %}
+                </td>
+                <td class="pt-table__actions">
+                    {% if not invite.accepted_at %}
+                    <form method="post" action="/admin/onboarding/{{ invite.id }}/revoke" class="pt-inline-flex">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        {{ ui.btn("Withdraw", variant="ghost", size="sm", type="submit",
+                                  title="Stop this link working immediately") }}
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    {{ ui.table_close() }}
+    {% else %}
+    {{ ui.empty_state(
+        "No codes yet",
+        "Mint one above and pass the link to the person who should get a portfolio.",
+        icon_name="tag"
+    ) }}
+    {% endif %}
+{{ ui.section_close() }}
+{% endblock %}

@@ -1,0 +1,207 @@
+{% extends "admin_base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}{{ tenant.name }} — Super admin{% endblock %}
+
+{#
+  One portfolio, as the platform sees it: who can open it, who has been invited, what it
+  holds by count, and where its files live. It never shows a balance — the operator
+  administers the tenant, not its books.
+#}
+
+{% block content %}
+{% set header_meta %}
+    {{ ui.badge(tenant.status, variant=("success" if tenant.status == "ACTIVE" else ("warning" if tenant.status in ["FAILED", "DELETING", "PROVISIONING", "PENDING"] else "neutral")), upper=true) }}
+{% endset %}
+
+{% call ui.page_header(
+    tenant.name,
+    "One portfolio: its own database, document vault and photos. Slug <code class=\"pt-num\">" ~ tenant.slug ~ "</code>.",
+    meta=header_meta
+) %}
+    {{ ui.btn("All portfolios", variant="ghost", size="sm", href="/admin/tenants") }}
+{% endcall %}
+
+{% if message %}{{ ui.alert(variant="success", title="Done", text=message) }}{% endif %}
+{% if error %}{{ ui.alert(variant="error", title="Not done", text=error) }}{% endif %}
+
+{% if invite_token %}
+{{ ui.alert(
+    variant="info",
+    title="Invitation link — shown once",
+    text="Pass this to the person by hand. Only its hash is stored, so it cannot be shown again:<br><code>/auth/invite/" ~ invite_token ~ "</code>"
+) }}
+{% endif %}
+
+{{ ui.section_open(
+    "What it holds",
+    "Counts and storage only. The console reports no financial figure for any portfolio."
+) }}
+    <div class="pt-stack pt-gap-4">
+    {% if status_detail and status_detail.summary %}
+    <div class="pt-summary-grid pt-summary-grid--4 pt-gap-3">
+        {{ ui.stat("Doors", status_detail.summary.properties, boxed=true) }}
+        {{ ui.stat("Loans", status_detail.summary.loans, boxed=true) }}
+        {{ ui.stat("Documents", status_detail.summary.documents, boxed=true) }}
+        {{ ui.stat("Transactions", status_detail.summary.transactions, boxed=true) }}
+    </div>
+    {% endif %}
+
+    <div class="pt-stack pt-gap-3">
+        <div class="pt-kv">
+            <span class="pt-kv__key">Created</span>
+            <span class="pt-kv__value">{{ tenant.created_at | format_date }}</span>
+        </div>
+        {% if status_detail %}
+        <div class="pt-kv">
+            <span class="pt-kv__key">Journal entries</span>
+            <span class="pt-kv__value pt-num">{{ status_detail.summary.journal_entries }}</span>
+        </div>
+        <div class="pt-kv">
+            <span class="pt-kv__key">Storage</span>
+            <span class="pt-kv__value pt-num">{{ status_detail.portfolio_bytes | format_bytes }}</span>
+        </div>
+        <div class="pt-kv">
+            <span class="pt-kv__key">On disk</span>
+            <span class="pt-kv__value"><code class="pt-num">{{ status_detail.root }}</code></span>
+        </div>
+        {% endif %}
+    </div>
+    </div>
+
+    {% if not readable %}
+    {{ ui.alert(
+        variant="warning",
+        title="Database unreadable",
+        text="This portfolio's database could not be opened, so its counts cannot be reported. Its files are untouched and a copy can still be taken on the host."
+    ) }}
+    {% endif %}
+{{ ui.section_close() }}
+
+{% if migration %}
+{{ ui.section_open("Legacy migration", "The import that created or populated this portfolio.") }}
+    <div class="pt-stack pt-gap-3">
+        <div class="pt-kv">
+            <span class="pt-kv__key">State</span>
+            <span class="pt-kv__value">{{ ui.badge(migration.state, upper=true) }} · {{ migration.stage }}</span>
+        </div>
+        <div class="pt-kv">
+            <span class="pt-kv__key">Source</span>
+            <span class="pt-kv__value"><code class="pt-num">{{ migration.source_path }}</code></span>
+        </div>
+        <div class="pt-kv">
+            <span class="pt-kv__key">Keeps source</span>
+            <span class="pt-kv__value">{{ "Yes" if migration.keep_source else "No" }}</span>
+        </div>
+        {% if migration.last_error %}
+        <div class="pt-kv">
+            <span class="pt-kv__key">Last error</span>
+            <span class="pt-kv__value">{{ migration.last_error }}</span>
+        </div>
+        {% endif %}
+    </div>
+{{ ui.section_close() }}
+{% endif %}
+
+{{ ui.section_open(
+    "Members",
+    "Who can open this portfolio and in what role. A portfolio always keeps at least one owner."
+) }}
+    {{ ui.table_open(label="Members") }}
+        <thead>
+            <tr>
+                {{ ui.th("Person") }}
+                {{ ui.th("Role") }}
+                {{ ui.th("Joined") }}
+                {{ ui.th("", cls="pt-table__actions") }}
+            </tr>
+        </thead>
+        <tbody>
+        {% for member in members %}
+            <tr>
+                <td>
+                    <span class="pt-table__primary">{{ member.display_name or member.email }}</span>
+                    <span class="pt-fs-caption pt-text-secondary">{{ member.email }}</span>
+                    {% if not member.is_active %}{{ ui.badge("INACTIVE", variant="warning", upper=true) }}{% endif %}
+                </td>
+                <td>{{ ui.badge(member.role, variant="neutral", upper=true) }}</td>
+                <td class="pt-fs-caption">{{ member.joined_at | format_date }}</td>
+                <td class="pt-table__actions">
+                    <div class="pt-flex pt-items-center pt-gap-2 pt-flex-wrap">
+                        <form method="post" action="/admin/tenants/{{ tenant.id }}/members/{{ member.membership_id }}/role"
+                              class="pt-inline-flex pt-items-center pt-gap-2">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            {{ ui.select_field("role", "Role for " ~ member.email, role_options, selected=member.role, hidden_label=true) }}
+                            {{ ui.btn("Set", variant="subtle", size="sm", type="submit", title="Change this person's role in this portfolio") }}
+                        </form>
+                        <form method="post" action="/admin/people/{{ member.user_id }}/reset" class="pt-inline-flex">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            {{ ui.icon_btn("Issue a password reset for " ~ member.email, "lock", variant="ghost", size="sm",
+                                           type="submit", title="Mint a single-use reset link, shown once") }}
+                        </form>
+                        <form method="post" action="/admin/tenants/{{ tenant.id }}/members/{{ member.membership_id }}/remove" class="pt-inline-flex">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            {{ ui.icon_btn("Remove " ~ member.email ~ " from this portfolio", "trash", variant="destructive", size="sm",
+                                           type="submit", title="Remove this person's access here only; their account survives") }}
+                        </form>
+                    </div>
+                </td>
+            </tr>
+        {% endfor %}
+        {% if not members %}
+            <tr><td colspan="4" class="pt-fs-caption pt-text-secondary">No members.</td></tr>
+        {% endif %}
+        </tbody>
+    {{ ui.table_close() }}
+{{ ui.section_close() }}
+
+{{ ui.section_open(
+    "Invite somebody",
+    "A single-use link that joins this portfolio in an invitable role. Ownership is granted by promotion afterwards, never by a link."
+) }}
+    <div class="pt-stack pt-gap-5">
+    <form method="post" action="/admin/tenants/{{ tenant.id }}/invites">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="pt-stack pt-gap-4">
+            <div class="pt-form-grid pt-form-grid--2">
+                {{ ui.text_field("email", "Email address", type="email", required=true,
+                                 help="The invitation is pinned to this address.") }}
+                {{ ui.select_field("role", "Role", invitable_role_options, required=true) }}
+            </div>
+            <div>
+                {{ ui.btn("Create invitation link", variant="primary", size="sm", type="submit") }}
+            </div>
+        </div>
+    </form>
+
+    {% if pending_invites %}
+    {{ ui.table_open(label="Pending invitations", compact=true) }}
+        <thead>
+            <tr>
+                {{ ui.th("Email") }}
+                {{ ui.th("Role") }}
+                {{ ui.th("Expires") }}
+                {{ ui.th("", cls="pt-table__actions") }}
+            </tr>
+        </thead>
+        <tbody>
+        {% for invite in pending_invites %}
+            <tr>
+                <td>{{ invite.email }}</td>
+                <td>{{ ui.badge(invite.role, variant="neutral", upper=true) }}</td>
+                <td class="pt-fs-caption">Issued {{ invite.created_at | format_date }} · ends {{ invite.expires_at | format_date }}</td>
+                <td class="pt-table__actions">
+                    <form method="post" action="/admin/invites/{{ invite.id }}/revoke" class="pt-inline-flex">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="hidden" name="tenant_id" value="{{ tenant.id }}">
+                        {{ ui.btn("Withdraw", variant="ghost", size="sm", type="submit") }}
+                    </form>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    {{ ui.table_close() }}
+    {% endif %}
+    </div>
+{{ ui.section_close() }}
+{% endblock %}

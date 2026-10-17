@@ -1,0 +1,98 @@
+{% extends "admin_base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Overview — Super admin{% endblock %}
+
+{% block content %}
+{% set header_meta %}
+    {{ ui.badge("SUPER ADMIN", variant="rule", upper=true) }}
+{% endset %}
+
+{{ ui.page_header(
+    "Platform overview",
+    "The accounts and portfolios this installation hosts, and where its data lives. Counts and storage only: the console reads no portfolio's ledger.",
+    meta=header_meta
+) }}
+
+<div class="pt-grid pt-sm-grid-cols-2 pt-lg-grid-cols-4 pt-gap-4">
+    {{ ui.kpi(
+        "Portfolios",
+        overview.tenants_total,
+        sub=(overview.tenants_active ~ " active") if overview.tenants_active != overview.tenants_total
+            else "All active"
+    ) }}
+    {{ ui.kpi(
+        "Tenant accounts",
+        overview.tenant_accounts,
+        sub=overview.users_active ~ " of " ~ overview.users_total ~ " accounts active"
+    ) }}
+    {{ ui.kpi(
+        "Super admins",
+        overview.super_admins,
+        sub="Platform operators, created on the host"
+    ) }}
+    {{ ui.kpi(
+        "Live sessions",
+        overview.sessions_live,
+        sub=(overview.invites_waiting ~ " invitation(s) awaiting acceptance")
+    ) }}
+</div>
+
+{{ ui.section_open(
+    "Portfolios by state",
+    "A portfolio is one client's books: its own database, documents and photos under the storage root."
+) }}
+    {{ ui.table_open(label="Portfolios by state") }}
+        <thead>
+            <tr>
+                {{ ui.th("State") }}
+                {{ ui.th("Meaning") }}
+                {{ ui.th("Portfolios", num=true) }}
+            </tr>
+        </thead>
+        <tbody>
+        {% for state, count in overview.by_status %}
+            <tr>
+                <td>{{ ui.badge(state, variant=("success" if state == "ACTIVE" else ("warning" if state in ["FAILED", "DELETING", "PROVISIONING", "PENDING"] else "neutral")), upper=true) }}</td>
+                <td class="pt-fs-caption pt-text-secondary">
+                    {% if state == "ACTIVE" %}Serving requests.
+                    {% elif state == "PENDING" %}Registered, storage not created yet.
+                    {% elif state == "PROVISIONING" %}Storage being created; retried at startup.
+                    {% elif state == "FAILED" %}Provisioning failed; safe to retry.
+                    {% elif state == "DELETING" %}Being removed; its files are not unlinked while work is in flight.
+                    {% else %}Removed.
+                    {% endif %}
+                </td>
+                <td class="pt-table__num">{{ count }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    {{ ui.table_close() }}
+{{ ui.section_close() }}
+
+{{ ui.section_open(
+    "Where it lives",
+    "The control plane holds identity, membership, sessions and invitations. It holds no ledger data."
+) }}
+    <div class="pt-stack pt-gap-3">
+        <div class="pt-kv">
+            <span class="pt-kv__key">Control-plane database</span>
+            <span class="pt-kv__value">
+                {% if control_plane %}<code class="pt-num">{{ control_plane }}</code> · {{ control_plane_bytes | format_bytes }}{% else %}—{% endif %}
+            </span>
+        </div>
+        <div class="pt-kv">
+            <span class="pt-kv__key">Storage root</span>
+            <span class="pt-kv__value"><code class="pt-num">{{ storage_root }}</code></span>
+        </div>
+        <div class="pt-kv">
+            <span class="pt-kv__key">Memberships</span>
+            <span class="pt-kv__value">{{ overview.memberships }}</span>
+        </div>
+        <p class="pt-fs-caption pt-text-secondary">
+            Each portfolio keeps its own database, document vault and photos under
+            <code class="pt-num">{{ storage_root }}/tenants/&lt;id&gt;/</code>.
+        </p>
+    </div>
+{{ ui.section_close() }}
+{% endblock %}

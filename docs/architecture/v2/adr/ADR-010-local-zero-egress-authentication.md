@@ -38,10 +38,13 @@ We select **local, zero-egress authentication** (option 2).
    reverse proxy that sets `X-Forwarded-Proto`) and not otherwise, overridable with
    `PROPTALLY_SECURE_COOKIES`. A `Secure` cookie on a plain-HTTP deployment is never sent
    back, which would lock an owner out of their own app.
-6. **Self-registration is closed by default** once the instance has an account, and open
-   while it has none, so a fresh deployment is bootstrapable without shipping a default
-   password. The first account becomes the instance administrator. Joining somebody
-   else's portfolio is possible only through a single-use invitation.
+6. **Tenant self-registration is closed by default** once the instance has a tenant, and
+   open while it has none, so a fresh deployment is bootstrapable without shipping a
+   default password. Registering creates a **tenant** and confers no platform authority.
+   The platform's own operator is the **super admin**, created on the host by
+   `scripts/create_super_admin.py` and signing in at `/admin/login`
+   (`12_SUPER_ADMIN_CONSOLE.md`); no web route can mint one. Joining somebody else's
+   portfolio is possible only through a single-use invitation.
 
 ## Consequences
 ### Positive

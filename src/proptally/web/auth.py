@@ -24,11 +24,11 @@ import os
 import secrets
 import socket
 import time
+from collections.abc import AsyncIterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import timedelta
-from typing import AsyncIterator, Optional
 from uuid import uuid4
 
 from argon2 import PasswordHasher
@@ -37,6 +37,7 @@ from fastapi import HTTPException, Request
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
+
 from proptally.db.system_models import (
     ADMIN_ROLES,
     CLIENT_CONFIRMATION_ROLES,
@@ -44,20 +45,21 @@ from proptally.db.system_models import (
     EXTERNAL_REVIEW_ROLES,
     INVITABLE_ROLES,
     MUTATING_ROLES,
-    ROLE_MANAGER,
-    ROLES,
-    WORK_ROLES,
     ROLE_CPA_REVIEWER,
+    ROLE_MANAGER,
     ROLE_OWNER,
     ROLE_READ_ONLY,
+    ROLES,
     SYSTEM_TABLES,  # noqa: F401  (re-exported for callers building the schema)
-    PasswordResetToken,
-    Tenant,
-    TenantMembership,
     TENANT_ACTIVE,
     TENANT_FAILED,
     TENANT_PENDING,
     TENANT_PROVISIONING,
+    WORK_ROLES,
+    PasswordResetToken,
+    Tenant,
+    TenantMembership,
+    TenantOnboardingInvite,
     User,
     UserInvite,
     UserSession,
@@ -178,7 +180,7 @@ class TenantContext:
     session: UserSession
     engine: Engine
     paths: TenantPaths
-    operation_id: Optional[str] = None
+    operation_id: str | None = None
 
     @property
     def csrf_token(self) -> str:
@@ -283,15 +285,15 @@ class TenantContext:
 #: The context of the request being handled. Set by the dependency and read by
 #: templates, so the shell can render the signed-in user without every route
 #: having to thread it through its template context.
-_current_context: ContextVar[Optional[TenantContext]] = ContextVar("proptally_context", default=None)
+_current_context: ContextVar[TenantContext | None] = ContextVar("proptally_context", default=None)
 
 
-def current_context() -> Optional[TenantContext]:
+def current_context() -> TenantContext | None:
     """The active request's portfolio context, or None outside a request."""
     return _current_context.get()
 
 
-def set_current_context(context: Optional[TenantContext]) -> None:
+def set_current_context(context: TenantContext | None) -> None:
     _current_context.set(context)
 
 
@@ -352,7 +354,7 @@ def normalise_email(email: str) -> str:
     return email.strip().lower()
 
 
-def find_user(engine: Engine, email: str) -> Optional[User]:
+def find_user(engine: Engine, email: str) -> User | None:
     with Session(engine) as session:
         return session.exec(select(User).where(User.email == normalise_email(email))).first()
 
@@ -360,6 +362,49 @@ def find_user(engine: Engine, email: str) -> Optional[User]:
 def count_users(engine: Engine) -> int:
     with Session(engine) as session:
         return len(session.exec(select(User)).all())
+
+
+def count_portfolio_users(engine: Engine) -> int:
+    """Accounts that belong to the platform's *tenants*, excluding super admins.
+
+    The bootstrap question is "does anybody own a portfolio yet", and a super admin
+    never does: the host operator exists before any tenant and must not be able to
+    close the door on the first one.
+    """
+    with Session(engine) as session:
+        statement = select(User).where(User.is_super_admin == False)
+        return len(session.exec(statement).all())
+
+
+def count_super_admins(engine: Engine) -> int:
+    """Platform operators on this installation."""
+    with Session(engine) as session:
+        statement = select(User).where(User.is_super_admin == True)
+        return len(session.exec(statement).all())
+
+
+def registration_flag_enabled() -> bool:
+    """Whether the operator has explicitly opened registration with the environment."""
+    return os.environ.get("PROPTALLY_ALLOW_REGISTRATION", "").lower() in {"1", "true", "yes"}
+
+
+def registration_requires_code(engine: Engine) -> bool:
+    """Whether starting a portfolio needs a code from the operator.
+
+    An established operator means the door is theirs: once a super admin exists they can
+    mint a code for whoever they choose, so a portfolio should not be startable without
+    one. That is the difference between a host nobody has claimed yet and a host somebody
+    is running.
+
+    Two explicit overrides change the answer, and neither is needed on an unclaimed host:
+
+    * ``PROPTALLY_ALLOW_REGISTRATION`` says "wide open anyway" and is honoured as written;
+    * ``PROPTALLY_PORTFOLIO_INVITE_CODE`` is the older single-secret gate — one global
+      code, no per-recipient expiry or record — still honoured where it is configured.
+    """
+    if registration_flag_enabled():
+        return bool(portfolio_invite_code())
+    return count_super_admins(engine) > 0
 
 
 def memberships_for(engine: Engine, user_id: str) -> list[TenantMembership]:
@@ -373,7 +418,7 @@ def memberships_for(engine: Engine, user_id: str) -> list[TenantMembership]:
         )
 
 
-def tenant_for(engine: Engine, tenant_id: str) -> Optional[Tenant]:
+def tenant_for(engine: Engine, tenant_id: str) -> Tenant | None:
     with Session(engine) as session:
         return session.get(Tenant, tenant_id)
 
@@ -422,7 +467,7 @@ def pending_invites(control_engine: Engine, tenant_id: str) -> list[UserInvite]:
         ).all())
 
 
-def _owner_count(session: Session, tenant_id: str, excluding: Optional[str] = None) -> int:
+def _owner_count(session: Session, tenant_id: str, excluding: str | None = None) -> int:
     """Owners of the portfolio, optionally ignoring one membership."""
     owners = session.exec(
         select(TenantMembership).where(
@@ -604,9 +649,10 @@ def register_portfolio(
 ) -> tuple[User, Tenant, TenantMembership]:
     """Creates an account and its first portfolio, in that order.
 
-    The first account on a fresh instance also becomes the instance administrator,
-    which is what makes a self-hosted deployment bootstrapable without shipping a
-    default password.
+    Registering deliberately confers **no** platform authority. A person who signs up
+    here is a tenant: an account with one portfolio membership. The platform's own
+    administration -- the super admin -- is a different principal entirely, created on
+    the host by ``scripts/create_super_admin.py``, and no web route can mint one.
     """
     ok, reason = password_is_acceptable(password)
     if not ok:
@@ -620,13 +666,13 @@ def register_portfolio(
         if session.exec(select(User).where(User.email == email)).first():
             raise ValueError("An account with that email already exists.")
 
-        is_first_user = len(session.exec(select(User)).all()) == 0
         user = User(
             id=f"usr_{uuid4().hex[:16]}",
             email=email,
             password_hash=hash_password(password),
             display_name=display_name.strip() or email,
-            is_instance_admin=is_first_user,
+            # ``is_super_admin`` is left at its default of False, always. Tenant
+            # registration is not a path to platform authority.
         )
         session.add(user)
 
@@ -656,7 +702,7 @@ def register_portfolio(
     return user, tenant, membership
 
 
-def authenticate(control_engine: Engine, email: str, password: str) -> Optional[User]:
+def authenticate(control_engine: Engine, email: str, password: str) -> User | None:
     """The user for these credentials, or None. Never reveals which part failed."""
     with Session(control_engine) as session:
         user = session.exec(select(User).where(User.email == normalise_email(email))).first()
@@ -724,7 +770,7 @@ def create_invite(
     return invite, token
 
 
-def find_invite(control_engine: Engine, token: str) -> Optional[UserInvite]:
+def find_invite(control_engine: Engine, token: str) -> UserInvite | None:
     with Session(control_engine) as session:
         invite = session.exec(
             select(UserInvite).where(UserInvite.token_hash == token_digest(token))
@@ -821,7 +867,165 @@ def accept_invite(
     return user, tenant, membership
 
 
-def issue_password_reset(control_engine: Engine, email: str) -> Optional[str]:
+#: How long an onboarding code stays usable. Longer than a team invite, because the
+#: operator hands it to somebody who is not yet a user of anything.
+ONBOARDING_INVITE_LIFETIME = timedelta(days=14)
+
+
+def create_onboarding_invite(
+    control_engine: Engine,
+    *,
+    created_by_user_id: str,
+    email: str = "",
+    portfolio_name_hint: str = "",
+) -> tuple[TenantOnboardingInvite, str]:
+    """Mints a single-use code that starts one new portfolio.
+
+    Returns the row and the plain token; only the digest is stored, so the token is shown
+    once. An optional address pins the code to one person; without one it is a bearer
+    token the operator hands to anybody they choose.
+    """
+    token = new_token()
+    with Session(control_engine) as session:
+        invite = TenantOnboardingInvite(
+            id=f"onb_{uuid4().hex[:16]}",
+            email=normalise_email(email) if email.strip() else None,
+            portfolio_name_hint=portfolio_name_hint.strip() or None,
+            token_hash=token_digest(token),
+            created_by_user_id=created_by_user_id,
+            expires_at=utc_now() + ONBOARDING_INVITE_LIFETIME,
+        )
+        session.add(invite)
+        session.commit()
+        session.refresh(invite)
+    return invite, token
+
+
+def find_onboarding_invite(
+    control_engine: Engine, token: str | None
+) -> TenantOnboardingInvite | None:
+    """The live code matching this string, or ``None``.
+
+    Answers only about the token presented: a spent, revoked or expired code is
+    indistinguishable from one that never existed, so a wrong guess learns nothing.
+    """
+    if not token:
+        return None
+    with Session(control_engine) as session:
+        row = session.exec(
+            select(TenantOnboardingInvite).where(
+                TenantOnboardingInvite.token_hash == token_digest(token)
+            )
+        ).first()
+        if row is None or row.accepted_at is not None or row.expires_at <= utc_now():
+            return None
+        session.expunge(row)
+        return row
+
+
+def onboarding_invites(control_engine: Engine) -> list[TenantOnboardingInvite]:
+    """Every code ever minted, newest first.
+
+    Spent and expired ones included, deliberately: "who was let in, and did they come"
+    is the question the console is answering, and a list that hides history cannot.
+    """
+    with Session(control_engine) as session:
+        return list(
+            session.exec(
+                select(TenantOnboardingInvite).order_by(
+                    TenantOnboardingInvite.created_at.desc()
+                )
+            ).all()
+        )
+
+
+def revoke_onboarding_invite(control_engine: Engine, invite_id: str) -> None:
+    """Withdraws an unused code, so its link stops working."""
+    with Session(control_engine) as session:
+        row = session.get(TenantOnboardingInvite, invite_id)
+        if row is None:
+            raise MembershipError("No such onboarding code.")
+        if row.accepted_at is not None:
+            raise MembershipError("That code has already been used.")
+        session.delete(row)
+        session.commit()
+
+
+def accept_onboarding_invite(
+    control_engine: Engine,
+    tenant_manager: TenantManager,
+    *,
+    token: str,
+    email: str,
+    password: str,
+    display_name: str = "",
+    portfolio_name: str = "",
+) -> tuple[User, Tenant, TenantMembership]:
+    """Redeems a code: creates the account, its portfolio and an OWNER membership.
+
+    The code is claimed *before* anything is created, and the claim is a conditional
+    UPDATE, so it is spent exactly once even under simultaneous redemption. Everything
+    that can be refused is checked *before* the claim: a redeemed code must not be burned
+    by a mistyped password, and a failed claim must not leave a half-made portfolio.
+    """
+    preview = find_onboarding_invite(control_engine, token)
+    if preview is None:
+        raise ValueError("That onboarding code is invalid, already used, or has expired.")
+
+    email = normalise_email(email)
+    if preview.email and preview.email != email:
+        raise ValueError(f"That code was issued for {preview.email}.")
+    if not email or "@" not in email:
+        raise ValueError("A valid email address is required.")
+    ok, reason = password_is_acceptable(password)
+    if not ok:
+        raise ValueError(reason)
+    if find_user(control_engine, email) is not None:
+        raise ValueError("An account with that email already exists; sign in instead.")
+
+    with Session(control_engine) as session:
+        claimed = session.execute(
+            text(
+                "UPDATE tenant_onboarding_invites SET accepted_at=:now "
+                "WHERE id=:id AND accepted_at IS NULL"
+            ),
+            {"now": utc_now().isoformat(), "id": preview.id},
+        )
+        if claimed.rowcount != 1:
+            session.rollback()
+            raise ValueError("That onboarding code was already used.")
+        session.commit()
+
+    try:
+        user, tenant, membership = register_portfolio(
+            control_engine,
+            tenant_manager,
+            email=email,
+            password=password,
+            display_name=display_name,
+            portfolio_name=portfolio_name or preview.portfolio_name_hint or "New portfolio",
+        )
+    except Exception:
+        # Nothing is half-made: release the claim so the same link can be retried rather
+        # than a new one minted, and let the caller see the real reason.
+        with Session(control_engine) as session:
+            row = session.get(TenantOnboardingInvite, preview.id)
+            if row is not None:
+                row.accepted_at = None
+                session.add(row)
+                session.commit()
+        raise
+
+    with Session(control_engine) as session:
+        row = session.get(TenantOnboardingInvite, preview.id)
+        if row is not None:
+            row.accepted_tenant_id = tenant.id
+            session.add(row)
+            session.commit()
+    return user, tenant, membership
+
+
+def issue_password_reset(control_engine: Engine, email: str) -> str | None:
     """Creates a reset token for the local operator to deliver out of band.
 
     Returns ``None`` when no such account exists. This helper must only be called from an
@@ -843,7 +1047,7 @@ def issue_password_reset(control_engine: Engine, email: str) -> Optional[str]:
     return token
 
 
-def find_reset_token(control_engine: Engine, token: str) -> Optional[PasswordResetToken]:
+def find_reset_token(control_engine: Engine, token: str) -> PasswordResetToken | None:
     """The live reset token matching this string, or ``None``.
 
     Read-only, so a caller can tell a usable token from a dead one *before* the
@@ -898,8 +1102,8 @@ def issue_session(
     user: User,
     tenant_id: str,
     *,
-    ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
 ) -> tuple[str, UserSession]:
     """Opens a session and returns the cookie token with its stored row."""
     token = new_token()
@@ -941,8 +1145,8 @@ def switch_active_tenant(control_engine: Engine, token: str, tenant_id: str) -> 
 def resolve_context(
     control_engine: Engine,
     tenant_manager: TenantManager,
-    token: Optional[str],
-) -> Optional[TenantContext]:
+    token: str | None,
+) -> TenantContext | None:
     """The portfolio context for a session cookie, or None if it is not usable."""
     if not token:
         return None
@@ -1050,7 +1254,7 @@ def validate_authorizations(
     return client_confirmed, user_attested_cpa_review
 
 
-def csrf_token_valid(context: TenantContext, presented: Optional[str]) -> bool:
+def csrf_token_valid(context: TenantContext | AdminContext, presented: str | None) -> bool:
     """Double-submit check: the request must echo the session's own token."""
     if not presented:
         return False
@@ -1075,7 +1279,7 @@ def issue_pre_session_csrf(request) -> tuple[str, bool]:
     return new_token(), True
 
 
-def pre_session_csrf_valid(request, presented: Optional[str]) -> bool:
+def pre_session_csrf_valid(request, presented: str | None) -> bool:
     """Whether an unauthenticated post echoes the pre-session cookie."""
     cookie = request.cookies.get(PRE_SESSION_COOKIE)
     if not cookie or not presented:
@@ -1112,14 +1316,15 @@ def clear_session_cookie(response) -> None:
 
 
 def registration_is_open(control_engine: Engine) -> bool:
-    """Whether self-registration is permitted right now.
+    """Whether tenant self-registration is permitted right now.
 
-    Open when the operator enables it, and also while the instance has no accounts
-    at all: a self-hosted deployment has to be bootstrapable without shipping a
-    default password, and the very first account becomes the instance administrator.
+    Open when the operator enables it, and also while no *tenant* exists yet: a
+    self-hosted deployment has to be bootstrapable without shipping a default
+    password. A super admin is not a tenant and does not count, so creating the
+    platform operator on the host does not close the door on the first portfolio.
     """
-    flag = os.environ.get("PROPTALLY_ALLOW_REGISTRATION", "").lower() in {"1", "true", "yes"}
-    return flag or count_users(control_engine) == 0
+    flag = registration_flag_enabled()
+    return flag or count_portfolio_users(control_engine) == 0
 
 
 def portfolio_invite_code() -> str:
@@ -1145,7 +1350,7 @@ def portfolio_code_matches(submitted: str) -> bool:
 
 def _acquire_tenant_operation(
     control_engine: Engine, tenant_id: str, user_id: str, session_id: str, role: str
-) -> Optional[str]:
+) -> str | None:
     """Atomically lease an active tenant only while its session and membership remain valid."""
     operation_id = f"op_{uuid4().hex}"
     now = utc_now().isoformat()
@@ -1264,7 +1469,7 @@ class AuthenticationDependency:
             )
 
 
-async def _form_csrf_token(request: Request) -> Optional[str]:
+async def _form_csrf_token(request: Request) -> str | None:
     """The CSRF token from the request's form body, if it has one.
 
     Starlette caches the parsed form on the request, so parsing it here is not
@@ -1280,3 +1485,199 @@ async def _form_csrf_token(request: Request) -> Optional[str]:
         return None
     value = form.get("csrf_token")
     return value if isinstance(value, str) else None
+
+
+# --- Super administration --------------------------------------------------
+#
+# The super admin is the *platform's* own administration: the operator of the
+# application. It sits outside the tenant model entirely -- it is not a portfolio
+# role, not a membership, and not a participant in anything it administers. Three
+# things enforce that, and all three matter:
+#
+#   * it is created on the host (``scripts/create_super_admin.py``) and **no web
+#     route can mint one**;
+#   * it signs in at ``/admin/login``, not ``/auth/login``, and its session cookie is
+#     scoped to ``/admin`` so it is never sent to the tenant application at all;
+#   * its context is deliberately not a ``TenantContext`` -- no portfolio engine, no
+#     vault paths, no lease -- so it cannot read a ledger even by accident.
+
+#: Session cookie for the console. Path-scoped to ``/admin``: the browser never sends
+#: it to the tenant application, so platform authority cannot leak into a portfolio
+#: request. Separate from ``COOKIE_NAME`` on purpose -- the two sign-ins are
+#: independent and may coexist in one browser.
+SUPER_ADMIN_COOKIE = "pt_super_admin"
+
+
+def super_admin_cookie_name() -> str:
+    return os.environ.get("PROPTALLY_SUPER_ADMIN_COOKIE", SUPER_ADMIN_COOKIE)
+
+
+@dataclass(frozen=True)
+class AdminContext:
+    """The super admin's context for a request to the console.
+
+    Carries only the operator's account and session: enough to render, to attribute
+    an audited change, and to check the CSRF token. No portfolio engine, no paths.
+    """
+
+    user: User
+    session: UserSession
+
+    @property
+    def csrf_token(self) -> str:
+        return self.session.csrf_token
+
+    def actor_id(self) -> str:
+        return self.user.id
+
+
+def create_super_admin(
+    control_engine: Engine,
+    *,
+    email: str,
+    password: str,
+    display_name: str = "",
+) -> User:
+    """Creates or updates the platform's super admin. Host-only; never called by a route.
+
+    Idempotent, so it can be re-run to rotate the operator password or fix a name. It
+    creates no tenant and no membership, which is the point: the super admin is not a
+    portfolio owner with a flag on their account, it is a principal outside the tenant
+    model. Any existing session for the account is revoked, because this may be a
+    credential reset.
+    """
+    ok, reason = password_is_acceptable(password)
+    if not ok:
+        raise ValueError(reason)
+
+    email = normalise_email(email)
+    if not email or "@" not in email:
+        raise ValueError("A valid email address is required.")
+
+    with Session(control_engine) as session:
+        user = session.exec(select(User).where(User.email == email)).first()
+        if user is None:
+            user = User(
+                id=f"usr_{uuid4().hex[:16]}",
+                email=email,
+                password_hash=hash_password(password),
+                display_name=display_name.strip() or email,
+                is_super_admin=True,
+            )
+            session.add(user)
+        else:
+            user.password_hash = hash_password(password)
+            user.password_changed_at = utc_now()
+            user.is_super_admin = True
+            user.is_active = True
+            if display_name.strip():
+                user.display_name = display_name.strip()
+            session.add(user)
+            for existing in session.exec(
+                select(UserSession).where(UserSession.user_id == user.id)
+            ).all():
+                if existing.revoked_at is None:
+                    existing.revoked_at = utc_now()
+                    session.add(existing)
+        session.commit()
+        session.refresh(user)
+        return user
+
+
+def authenticate_super_admin(
+    control_engine: Engine, email: str, password: str
+) -> User | None:
+    """The super admin for these credentials, or ``None``.
+
+    Same uniform failure as the tenant sign-in, and deliberately the *same* answer for a
+    valid tenant account: an ordinary portfolio user is not a weaker operator, they are
+    not an operator at all, and the console must not tell an attacker which addresses
+    are. A wrong password, an unknown address and a tenant account all return ``None``.
+    """
+    with Session(control_engine) as session:
+        user = session.exec(select(User).where(User.email == normalise_email(email))).first()
+        if user is None or not user.is_active or not user.is_super_admin:
+            # Still hash, so a missing or non-operator account is not obviously faster.
+            verify_password(_HASHER.hash("timing-equalisation"), password)
+            return None
+        if not verify_password(user.password_hash, password):
+            return None
+        return user
+
+
+def resolve_admin_context(control_engine: Engine, token: str | None) -> AdminContext | None:
+    """The super admin's context for a console cookie, or ``None`` if it is not usable.
+
+    Resolves only for an active account that *is* the platform's super admin. Everybody
+    else -- anonymous, expired, an ordinary portfolio member -- resolves to ``None``,
+    which the dependency renders as a 404 rather than a 403: the console's existence is
+    not advertised to the tenants who live on this platform.
+    """
+    if not token:
+        return None
+    with Session(control_engine) as session:
+        row = session.get(UserSession, token_digest(token))
+        if row is None or row.revoked_at is not None or row.expires_at <= utc_now():
+            return None
+        user = session.get(User, row.user_id)
+        if user is None or not user.is_active or not user.is_super_admin:
+            return None
+        session.expunge(user)
+        session.expunge(row)
+    return AdminContext(user=user, session=row)
+
+
+class AdminDependency:
+    """Resolve the super admin's context, or answer 404.
+
+    Reads the console's own cookie, so a tenant session cannot reach the console and the
+    console's session is never presented to the tenant application. Unauthenticated and
+    unauthorized are answered the same way on purpose. Unsafe methods still require the
+    session's CSRF token (principle P17). No tenant operation lease is taken, because
+    nothing the console reads comes from a portfolio's ledger.
+    """
+
+    def __init__(self, control_engine: Engine):
+        self.control_engine = control_engine
+
+    async def __call__(self, request: Request) -> AdminContext:
+        context = resolve_admin_context(
+            self.control_engine, request.cookies.get(super_admin_cookie_name())
+        )
+        if context is None:
+            raise HTTPException(status_code=404, detail="Not Found")
+        if request.method in UNSAFE_METHODS:
+            presented = request.headers.get("x-csrf-token")
+            if not presented:
+                presented = await _form_csrf_token(request)
+            if not csrf_token_valid(context, presented):
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Missing or invalid CSRF token. Reload the page and try again; "
+                        "if the problem persists, sign in again."
+                    ),
+                )
+        return context
+
+
+def set_admin_cookie(response, token: str, request) -> None:
+    """Sets the console's session cookie, path-scoped to ``/admin``.
+
+    The path scope is the isolation: the browser only ever sends this cookie to the
+    console, so platform authority cannot ride along on a portfolio request even if the
+    same browser is signed in as a tenant at the same time.
+    """
+    response.set_cookie(
+        super_admin_cookie_name(),
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=cookie_is_secure(request),
+        max_age=int(SESSION_LIFETIME.total_seconds()),
+        path="/admin",
+    )
+
+
+def clear_admin_cookie(response) -> None:
+    response.delete_cookie(super_admin_cookie_name(), path="/admin")

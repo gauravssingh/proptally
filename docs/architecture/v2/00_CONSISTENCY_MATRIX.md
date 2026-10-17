@@ -45,7 +45,8 @@
 
 Authoritative specification for the platform layer introduced by the multi-tenant
 work: `09_MULTI_TENANT_EXECUTION_PLAN.md`, `10_MULTI_TENANT_PRINCIPLES.md`,
-`11_AUTHENTICATION_AND_SIGNIN_FLOW.md`, `ADR-009` and `ADR-010`.
+`11_AUTHENTICATION_AND_SIGNIN_FLOW.md`, `12_SUPER_ADMIN_CONSOLE.md`, `ADR-009` and
+`ADR-010`.
 
 | Platform Concept | Authoritative Definition Document | Database Implementation (Table & Column) | Domain Service & Code Package | Status | User Interface View |
 | :--- | :--- | :--- | :--- | :---: | :--- |
@@ -64,6 +65,7 @@ work: `09_MULTI_TENANT_EXECUTION_PLAN.md`, `10_MULTI_TENANT_PRINCIPLES.md`,
 | **Multi-Tenant Principles (normative rules)** | `10_MULTI_TENANT_PRINCIPLES.md` | Storage topology: control plane for identity, one database per portfolio for ledgers | `web.auth`, `db.tenant_manager`, `db.system_models.SYSTEM_TABLES` | **Implemented** — gaps recorded in its §9 | — |
 | **Invitation Lifecycle (single-use, expiring, withdrawable)** | `10_MULTI_TENANT_PRINCIPLES.md` P20; `11_AUTHENTICATION_AND_SIGNIN_FLOW.md` §3 | `user_invites` (`token_hash`, `expires_at`, `accepted_at`) | `web.auth.create_invite` / `find_invite` / `accept_invite` / `revoke_invite` | **Implemented** — G1–G3 open | `/auth/invite/<token>`; pending list on `/account` |
 | **Sign-In, Reset & First-Run Flow** | `11_AUTHENTICATION_AND_SIGNIN_FLOW.md`; `ADR-010` | `users`, `user_sessions`, `user_invites`, `password_reset_tokens` | `web.routes.auth` (sections at `:166`, `:274`, `:329`, `:409`, `:490`) | **Implemented** | Sign-in, register, invitation, reset, `/account` |
+| **Super Admin / Backend Console (outside the tenant model)** | `12_SUPER_ADMIN_CONSOLE.md` | `users.is_super_admin` (no membership, no tenant); `tenant_onboarding_invites` (single-use codes); reads the control plane only, portfolio figures via `portfolio_status()` (counts and storage, never a ledger) | `web.auth.create_super_admin` / `authenticate_super_admin` / `AdminDependency` / `create_onboarding_invite` / `accept_onboarding_invite`; `web.routes.admin`; `scripts/create_super_admin.py` | **Implemented** (Phases 1–3); monitoring & suspension planned | `/admin/login`, `/admin`, `/admin/tenants`, `/admin/people`, `/admin/onboarding`; redemption at `/auth/join` |
 
 ---
 

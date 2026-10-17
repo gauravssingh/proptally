@@ -1,0 +1,152 @@
+{# ===========================================================================
+   Super admin console — shell.
+
+   The same chrome as the workspace (dark navy sidebar, mobile app bar and
+   drawer, environment strip, account footer), built from the same component
+   classes and the same navigation model, because this is the same product: the
+   operator's half of it. What differs is only what it can talk about — the
+   platform, never a portfolio's books.
+
+   It does not extend `base.html`: the workspace shell resolves navigation from
+   the active portfolio, and a super admin has none. Same furniture, its own
+   contents.
+   =========================================================================== #}
+{% import "components/ui.html" as ui with context %}
+{% import "components/shell.html" as shell with context %}
+
+{% macro brand() -%}
+<a class="pt-brand" href="/admin">
+    <span class="pt-brand__mark" aria-hidden="true">P</span>
+    <span>
+        <span class="pt-brand__name">PropTally</span>
+        <span class="pt-brand__meta">Super admin</span>
+    </span>
+</a>
+{%- endmacro %}
+
+
+{% macro mode_badge() -%}
+{{ ui.badge("PLATFORM", variant="rule", upper=true,
+            title="Backend administration. Outside the tenant model; no access to any portfolio's ledger.") }}
+{%- endmacro %}
+
+
+{% macro console_nav() -%}
+<nav class="pt-nav">
+    {% for section in nav.console_sections() %}
+    {{ shell.nav_section(section, active_page, none) }}
+    {% endfor %}
+</nav>
+{%- endmacro %}
+
+
+{% macro account_controls() -%}
+<div class="pt-sidebar__footer">
+    <div class="pt-account">
+        <span class="pt-account__identity">
+            <span class="pt-avatar" aria-hidden="true">{{ (admin.user.display_name or admin.user.email) | initials }}</span>
+            <span class="pt-account__text">
+                <span class="pt-account__name">{{ admin.user.display_name or admin.user.email }}</span>
+                <span class="pt-account__meta">Super admin</span>
+            </span>
+        </span>
+        <form method="post" action="/admin/logout" class="pt-inline-flex">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            {{ ui.icon_btn("Sign out", "logout", variant="chrome", size="md", type="submit") }}
+        </form>
+    </div>
+</div>
+{%- endmacro %}
+
+
+{% macro sidebar() -%}
+<aside class="pt-sidebar" aria-label="Console navigation">
+    <div class="pt-sidebar__brand">
+        {{ brand() }}
+        {{ mode_badge() }}
+    </div>
+    {{ console_nav() }}
+    {{ account_controls() }}
+</aside>
+{%- endmacro %}
+
+
+{% macro appbar() -%}
+<header class="pt-appbar">
+    <div class="pt-flex pt-items-center pt-gap-3">
+        <button type="button" class="pt-btn pt-btn--ghost pt-btn--icon" id="mobileMenuBtn"
+                data-drawer-open aria-controls="mobileDrawer" aria-expanded="false"
+                aria-label="Open navigation menu">
+            {{ ui.icon("menu", "xl") }}
+        </button>
+        {{ brand() }}
+        {{ mode_badge() }}
+    </div>
+</header>
+{%- endmacro %}
+
+
+{% macro drawer() -%}
+<div id="mobileDrawer" class="pt-drawer" hidden>
+    <button type="button" class="pt-drawer__scrim" id="mobileDrawerOverlay"
+            data-drawer-close aria-label="Close navigation"></button>
+    <div class="pt-drawer__panel" role="dialog" aria-modal="true" aria-label="Console navigation">
+        <div class="pt-drawer__header">
+            {{ brand() }}
+            <button type="button" class="pt-btn pt-btn--ghost pt-btn--icon" id="mobileDrawerClose"
+                    data-drawer-close aria-label="Close navigation">
+                {{ ui.icon("close", "lg") }}
+            </button>
+        </div>
+        <div class="pt-drawer__body">
+            {{ console_nav() }}
+        </div>
+        {{ account_controls() }}
+    </div>
+</div>
+{%- endmacro %}
+
+
+{% macro topbar() -%}
+<div class="pt-topbar">
+    <div class="pt-topbar__env pt-topbar__env--live">
+        <span class="pt-dot pt-dot--accent"></span>
+        <span>ENVIRONMENT: <strong>PROPTALLY · PLATFORM CONSOLE</strong></span>
+    </div>
+    <span>Counts and storage only · no portfolio ledger is read</span>
+</div>
+{%- endmacro %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+    <meta name="theme-color" content="#020617">
+    <meta name="robots" content="noindex, nofollow">
+    <title>{% block title %}Super admin — PropTally{% endblock %}</title>
+
+    <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
+    <link rel="stylesheet" href="/static/css/tokens.css?v={{ asset_version() }}">
+    <link rel="stylesheet" href="/static/css/base.css?v={{ asset_version() }}">
+    <link rel="stylesheet" href="/static/css/components.css?v={{ asset_version() }}">
+</head>
+<body class="pt-shell">
+
+<a class="pt-skip-link" href="#main-content">Skip to content</a>
+
+{{ appbar() }}
+{{ drawer() }}
+{{ sidebar() }}
+
+<main class="pt-main" id="main-content">
+    {{ topbar() }}
+    <div class="pt-content">
+        {% block content %}{% endblock %}
+    </div>
+</main>
+
+{{ shell.shell_scripts() }}
+{% block scripts %}{% endblock %}
+</body>
+</html>

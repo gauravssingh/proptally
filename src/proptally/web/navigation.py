@@ -12,7 +12,6 @@ switcher and the door list; a door without one falls back to a derived short nam
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Optional
 
 from sqlmodel import Session, select
 
@@ -56,7 +55,7 @@ class NavItem:
     short: str          # compact label, bottom navigation
     href: str
     icon: str           # icon name understood by components/ui.html
-    page: Optional[str] = None   # matches `active_page` for the active state
+    page: str | None = None   # matches `active_page` for the active state
     blank: bool = False          # opens in a new tab
 
 
@@ -87,7 +86,7 @@ def _derived_short_label(property_record: Property) -> str:
     return " ".join(tokens) if tokens else property_record.id
 
 
-def door_items(properties: Iterable[Property], active_property: Optional[str]) -> list[dict]:
+def door_items(properties: Iterable[Property], active_property: str | None) -> list[dict]:
     """Builds the door navigation entries (rental doors first, then residences)."""
     ordered = sorted(
         properties,
@@ -111,7 +110,7 @@ def get_nav_doors(engine) -> list[Property]:
     """Active doors, ordered for navigation. One indexed read per page render."""
     try:
         with Session(engine) as session:
-            statement = select(Property).where(Property.is_active == True)  # noqa: E712
+            statement = select(Property).where(Property.is_active == True)
             return list(session.exec(statement).all())
     except Exception:  # noqa: BLE001 - navigation must never break a page
         return []
@@ -232,6 +231,74 @@ def financial_sections() -> list[NavSection]:
                     href="/statements",
                     icon="inbox",
                     page="statements",
+                ),
+            ],
+        ),
+    ]
+
+
+def console_sections() -> list[NavSection]:
+    """The super admin's destinations, rendered in the console's own shell.
+
+    Same `NavSection`/`NavItem` shape and the same shell markup as the workspace, so the
+    console is the same product rather than a second one bolted on beside it. The
+    destinations are platform ones: nothing here belongs to a tenant.
+    """
+    return [
+        NavSection(
+            label="Platform",
+            items=[
+                NavItem(
+                    label="Overview",
+                    short="Overview",
+                    href="/admin",
+                    icon="scale",
+                    page="overview",
+                ),
+                NavItem(
+                    label="Portfolios",
+                    short="Portfolios",
+                    href="/admin/tenants",
+                    icon="bank",
+                    page="tenants",
+                ),
+                NavItem(
+                    label="People",
+                    short="People",
+                    href="/admin/people",
+                    icon="user_check",
+                    page="people",
+                ),
+                NavItem(
+                    label="Onboarding",
+                    short="Onboarding",
+                    href="/admin/onboarding",
+                    icon="tag",
+                    page="onboarding",
+                ),
+            ],
+        ),
+    ]
+
+
+def instance_sections() -> list[NavSection]:
+    """The super admin's console.
+
+    Rendered only for the platform's super admin: it is administration of the application
+    itself, outside the tenant model, and a super admin has no access to any portfolio's
+    ledger. Kept separate from the workspace destinations so its presence never implies
+    portfolio authority.
+    """
+    return [
+        NavSection(
+            label="Platform",
+            items=[
+                NavItem(
+                    label="Backend Console",
+                    short="Console",
+                    href="/admin",
+                    icon="shield",
+                    page="admin",
                 ),
             ],
         ),

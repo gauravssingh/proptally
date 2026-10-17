@@ -19,7 +19,7 @@ portfolio database's version numbers can never be confused with the control plan
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import text
 from sqlmodel import SQLModel
@@ -194,12 +194,38 @@ def _add_deletion_owner_metadata(engine) -> int:
         if "deletion_host_name" not in columns:
             conn.execute(text("ALTER TABLE tenants ADD COLUMN deletion_host_name VARCHAR"))
     return 1
+
+
+def _rename_instance_admin_to_super_admin(engine) -> int:
+    """Renames ``users.is_instance_admin`` to ``is_super_admin``.
+
+    The old name described the wrong thing: this flag is the platform's own
+    administration -- the operator of the application -- not a portfolio or instance
+    role. SQLite has renamed columns in place since 3.25, which every supported Python
+    ships, so the account rows survive untouched.
+    """
+    from sqlalchemy import inspect
+
+    with engine.begin() as conn:
+        if not _table_exists(conn, "users"):
+            return 0
+        columns = {column["name"] for column in inspect(conn).get_columns("users")}
+        if "is_instance_admin" in columns and "is_super_admin" not in columns:
+            conn.execute(text(
+                "ALTER TABLE users RENAME COLUMN is_instance_admin TO is_super_admin"
+            ))
+            logger.info("Control plane: renamed users.is_instance_admin to is_super_admin")
+            return 1
+    return 1
+
+
 CONTROL_MIGRATIONS = (
     (1, "widen role constraints to include MANAGER", _widen_role_constraints),
     (2, "tenant lifecycle states and unique memberships", _install_lifecycle_and_membership_constraints),
     (3, "legacy vault and photo migration fingerprints", _add_legacy_store_fingerprints),
     (4, "staged tenant database fingerprint", _add_staged_database_fingerprint),
     (5, "deletion owner process metadata", _add_deletion_owner_metadata),
+    (6, "rename is_instance_admin to is_super_admin", _rename_instance_admin_to_super_admin),
 )
 
 
@@ -218,7 +244,7 @@ def run_control_migrations(engine) -> list:
             conn.execute(
                 text(f"INSERT INTO {CONTROL_MIGRATIONS_TABLE} (version, description, applied_at) "
                      "VALUES (:v, :d, :t)"),
-                {"v": version, "d": description, "t": datetime.now(timezone.utc).isoformat()},
+                {"v": version, "d": description, "t": datetime.now(UTC).isoformat()},
             )
         applied_log.append((version, description))
     return applied_log

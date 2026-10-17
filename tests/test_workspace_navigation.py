@@ -98,11 +98,12 @@ def test_multi_membership_sign_in_prompts_for_workspace_and_switches_as_read_onl
     assert 'class="pt-brand__meta">Second</span>' in status.text
 
 
-    # The first account is the installation operator but is read-only in Second: it can
-    # read local backup instructions without gaining owner-only portfolio export rights.
-    operator_backup = first.client.get("/account?section=backup").text
-    assert "scripts/backup.sh" in operator_backup
-    assert "Download export now" not in operator_backup
+    # The backup section never hands a read-only member owner-only export rights.
+    # Platform-level backup instructions belong to the super admin, and a tenant -- even
+    # the first account ever registered -- is not one: they see only that it exists.
+    backup = first.client.get("/account?section=backup").text
+    assert "Super admin only" in backup
+    assert "Download export now" not in backup
     returned = first.client.post(
         "/auth/switch-tenant",
         data={"tenant_id": tenants["First"], "return_to": "/account?section=people",
@@ -126,15 +127,15 @@ def test_multi_membership_sign_in_prompts_for_workspace_and_switches_as_read_onl
     backup = second.client.get("/account?section=backup").text
     status = second.client.get("/account?section=portfolio").text
     first_root = str(first.app.state.tenant_manager.paths(tenants["First"]).root)
-    assert "Installation operator only" in backup
+    assert "Super admin only" in backup
     assert "Who you are" not in backup
     assert "scripts/backup.sh" not in backup
     assert "system.db" not in backup
     assert first_root not in status
-    assert "Exact host paths are visible only to the installation operator" in status
+    assert "Exact host paths are visible only to the super admin" in status
     signin = second.client.get("/account?section=signin").text
     assert "Who you are" in signin
-    assert "Installation operator" in signin and "No" in signin
+    assert "Super admin" in signin and "No" in signin
 
 def test_read_only_member_can_switch_workspaces_from_the_shell(owner, monkeypatch):
     monkeypatch.setenv("PROPTALLY_ALLOW_REGISTRATION", "true")

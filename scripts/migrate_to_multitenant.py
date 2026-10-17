@@ -53,7 +53,7 @@ import shutil
 import sqlite3
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -61,32 +61,33 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from sqlmodel import Session, select  # noqa: E402
+from sqlmodel import Session, select
 
-from proptally.db.connection import get_engine  # noqa: E402
-from proptally.db.schema import SCHEMA_MIGRATIONS, init_schema  # noqa: E402
-from proptally.db.system_models import (  # noqa: E402
-    LegacyMigration,
+from proptally.db.connection import get_engine
+from proptally.db.schema import SCHEMA_MIGRATIONS, init_schema
+from proptally.db.system_models import (
     ROLE_OWNER,
     TENANT_ACTIVE,
+    LegacyMigration,
     Tenant,
     TenantMembership,
     User,
 )
-from proptally.db.tenant_manager import (  # noqa: E402
+from proptally.db.tenant_manager import (
     TENANT_SUBDIRS,
     TenantPaths,
     get_system_engine,
     init_system_schema,
+)
+from proptally.db.tenant_manager import (
     storage_root as default_storage_root,
 )
-from proptally.web.auth import (  # noqa: E402
+from proptally.web.auth import (
     hash_password,
     normalise_email,
     password_is_acceptable,
     unique_slug,
 )
-
 
 #: Subdirectory of the source that a legacy layout keeps its vault in.
 _LEGACY_VAULT_NAMES = ("vault", "documents")
@@ -209,7 +210,7 @@ def _save_migration(control_engine, migration_id: str, **changes) -> None:
             raise MigrationError(f"Migration record {migration_id!r} disappeared.")
         for name, value in changes.items():
             setattr(migration, name, value)
-        migration.updated_at = datetime.now(timezone.utc)
+        migration.updated_at = datetime.now(UTC)
         session.add(migration)
         session.commit()
 
@@ -559,7 +560,7 @@ def apply_migration(plan: MigrationPlan, *, password: str) -> MigrationResult:
     with Session(control_engine) as session:
         if session.exec(select(User).where(User.email == plan.email)).first() is not None:
             raise MigrationError(f"An account with email {plan.email!r} already exists.")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with Session(control_engine) as session:
         migration = session.get(LegacyMigration, plan.migration_id)
         if migration is None:
@@ -744,13 +745,14 @@ def apply_migration(plan: MigrationPlan, *, password: str) -> MigrationResult:
             if existing_user is not None:
                 raise MigrationError(f"An account with email {plan.email!r} already exists.")
             slug = unique_slug(control_engine, plan.portfolio_name)
-            is_first_user = session.exec(select(User.id)).first() is None
             user = User(
                 id=f"usr_{uuid4().hex[:16]}",
                 email=plan.email,
                 password_hash=hash_password(password),
                 display_name=plan.display_name,
-                is_instance_admin=is_first_user,
+                # A migrated owner is a tenant, not the platform's operator. Super-admin
+                # authority is created on the host by ``scripts/create_super_admin.py``.
+                is_super_admin=False,
             )
             tenant = Tenant(
                 id=plan.tenant_id,
@@ -770,7 +772,7 @@ def apply_migration(plan: MigrationPlan, *, password: str) -> MigrationResult:
             migration.state = "ACTIVE"
             migration.stage = "ACTIVE"
             migration.last_error = None
-            migration.updated_at = datetime.now(timezone.utc)
+            migration.updated_at = datetime.now(UTC)
             session.add(migration)
             session.commit()
             plan.tenant_slug = slug

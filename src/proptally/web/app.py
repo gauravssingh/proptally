@@ -22,16 +22,21 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
-from proptally.db.tenant_manager import TenantManager, get_system_engine, init_system_schema
+from proptally.db.tenant_manager import (
+    TenantManager,
+    get_system_engine,
+    init_system_schema,
+)
 from proptally.web import navigation
 from proptally.web.auth import (
+    AdminDependency,
     AuthenticationDependency,
     AuthenticationRequired,
     AuthorizationError,
     LoginRateLimiter,
+    NoActivePortfolio,
     current_context,
     retry_incomplete_provisioning,
-    NoActivePortfolio,
 )
 from proptally.web.helpers import (
     asset_version,
@@ -42,6 +47,7 @@ from proptally.web.helpers import (
     format_date,
     initials,
 )
+from proptally.web.routes.admin import get_admin_router
 from proptally.web.routes.auth import get_auth_router
 from proptally.web.routes.dashboard import get_dashboard_router
 from proptally.web.routes.ingestion import get_ingestion_router
@@ -53,7 +59,6 @@ from proptally.web.routes.settings import get_settings_router
 from proptally.web.routes.tax import get_tax_router
 from proptally.web.routes.transactions import get_transactions_router
 from proptally.web.routes.vault import get_vault_router
-
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +156,9 @@ def create_app(
     session_dep = AuthenticationDependency(
         control_engine, tenant_manager, require_mutating_role=False
     )
+    # The installation console: a session belonging to an active instance
+    # administrator, or 404. Control-plane only -- no portfolio lease is taken.
+    admin_dep = AdminDependency(control_engine)
 
     @app.exception_handler(AuthenticationRequired)
     async def _unauthenticated(request, exc):
@@ -223,6 +231,12 @@ def create_app(
     # so it takes the authentication dependency directly instead of a tenant session.
     app.include_router(get_portfolios_router(templates, auth_dep, session_dep))
 
+    # The installation console. Control-plane only, gated by its own dependency;
+    # it never mounts the tenant authentication dependency and never opens a ledger.
+    app.include_router(
+        get_admin_router(templates, control_engine, tenant_manager, admin_dep, rate_limiter)
+    )
+
     # Everything else requires an authenticated portfolio context. Declaring it here
     # means a route added later cannot be reached without one.
     protected = [
@@ -244,6 +258,7 @@ def create_app(
     app.state.tenant_manager = tenant_manager
     app.state.auth_dependency = auth_dep
     app.state.session_dependency = session_dep
+    app.state.admin_dependency = admin_dep
     # Exposed for inspection: this limiter is deliberately per-process, which is the one
     # behaviour a multi-worker deployment changes (see ADR-010).
     app.state.login_rate_limiter = rate_limiter

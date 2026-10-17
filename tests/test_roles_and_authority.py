@@ -16,6 +16,7 @@ import re
 from datetime import date
 from uuid import uuid4
 
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from proptally.db.models import (
@@ -286,6 +287,20 @@ def test_the_control_plane_accepts_the_new_role_on_an_existing_database(tmp_path
         conn.exec_driver_sql("INSERT INTO tenant_memberships VALUES ('m1','u1','t1','OWNER','2026-01-01')")
 
     init_system_schema(engine)
+
+    from sqlalchemy import inspect as _inspect
+
+    # ...and the platform-authority column arrives under its new name, carrying the
+    # existing rows: the rename is what keeps `u1` (a super admin in the old schema)
+    # a super admin rather than dropping the flag on the floor.
+    columns = {column["name"] for column in _inspect(engine).get_columns("users")}
+    assert "is_super_admin" in columns
+    assert "is_instance_admin" not in columns
+    with Session(engine) as session:
+        preserved = session.execute(
+            text("SELECT is_super_admin FROM users WHERE id = 'u1'")
+        ).scalar()
+    assert preserved == 1
 
     with Session(engine) as session:
         # The pre-existing membership survived the rebuild...

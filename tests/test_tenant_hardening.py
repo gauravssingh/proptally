@@ -335,7 +335,7 @@ def test_engine_lru_disposes_only_idle_handles(tenant_control, monkeypatch):
     assert manager.paths("tnt_cache_a").database.is_file()
 
 
-def test_instance_admin_is_not_membership_or_role_override(tenant_control):
+def test_super_admin_is_not_membership_or_role_override(tenant_control):
     control, manager, _storage = tenant_control
     _owner_user, tenant, _owner_membership = _register(
         control, manager, "infra-owner@example.com", "Owner"
@@ -345,14 +345,14 @@ def test_instance_admin_is_not_membership_or_role_override(tenant_control):
         email="infra-only@example.com",
         password_hash="unused",
         display_name="Infrastructure only",
-        is_instance_admin=True,
+        is_super_admin=True,
     )
     read_only_admin = User(
         id="usr_readonly_admin",
         email="readonly-admin@example.com",
         password_hash="unused",
         display_name="Read-only admin",
-        is_instance_admin=True,
+        is_super_admin=True,
     )
     infrastructure_user_id = infrastructure_only.id
     read_only_user_id = read_only_admin.id
@@ -375,7 +375,7 @@ def test_instance_admin_is_not_membership_or_role_override(tenant_control):
         control, SimpleNamespace(id=read_only_user_id), tenant.id
     )
     context = resolve_context(control, manager, read_only_token)
-    assert context.user.is_instance_admin is True
+    assert context.user.is_super_admin is True
     assert context.role == ROLE_READ_ONLY
     assert context.can_mutate is False
     with pytest.raises(AuthorizationError):

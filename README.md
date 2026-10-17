@@ -25,11 +25,11 @@ PropTally includes a navigable, modern web interface:
 
 | View | Endpoint | Description |
 | :--- | :--- | :--- |
-| **Portfolio Overview** | [`/`](http://127.0.0.1:8080/) | Top KPI cards (Equity, Debt, NOI, CADS), Door performance cards with primary residence segregation, and cash flow waterfall ledger. |
-| **Property Deep Dives** | [`/properties/:id`](http://127.0.0.1:8080/properties/prop_tinsley_huntley) | Monthly Operating P&L, 30-year mortgage debt terms, and tenant lease agreements. |
-| **Mortgages & Escrow** | [`/mortgages`](http://127.0.0.1:8080/mortgages) | Consolidated loan ledger across servicers (Rocket, PNC, CCM) and servicer escrow reserve asset accounts. |
-| **Transactions Register** | [`/transactions`](http://127.0.0.1:8080/transactions) | Color-coded inflow/outflow register, manual transaction entry modal, and dynamic multi-property splitting modal. |
-| **Review & Reconciliation Queue** | [`/reconciliation`](http://127.0.0.1:8080/reconciliation) | Dedicated review queue for unallocated cash deposits and rental deductions on **mixed-use** cards awaiting client confirmation or a user attestation of external review. |
+| **Portfolio Overview** | [`/`](http://127.0.0.1:8141/) | Top KPI cards (Equity, Debt, NOI, CADS), Door performance cards with primary residence segregation, and cash flow waterfall ledger. |
+| **Property Deep Dives** | [`/properties/:id`](http://127.0.0.1:8141/properties/prop_tinsley_huntley) | Monthly Operating P&L, 30-year mortgage debt terms, and tenant lease agreements. |
+| **Mortgages & Escrow** | [`/mortgages`](http://127.0.0.1:8141/mortgages) | Consolidated loan ledger across servicers (Rocket, PNC, CCM) and servicer escrow reserve asset accounts. |
+| **Transactions Register** | [`/transactions`](http://127.0.0.1:8141/transactions) | Color-coded inflow/outflow register, manual transaction entry modal, and dynamic multi-property splitting modal. |
+| **Review & Reconciliation Queue** | [`/reconciliation`](http://127.0.0.1:8141/reconciliation) | Dedicated review queue for unallocated cash deposits and rental deductions on **mixed-use** cards awaiting client confirmation or a user attestation of external review. |
 
 Two things the interface is deliberately explicit about:
 
@@ -55,13 +55,15 @@ Two things the interface is deliberately explicit about:
 
 2. Create and activate a virtual environment:
    ```bash
-   python3 -m venv .venv
+   python3.13 -m venv .venv
    source .venv/bin/activate
    ```
+   Name the interpreter explicitly. On macOS a bare `python3` is the system 3.9,
+   and this package requires 3.11+.
 
 3. Install dependencies:
    ```bash
-   pip install -e .
+   pip install -e ".[dev]"
    ```
 
 ### Running the Test Suite
@@ -73,9 +75,21 @@ pytest -v
 
 ### Launching the Web Dashboard
 ```bash
-python main.py
+scripts/run_server.sh
 ```
-Open **`http://127.0.0.1:8080`** in your browser.
+That script uses this checkout's `.venv`, points at this checkout's `storage/`, and
+listens on **8141** — this is the multi-tenant deployment, and it runs alongside the
+older checkout on 8080 without either stealing the other's port. It refuses to start on
+an interpreter older than 3.11 and tells you the venv command if `.venv` is missing.
+
+`python main.py` also works if you have already activated the venv.
+
+Open **`http://127.0.0.1:8141`** in your browser.
+
+On macOS this deployment runs as the launchd agent **`com.proptally.mt`**
+(`~/Library/LaunchAgents/com.proptally.mt.plist`), which keeps it alive and records its
+output under `~/Library/Logs/proptally-mt/`. The machine-specific bind address and port
+live in that agent, not in this repository.
 
 ---
 
@@ -91,7 +105,7 @@ generic vendor rules, and nothing else. There is no sample data to clear out —
 accounts, mortgages and opening balances are entered on the setup screen.
 
 The server refuses to bind every interface by default. It listens on
-`127.0.0.1:8080`; to serve a LAN or Tailscale address, set one explicitly:
+`127.0.0.1:8141`; to serve a LAN or Tailscale address, set one explicitly:
 
 ```bash
 PROPTALLY_HOST=100.64.0.5 python main.py     # a specific address
@@ -99,11 +113,56 @@ PROPTALLY_HOST=100.64.0.5 python main.py     # a specific address
 PROPTALLY_HOST=0.0.0.0 PROPTALLY_ALLOW_WIDE_BIND=true python main.py
 ```
 
-Open the app and create the first account at `/auth/register`. While the instance
-has no accounts, registration is open and the first account becomes the instance
-administrator; afterwards, registration closes unless you set
-`PROPTALLY_ALLOW_REGISTRATION=true`. Other people join an existing portfolio only
-through an invitation created on the **Account** screen.
+Open the app and create the first account at `/auth/register`. Portfolios start empty:
+the standard chart of accounts and the generic vendor rules, and nothing else — doors,
+accounts, mortgages and opening balances are entered on the setup screen. Registration
+stays open while the instance has no *tenant*, then closes unless you set
+`PROPTALLY_ALLOW_REGISTRATION=true`. Other people join an existing portfolio only through
+an invitation created on the **Account** screen.
+
+### The super admin (backend console)
+
+The platform's own operator is a **super admin**: not a portfolio role, not a membership,
+not a tenant. It administers the application and the portfolios on it — accounts,
+invitations, password resets, portfolio lifecycle — and it has no access to any portfolio's
+ledger. It is created on the host, and nothing on the web can mint one:
+
+```bash
+python scripts/create_super_admin.py --email ops@example.com
+```
+
+That prompts for a password (omit `--password` so it stays out of your shell history) and
+creates the account with no portfolio and no membership. Sign in at **`/admin/login`** — a
+separate door from the tenant sign-in, with its own cookie path-scoped to `/admin`. Re-run
+the command to rotate the operator password. This is also the answer when an operator is
+locked out: `scripts/issue_password_reset.py` covers tenant accounts, and re-running
+`create_super_admin.py` covers this one.
+
+### Letting a new portfolio in — onboarding codes
+
+Once an operator exists on this host, starting a portfolio needs a code. Sign in at
+`/admin/login` → **Onboarding**, mint one, and pass it to the person either as a link:
+
+```
+/auth/join?code=<token>
+```
+
+…or just as the code itself: `/auth/register` asks for it, and the person types it there.
+Both doors redeem the same single-use grant.
+
+One code starts exactly one portfolio, expires in 14 days, and can be withdrawn. Leave the
+address empty for a bearer token, or fill it in to pin the code to one person. The list
+keeps spent and expired codes and names the portfolio each used one produced. Redeeming
+creates the account, the portfolio and its `OWNER` membership — and confers no platform
+authority.
+
+The page asks for nothing only on a host nobody has claimed yet — no operator, nothing to
+mint with — which is the bootstrap case, and is why a fresh deployment still works without
+any setup.
+
+For unattended rebuilds there is still one environment variable,
+`PROPTALLY_PORTFOLIO_INVITE_CODE`, which gates `/auth/register` with a single global secret.
+It is the lesser path: no per-recipient expiry, use count, or record of who was given it.
 
 For installations shared by several people, set `PROPTALLY_INSTANCE_NAME` to a name they
 recognize; it appears on the sign-in screen. Password recovery does not send email: a local

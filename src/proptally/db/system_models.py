@@ -11,8 +11,7 @@ blanket ``create_all`` -- otherwise the control-plane database would also get
 empty copies of every ledger table.
 """
 
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import CheckConstraint, UniqueConstraint
 from sqlmodel import Field, SQLModel
@@ -71,7 +70,7 @@ INVITABLE_ROLES = (ROLE_MANAGER, ROLE_CPA_REVIEWER, ROLE_READ_ONLY)
 
 def utc_now() -> datetime:
     """Return timezone-aware UTC datetime."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class User(SQLModel, table=True):
@@ -83,11 +82,14 @@ class User(SQLModel, table=True):
     email: str = Field(unique=True, index=True)  # stored lowercased
     password_hash: str
     display_name: str
-    #: Instance administration is separate from portfolio ownership: an instance
-    #: admin manages accounts and invites but has no implicit access to a ledger.
-    is_instance_admin: bool = Field(default=False)
+    #: Super-admin authority is the *platform's* own administration: the operator of the
+    #: application, outside the tenant model entirely. It is not a portfolio role, it is
+    #: not membership, and no web route ever grants it -- a super admin is created on the
+    #: host (``scripts/create_super_admin.py``) and signs in at ``/admin/login``. It
+    #: manages accounts, portfolios and invitations and has no access to any ledger.
+    is_super_admin: bool = Field(default=False)
     is_active: bool = Field(default=True)
-    password_changed_at: Optional[datetime] = Field(default=None)
+    password_changed_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -115,10 +117,10 @@ class Tenant(SQLModel, table=True):
     name: str
     slug: str = Field(unique=True, index=True)
     status: str = Field(default=TENANT_ACTIVE, index=True)
-    deletion_token: Optional[str] = Field(default=None, index=True)
-    deletion_started_at: Optional[datetime] = Field(default=None)
-    deletion_process_id: Optional[int] = Field(default=None)
-    deletion_host_name: Optional[str] = Field(default=None)
+    deletion_token: str | None = Field(default=None, index=True)
+    deletion_started_at: datetime | None = Field(default=None)
+    deletion_process_id: int | None = Field(default=None)
+    deletion_host_name: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -153,12 +155,12 @@ class UserSession(SQLModel, table=True):
 
     id: str = Field(primary_key=True)  # sha256 hex of the cookie token
     user_id: str = Field(foreign_key="users.id", index=True)
-    active_tenant_id: Optional[str] = Field(default=None, foreign_key="tenants.id")
+    active_tenant_id: str | None = Field(default=None, foreign_key="tenants.id")
     csrf_token: str
-    ip_address: Optional[str] = Field(default=None)
-    user_agent: Optional[str] = Field(default=None)
+    ip_address: str | None = Field(default=None)
+    user_agent: str | None = Field(default=None)
     expires_at: datetime
-    revoked_at: Optional[datetime] = Field(default=None)
+    revoked_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
 
 class TenantOperation(SQLModel, table=True):
@@ -169,8 +171,8 @@ class TenantOperation(SQLModel, table=True):
     id: str = Field(primary_key=True)
     tenant_id: str = Field(foreign_key="tenants.id", index=True)
     actor_id: str
-    user_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True)
-    session_id: Optional[str] = Field(default=None, foreign_key="user_sessions.id", index=True)
+    user_id: str | None = Field(default=None, foreign_key="users.id", index=True)
+    session_id: str | None = Field(default=None, foreign_key="user_sessions.id", index=True)
     process_id: int
     host_name: str
     started_at: datetime = Field(default_factory=utc_now)
@@ -198,7 +200,36 @@ class UserInvite(SQLModel, table=True):
     token_hash: str = Field(unique=True, index=True)
     invited_by_user_id: str = Field(foreign_key="users.id")
     expires_at: datetime
-    accepted_at: Optional[datetime] = Field(default=None)
+    accepted_at: datetime | None = Field(default=None)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class TenantOnboardingInvite(SQLModel, table=True):
+    """A single-use code that starts exactly one new portfolio.
+
+    The platform-level counterpart of :class:`UserInvite`: that one joins an *existing*
+    portfolio, this one creates a new one. Redeeming it creates a tenant account — a user,
+    a portfolio and an OWNER membership — and confers no platform authority.
+
+    Single use is enforced by ``accepted_at``: redemption claims the row with a conditional
+    UPDATE first, so two simultaneous redemptions produce exactly one portfolio rather than
+    two, or one and a half.
+    """
+
+    __tablename__ = "tenant_onboarding_invites"
+
+    id: str = Field(primary_key=True)  # e.g. "onb_4d1a..."
+    #: Optional. When set, the code is pinned to that address and cannot be redeemed with
+    #: another one; when empty the code is a bearer token the operator hands to anybody.
+    email: str | None = Field(default=None, index=True)
+    #: A suggested portfolio name, shown on the redemption form and editable there.
+    portfolio_name_hint: str | None = Field(default=None)
+    token_hash: str = Field(unique=True, index=True)
+    created_by_user_id: str = Field(foreign_key="users.id")
+    expires_at: datetime
+    accepted_at: datetime | None = Field(default=None)
+    #: The portfolio this code created. Kept so the console can say what it produced.
+    accepted_tenant_id: str | None = Field(default=None, foreign_key="tenants.id")
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -211,7 +242,7 @@ class PasswordResetToken(SQLModel, table=True):
     user_id: str = Field(foreign_key="users.id", index=True)
     token_hash: str = Field(unique=True, index=True)
     expires_at: datetime
-    used_at: Optional[datetime] = Field(default=None)
+    used_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -227,14 +258,14 @@ class AccessEvent(SQLModel, table=True):
 
     id: str = Field(primary_key=True)
     tenant_id: str = Field(foreign_key="tenants.id", index=True)
-    actor_user_id: Optional[str] = Field(default=None, foreign_key="users.id")
+    actor_user_id: str | None = Field(default=None, foreign_key="users.id")
     #: 'INVITED', 'INVITATION_WITHDRAWN', 'JOINED', 'ROLE_CHANGED', 'REMOVED', 'LEFT',
     #: 'RENAMED', 'PORTFOLIO_DELETED'
     event: str
     #: The person the event is about, by email, since their account may be gone later.
-    subject_email: Optional[str] = Field(default=None)
+    subject_email: str | None = Field(default=None)
     #: Free-form context: the old and new role, for instance.
-    detail: Optional[str] = Field(default=None)
+    detail: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -253,13 +284,13 @@ class LegacyMigration(SQLModel, table=True):
     email: str
     display_name: str
     portfolio_name: str
-    vault_path: Optional[str] = Field(default=None)
-    photos_path: Optional[str] = Field(default=None)
+    vault_path: str | None = Field(default=None)
+    photos_path: str | None = Field(default=None)
     vault_fingerprint: str = Field(default="")
     photos_fingerprint: str = Field(default="")
     staged_database_fingerprint: str = Field(default="")
     keep_source: bool
-    last_error: Optional[str] = Field(default=None)
+    last_error: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -272,6 +303,7 @@ SYSTEM_TABLES = (
     UserSession.__table__,
     TenantOperation.__table__,
     UserInvite.__table__,
+    TenantOnboardingInvite.__table__,
     PasswordResetToken.__table__,
     AccessEvent.__table__,
     LegacyMigration.__table__,

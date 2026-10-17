@@ -23,7 +23,7 @@ def test_public_reset_never_issues_a_token(owner):
     with TestClient(account.app) as anonymous:
         page = anonymous.get("/auth/reset")
         assert page.status_code == 200
-        assert "Ask the installation operator" in page.text
+        assert "Ask the super admin" in page.text
         assert 'action="/auth/reset"' not in page.text
         # Written for the person signing in: host tooling is not advertised here.
         assert "scripts/" not in page.text

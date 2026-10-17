@@ -1,0 +1,94 @@
+{% extends "auth_base.html" %}
+{% block title %}Start a portfolio — PropTally{% endblock %}
+
+{# ---------------------------------------------------------------------------
+   Redemption of an onboarding code: /auth/join?code=…
+
+   Same scene and same shell as registration (`register-calm.svg`, `.auth-form`,
+   one stack), because it is the same act — starting a portfolio — reached a
+   different way. The difference is permission: registration is open only while
+   this host has no tenant, while a code is a standing grant that works on a busy
+   instance, for exactly one portfolio.
+
+   The code lives in a hidden field so a refusal keeps the holder here instead of
+   sending them back to a link they may have closed.
+   --------------------------------------------------------------------------- #}
+
+{% block shell %}
+<div class="auth-root relative h-screen w-screen overflow-hidden">
+    <img class="auth-scene absolute inset-0 w-full h-full object-cover z-0"
+         src="/static/img/register-calm.svg" alt="">
+
+    <div class="auth-panel w-full z-10">
+        <div class="auth-form">
+            <div class="pt-stack-5">
+
+                <div class="flex items-center gap-3">
+                    <span class="auth-mark">P</span>
+                    <span>
+                        <span class="block auth-wordmark font-bold text-slate-900">PropTally</span>
+                        {% if instance_name != "PropTally" %}
+                        <span class="auth-instance">
+                            <span class="auth-instance__dot" aria-hidden="true"></span>
+                            {{ instance_name }}
+                        </span>
+                        {% endif %}
+                    </span>
+                    <h1 class="pt-sr-only" tabindex="-1">Start a portfolio</h1>
+                </div>
+
+                <p class="pt-fs-supporting">
+                    Your own private portfolio: its properties, statements and ledger live in
+                    your own database on this host, separate from every other one.
+                </p>
+
+                {% if error %}
+                {{ ui.alert(variant="error", title="Could not start your portfolio", text=error) }}
+                {% endif %}
+
+                <form method="post" action="/auth/join">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    {% if code %}
+                    <input type="hidden" name="code" value="{{ code }}">
+                    {% endif %}
+                    <div class="pt-stack pt-gap-4">
+                        {% if not code %}
+                        {# Reached without a link, so this is where the code goes. Asked for
+                           first: it is permission to be here, not information about you. #}
+                        {{ ui.text_field("code", "Invitation code", required=true,
+                                         extra='autocomplete="off" spellcheck="false"',
+                                         help="The code whoever runs this instance gave you.") }}
+                        {% endif %}
+                        {{ ui.text_field("display_name", "Your name", value=display_name or "",
+                                         extra='autocomplete="name"') }}
+                        {{ ui.text_field("portfolio_name", "Portfolio name", value=portfolio_name or "",
+                                         placeholder="e.g. Bluebonnet Holdings",
+                                         help="Labels your workspace; you can change it later.") }}
+                        {% if pinned_email %}
+                        {# Readonly, not disabled: the address is the identity being granted
+                           access, so it stays readable, selectable and announced. #}
+                        {{ ui.text_field("email", "Email", value=pinned_email, type="email", required=true,
+                                         extra='readonly autocomplete="username"',
+                                         help="This invitation was issued for this address.") }}
+                        {% else %}
+                        {{ ui.text_field("email", "Email", value=email or "", type="email", required=true,
+                                         extra='autocomplete="username"') }}
+                        {% endif %}
+                        {{ ui.text_field("password", "Password", type="password", required=true,
+                                         extra='autocomplete="new-password"',
+                                         help="At least " ~ min_password_length ~ " characters.") }}
+
+                        <div class="pt-form-actions">
+                            {{ ui.btn("Start my portfolio", variant="primary", type="submit", block=true) }}
+                        </div>
+                    </div>
+                </form>
+
+                <p class="pt-fs-caption">
+                    Already have an account here? <a href="/auth/login">Sign in</a>.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

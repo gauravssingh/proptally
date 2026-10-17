@@ -56,7 +56,7 @@
                     },
                     "nomember": {
                         "title": "No portfolio on this account",
-                        "text": "Your sign-in worked, but this account is not in a portfolio yet. Ask the installation operator to add you to one.",
+                        "text": "Your sign-in worked, but this account is not in a portfolio yet. Ask the super admin to add you to one.",
                     },
                     "invite_dead": {
                         "title": "That invitation cannot be used",
@@ -126,7 +126,13 @@
                     <a class="auth-link" href="/auth/reset" data-pane-toggle="forgot">Forgot password?</a>
                 </div>
 
-                {% if registration_open %}
+                {% if code_required %}
+                {# An established host: the door is opened by a code, so say so rather than
+                   sending somebody to a page that will ask them for one unannounced. #}
+                <div class="auth-notice mt-6">
+                    <span>Have an invitation code? <a href="/auth/join">Start your portfolio</a>.</span>
+                </div>
+                {% elif registration_open %}
                 {# Only a fresh, account-less instance shows anything here: without it
                    there is no route to /auth/register from the sign-in page. #}
                 <div class="auth-notice mt-6">

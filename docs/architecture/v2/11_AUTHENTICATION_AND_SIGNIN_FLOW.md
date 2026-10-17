@@ -8,9 +8,12 @@
 between them. Companion to `10_MULTI_TENANT_PRINCIPLES.md` (the rules these screens must
 obey), `ADR-010` (the authentication decision) and `docs/ui-ux/` (the design system).
 
-The whole surface is five templates, one router
-(`web/routes/auth.py`, sections at `:166`, `:274`, `:329`, `:409`, `:490`) and one
-stylesheet (`static/css/auth.css`, sections 1–8).
+The surface is six page templates — sign-in, invitation, registration, onboarding
+redemption, reset and set-password — plus the shared `auth_base.html` shell, one router
+(`web/routes/auth.py`, sectioned `# --- Sign in`, `Registration`, `Onboarding codes`,
+`Invitations`, `Password reset`, `Account screen`) and one stylesheet
+(`static/css/auth.css`, sections 1–8). The console's own door (`admin/login.html`) is the
+seventh, documented in `12_SUPER_ADMIN_CONSOLE.md`.
 
 ---
 
@@ -20,8 +23,9 @@ stylesheet (`static/css/auth.css`, sections 1–8).
 
 | Surface | Classes | Used by | Why |
 | :--- | :--- | :--- | :--- |
-| Scene panel | `.auth-root`, `.auth-scene`, `.auth-panel`, `.auth-form` (`auth.css` §4) | `login.html`, `invite.html` | The neighbourhood scene is the product's first impression and its contrast halo carries legibility for the form |
-| Plain card | `.pt-auth`, `.pt-auth__card` (`components.css`) | `register.html`, `reset.html`, `reset_password.html` | Lighter pages, no artwork |
+| Scene panel — neighbourhood | `.auth-root`, `.auth-scene`, `.auth-panel`, `.auth-form` (`auth.css` §4) | `login.html`, `invite.html`, `admin/login.html` | The scene is the product's first impression and its contrast halo carries legibility for the form |
+| Scene panel — calm | same classes, `register-calm.svg` | `register.html`, `join.html` | Same first impression for the two pages that *start* a portfolio, with artwork that holds still |
+| Plain card | `.pt-auth`, `.pt-auth__card` (`components.css`) | `reset.html`, `reset_password.html` | Lighter pages, no artwork |
 
 `auth.css` is linked only from `auth_base.html`, so the authenticated shell never loads it.
 
@@ -37,7 +41,7 @@ progressive enhancement only — every flow works with scripting off:
 
 ---
 
-## 2. Sign in — `/auth/login` (`routes/auth.py:196`, `:208`)
+## 2. Sign in — `/auth/login` (`routes/auth.py`, `login_form` / `login_submit`)
 
 One box, two steps. The sign-in step is `data-pane="signin"`; the reset step is
 `data-pane="forgot"` (`templates/login.html:38`, `:141`). The reset step opens by itself
@@ -66,10 +70,10 @@ failure, where the password does — the reader has already proved the email.
 
 ---
 
-## 3. Accepting an invitation — `/auth/invite/{token}` (`routes/auth.py:367`, `:374`)
+## 3. Accepting an invitation — `/auth/invite/{token}` (`invite_form` / `invite_submit`)
 
 The invitation page states, all of it read from the invitation row through one helper
-(`_render_invite`, `routes/auth.py:331`): the portfolio being joined, the role as a badge
+(`_render_invite`): the portfolio being joined, the role as a badge
 and in words, the address the invitation is pinned to, and the day the link stops working.
 
 | Field | Behaviour |
@@ -87,7 +91,7 @@ States and failures:
 | Address already has an account and the password does not match it | "An account already exists for this email; sign in to accept the invitation." |
 | Already a member of that portfolio | "This account is already a member of that portfolio." |
 | Form expired (CSRF) | Same page with "Your form expired. Please try again." |
-| Spent, withdrawn or expired token | The **sign-in page with the reason** (`_invite_is_gone`, `routes/auth.py:357` → `error_kind="invite_dead"`), because by then the reader may already have an account and the useful next step is to sign in or ask for a new invitation |
+| Spent, withdrawn or expired token | The **sign-in page with the reason** (`_invite_is_gone` → `error_kind="invite_dead"`), because by then the reader may already have an account and the useful next step is to sign in or ask for a new invitation |
 | Success | Session issued, signed in, redirected to the dashboard |
 
 Two defects fixed here are worth not re-introducing. A spent token used to render
@@ -98,13 +102,54 @@ next submission fail as *expired* (principle **P17**).
 
 ---
 
-## 4. First run — `/auth/register` (`routes/auth.py:276`, `:288`)
+## 4. First run — `/auth/register` (`register_form` / `register_submit`)
 
-Open only while the instance has no account, and redirected to sign-in afterwards. Creates
-the person, their portfolio, the OWNER membership and a session in one step, and the account
-becomes the instance administrator. Fields: name, portfolio name, email, password.
-An existing account is never created again; joining somebody else's portfolio goes through
-an invitation.
+Creates the person, their portfolio, the OWNER membership and a session in one step. An
+existing account is never created again; joining somebody else's portfolio goes through an
+invitation. It confers **no** platform authority: what it creates is a tenant.
+
+Fields: name, portfolio name, email, password — and an **invitation code** whenever one is
+required. The rule is stated by `web.auth.registration_requires_code` and turns on whether
+anybody has claimed the host:
+
+| The host | The page asks for a code? | Why |
+| :--- | :--- | :--- |
+| Nobody has registered, no operator exists | **No** | There is no one to ask and nothing to mint one with. This is the bootstrap case. |
+| An operator exists (a super admin) | **Yes** | They can mint codes, so the door is theirs to open one grant at a time rather than standing open to anyone who can reach the host. |
+| `PROPTALLY_ALLOW_REGISTRATION=true` | Only if a global code is configured | The explicit "wide open anyway" override, honoured as written. |
+
+The code typed there is interchangeable with the one minted in the console: a live
+single-use `TenantOnboardingInvite` is redeemed on this page exactly as it is at
+`/auth/join`, and it is spent by whichever page used it. `PROPTALLY_PORTFOLIO_INVITE_CODE`
+— the older single global secret — is still accepted in the same field.
+
+The page stays *reachable* while only a code opens the door, because it is the page that
+code is typed on; submitting without a valid one is refused and creates nothing.
+
+The platform's own operator — the **super admin** — is a different principal and does not
+appear here at all: it is created on the host with `scripts/create_super_admin.py` and signs
+in at its own door, `/admin/login` (`12_SUPER_ADMIN_CONSOLE.md`).
+
+### Onboarding codes — `/auth/join?code=…` (`join_form` / `join_submit`)
+
+The other way a portfolio begins, and the one that works on a *busy* instance. An operator
+mints a code in the console (`/admin/onboarding`) and hands the link over; redeeming it
+creates the person, their portfolio and an `OWNER` membership, then signs them in.
+
+| Situation | Result |
+| :--- | :--- |
+| Live code | The redemption form, prefilled with the suggested portfolio name and, if the code is pinned, the address (`readonly`) |
+| Code pinned to another address | Same page, states the address it was issued for |
+| Password too short | Same page, the policy reason; **the code is not spent** |
+| That address already has an account | "An account with that email already exists; sign in instead." |
+| Already redeemed, withdrawn or expired | Same page: invalid, already used, or expired — one answer for all three, so a wrong guess learns nothing |
+| Success | Session issued, signed in, redirected to the dashboard |
+
+Two properties are deliberate. It is **not** gated by `registration_is_open`: the code is the
+permission, which is what lets an operator open one portfolio at a time after ordinary
+registration has closed. And the claim is a conditional `UPDATE … WHERE accepted_at IS NULL`
+performed *before* anything is created, so simultaneous redemptions produce exactly one
+portfolio.
 
 ---
 
@@ -126,7 +171,7 @@ Reset tokens are never issued to a web requester — this deployment has no mail
    session for that account, clears the cookie and returns to sign-in — a reset does not
    sign you in, so the new credentials are proved immediately.
 
-Token lifetime is 2 hours, single use (`web/auth.py:77`, `:865`).
+Token lifetime is 2 hours, single use (`RESET_LIFETIME`, `consume_password_reset`).
 
 ---
 
@@ -144,7 +189,7 @@ All on `/account` (`:492`) except switching, and all behind the shared dependenc
 | Switch portfolio | `POST /auth/switch-tenant` (`:665`) | Only to a portfolio the session's user is a member of |
 | Sign out | `POST /auth/logout` (`:256`) | Requires the CSRF token, so a hostile page cannot sign somebody out silently |
 
-Lifetimes and limits: session 12 hours (`web/auth.py:75`), invitation 7 days (`:76`),
+Lifetimes and limits: session 12 hours (`SESSION_LIFETIME`), invitation 7 days (`INVITE_LIFETIME`),
 reset 2 hours (`:77`), 5 failed sign-ins per 15 minutes per address+email pair (`:80`).
 
 ---

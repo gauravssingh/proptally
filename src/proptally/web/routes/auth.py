@@ -9,11 +9,9 @@ exists yet to lend them one.
 from __future__ import annotations
 
 import urllib.parse
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlmodel import Session, select
 
 from proptally.db.portfolio_lifecycle import portfolio_status
 from proptally.db.system_models import (
@@ -26,45 +24,48 @@ from proptally.db.system_models import (
     WORK_ROLES,
 )
 from proptally.db.tenant_manager import TenantManager
-from proptally.web.routes.portfolios import DELETE_ROLES, EXPORT_ROLES
 from proptally.web.auth import (
-    ROLES,
+    ROLE_CPA_REVIEWER,
     ROLE_DESCRIPTIONS,
     ROLE_PICKER_LABELS,
+    ROLES,
     AuthenticationDependency,
     LoginRateLimiter,
-    NoActivePortfolio,
     MembershipError,
-    ROLE_CPA_REVIEWER,
+    NoActivePortfolio,
     accept_invite,
-    change_member_role,
-    pending_invites,
-    remove_member,
-    revoke_invite,
-    tenant_members,
+    accept_onboarding_invite,
     authenticate,
+    change_member_role,
     change_password,
-    create_invite,
-    find_invite,
-    issue_pre_session_csrf,
-    issue_session,
     clear_session_cookie,
     consume_password_reset,
     cookie_name,
+    create_invite,
+    find_invite,
+    find_onboarding_invite,
     find_reset_token,
+    issue_pre_session_csrf,
+    issue_session,
     memberships_for,
-    pre_session_csrf_valid,
-    register_portfolio,
+    pending_invites,
     portfolio_code_matches,
     portfolio_invite_code,
+    pre_session_csrf_valid,
+    register_portfolio,
     registration_is_open,
+    registration_requires_code,
+    remove_member,
     resolve_context,
+    revoke_invite,
     revoke_session,
     set_pre_session_csrf_cookie,
     set_session_cookie,
     switch_active_tenant,
     tenant_for,
+    tenant_members,
 )
+from proptally.web.routes.portfolios import DELETE_ROLES, EXPORT_ROLES
 
 MIN_PASSWORD_LENGTH = 10
 
@@ -134,7 +135,7 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _safe_next(next_url: Optional[str]) -> str:
+def _safe_next(next_url: str | None) -> str:
     """Only ever redirect to a path on this host."""
     if next_url and next_url.startswith("/") and not next_url.startswith("//"):
         return next_url
@@ -170,9 +171,9 @@ def get_auth_router(
     def _render_login(
         request: Request,
         *,
-        error_kind: Optional[str] = None,
-        reset_error: Optional[str] = None,
-        pane: Optional[str] = None,
+        error_kind: str | None = None,
+        reset_error: str | None = None,
+        pane: str | None = None,
         email: str = "",
         next_url: str = "/",
     ):
@@ -191,12 +192,13 @@ def get_auth_router(
                 "email": email,
                 "next_url": next_url,
                 "registration_open": registration_is_open(control_engine),
+                "code_required": registration_requires_code(control_engine),
             },
             csrf_token=csrf_token, set_cookie=set_cookie,
         )
 
     @router.get("/auth/login", response_class=HTMLResponse)
-    def login_form(request: Request, next: Optional[str] = None):
+    def login_form(request: Request, next: str | None = None):
         try:
             context = resolve_context(
                 control_engine, tenant_manager, request.cookies.get(cookie_name())
@@ -275,18 +277,39 @@ def get_auth_router(
 
     # --- Registration ----------------------------------------------------
 
-    @router.get("/auth/register", response_class=HTMLResponse)
-    def register_form(request: Request):
-        if not registration_is_open(control_engine):
-            return RedirectResponse(url="/auth/login", status_code=303)
-        csrf_token, set_cookie = issue_pre_session_csrf(request)
+    def _render_register(
+        request: Request,
+        *,
+        csrf_token: str,
+        set_cookie: bool,
+        error: str | None = None,
+        email: str = "",
+        display_name: str = "",
+        portfolio_name: str = "",
+    ):
         return _render(
             templates, request, "register.html",
-            {"error": None, "email": "", "display_name": "", "portfolio_name": "",
-             "min_password_length": MIN_PASSWORD_LENGTH,
-             "portfolio_code_required": bool(portfolio_invite_code())},
+            {"error": error, "email": email, "display_name": display_name,
+             "portfolio_name": portfolio_name, "min_password_length": MIN_PASSWORD_LENGTH,
+             "portfolio_code_required": registration_requires_code(control_engine)},
             csrf_token=csrf_token, set_cookie=set_cookie,
         )
+
+    def _door_is_reachable() -> bool:
+        """Whether this page is the way in at all.
+
+        True while ordinary registration is open, and also when only a code opens the
+        door — because this is the page that code is typed on. Closed only when neither
+        applies, which is a host that is running and has closed its door.
+        """
+        return registration_is_open(control_engine) or registration_requires_code(control_engine)
+
+    @router.get("/auth/register", response_class=HTMLResponse)
+    def register_form(request: Request):
+        if not _door_is_reachable():
+            return RedirectResponse(url="/auth/login", status_code=303)
+        csrf_token, set_cookie = issue_pre_session_csrf(request)
+        return _render_register(request, csrf_token=csrf_token, set_cookie=set_cookie)
 
     @router.post("/auth/register")
     def register_submit(
@@ -301,32 +324,138 @@ def get_auth_router(
         csrf_token, set_cookie = issue_pre_session_csrf(request)
 
         def failure(message: str):
-            return _render(
-                templates, request, "register.html",
-                {"error": message, "email": email, "display_name": display_name,
-                 "portfolio_name": portfolio_name, "min_password_length": MIN_PASSWORD_LENGTH,
-                 "portfolio_code_required": bool(portfolio_invite_code())},
-                csrf_token=csrf_token, set_cookie=set_cookie,
+            return _render_register(
+                request, csrf_token=csrf_token, set_cookie=set_cookie, error=message,
+                email=email, display_name=display_name, portfolio_name=portfolio_name,
             )
 
-        if not registration_is_open(control_engine):
+        if not _door_is_reachable():
             return RedirectResponse(url="/auth/login", status_code=303)
         if not pre_session_csrf_valid(request, csrf_token):
             return failure("Your form expired. Please try again.")
 
-        # The portfolio invitation code, when the operator has set one: starting a portfolio
-        # is for the people they handed the code to, and for nobody else.
-        if not portfolio_code_matches(portfolio_code):
+        # A code is either a single-use one minted in the console or the older
+        # single-secret gate, and the two are interchangeable to the person typing it.
+        # Where a code is required, accepting neither is a refusal; where none is
+        # required, an empty field is simply an empty field.
+        invite = find_onboarding_invite(control_engine, portfolio_code)
+        global_code_ok = bool(portfolio_invite_code()) and portfolio_code_matches(portfolio_code)
+        if registration_requires_code(control_engine) and invite is None and not global_code_ok:
             return failure("That portfolio invitation code is not right.")
 
         try:
-            user, tenant, _ = register_portfolio(
+            if invite is not None:
+                user, tenant, _ = accept_onboarding_invite(
+                    control_engine, tenant_manager,
+                    token=portfolio_code, email=email, password=password,
+                    display_name=display_name, portfolio_name=portfolio_name,
+                )
+            else:
+                user, tenant, _ = register_portfolio(
+                    control_engine, tenant_manager,
+                    email=email, password=password,
+                    display_name=display_name, portfolio_name=portfolio_name,
+                )
+        except ValueError as exc:
+            return failure(str(exc))
+
+        token, _ = issue_session(
+            control_engine, user, tenant.id,
+            ip_address=_client_ip(request), user_agent=request.headers.get("user-agent"),
+        )
+        response = RedirectResponse(url="/", status_code=303)
+        set_session_cookie(response, token, request)
+        return response
+
+    # --- Onboarding codes (a new portfolio) ------------------------------
+
+    def _render_join(
+        request: Request,
+        *,
+        code: str = "",
+        error: str | None = None,
+        email: str = "",
+        display_name: str = "",
+        portfolio_name: str = "",
+        hint: str | None = None,
+        pinned_email: str | None = None,
+    ):
+        """Render the redemption form. The code rides in a hidden field so a failure
+        keeps the holder on the same page rather than sending them back to retype it."""
+        csrf_token, set_cookie = issue_pre_session_csrf(request)
+        return _render(
+            templates, request, "join.html",
+            {
+                "code": code,
+                "error": error,
+                "email": pinned_email or email,
+                "pinned_email": pinned_email,
+                "display_name": display_name,
+                "portfolio_name": portfolio_name or (hint or ""),
+                "min_password_length": MIN_PASSWORD_LENGTH,
+            },
+            csrf_token=csrf_token, set_cookie=set_cookie,
+        )
+
+    @router.get("/auth/join", response_class=HTMLResponse)
+    def join_form(request: Request, code: str = ""):
+        """Where an onboarding code starts a portfolio.
+
+        Deliberately not gated by ``registration_is_open``: the code *is* the permission,
+        which is what lets an operator hand out one portfolio at a time on a live
+        instance that has long since closed ordinary registration.
+
+        With no code in the link this is still a usable page — the field is shown rather
+        than an error — so a person who was told "you have an invitation code" has
+        somewhere to put it.
+        """
+        invite = find_onboarding_invite(control_engine, code) if code.strip() else None
+        if invite is None:
+            return _render_join(
+                request,
+                code=code,
+                error=("That invitation code is invalid, already used, or has expired."
+                       if code.strip() else None),
+            )
+        return _render_join(
+            request, code=code, hint=invite.portfolio_name_hint, pinned_email=invite.email
+        )
+
+    @router.post("/auth/join")
+    def join_submit(
+        request: Request,
+        code: str = Form(""),
+        email: str = Form(""),
+        password: str = Form(""),
+        display_name: str = Form(""),
+        portfolio_name: str = Form(""),
+        csrf_token: str = Form(None),
+    ):
+        invite = find_onboarding_invite(control_engine, code)
+        if invite is None:
+            return _render_join(
+                request, code=code,
+                error="That invitation code is invalid, already used, or has expired.",
+            )
+        if not pre_session_csrf_valid(request, csrf_token):
+            return _render_join(
+                request, code=code, hint=invite.portfolio_name_hint,
+                pinned_email=invite.email, display_name=display_name,
+                portfolio_name=portfolio_name, error="Your form expired. Please try again.",
+            )
+        try:
+            user, tenant, _ = accept_onboarding_invite(
                 control_engine, tenant_manager,
-                email=email, password=password,
+                token=code, email=email, password=password,
                 display_name=display_name, portfolio_name=portfolio_name,
             )
         except ValueError as exc:
-            return failure(str(exc))
+            # A refusal never spends the code: assert that here rather than by comment.
+            return _render_join(
+                request, code=code, hint=invite.portfolio_name_hint,
+                pinned_email=invite.email, email=email, display_name=display_name,
+                portfolio_name=portfolio_name, error=str(exc),
+            )
 
         token, _ = issue_session(
             control_engine, user, tenant.id,
@@ -343,7 +472,7 @@ def get_auth_router(
         token: str,
         invite,
         *,
-        error: Optional[str] = None,
+        error: str | None = None,
         display_name: str = "",
     ):
         """Render the invitation as its holder sees it.
@@ -423,7 +552,7 @@ def get_auth_router(
         """Explains how to get a reset token, for a reader who arrived here directly.
 
         Reset tokens are never issued to an unauthenticated web requester: this
-        self-hosted deployment has no mailer, so the installation operator creates the
+        self-hosted deployment has no mailer, so the super admin creates the
         one-time link locally and hands it to the account holder out of band.
         """
         return templates.TemplateResponse(request=request, name="reset.html", context={})
@@ -458,7 +587,7 @@ def get_auth_router(
             pane="forgot",
             reset_error=(
                 "That token is not valid." if presented
-                else "Enter the token your installation operator gave you."
+                else "Enter the token your super admin gave you."
             ),
         )
 

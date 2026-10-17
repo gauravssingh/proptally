@@ -1,0 +1,127 @@
+{% extends "admin_base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}{{ person.email }} — Super admin{% endblock %}
+
+{% block content %}
+{% set header_meta %}
+    {% if person.is_super_admin %}{{ ui.badge("SUPER ADMIN", variant="rule", upper=true) }}{% endif %}
+    {% if not person.is_active %}{{ ui.badge("INACTIVE", variant="warning", upper=true) }}{% endif %}
+{% endset %}
+
+{% call ui.page_header(
+    person.display_name or person.email,
+    "One account: its portfolios, its sessions, and the password-reset link an operator can hand over.",
+    meta=header_meta
+) %}
+    <form method="post" action="/admin/people/{{ person.id }}/reset" class="pt-inline-flex">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {{ ui.btn("Issue a password-reset link", variant="primary", size="sm", type="submit",
+                  icon_name="lock", title="Mint a single-use reset token, shown once on this screen") }}
+    </form>
+    {{ ui.btn("All people", variant="ghost", size="sm", href="/admin/people") }}
+{% endcall %}
+
+{% if message %}{{ ui.alert(variant="success", title="Done", text=message) }}{% endif %}
+{% if error %}{{ ui.alert(variant="error", title="Not done", text=error) }}{% endif %}
+
+{% if reset_token %}
+{{ ui.alert(
+    variant="info",
+    title="Password-reset link — shown once",
+    text="Hand this to the person out of band. It expires in two hours and only its hash is stored, so it cannot be shown again:<br><code>/auth/reset/" ~ reset_token ~ "</code>"
+) }}
+{% endif %}
+
+<div class="pt-grid pt-sm-grid-cols-2 pt-lg-grid-cols-4 pt-gap-4">
+    {{ ui.kpi("Portfolios", person.portfolios | length, sub="Memberships this account holds") }}
+    {{ ui.kpi("Live sessions", person.sessions | selectattr("live") | list | length,
+              sub=(person.sessions | length) ~ " ever recorded") }}
+    {{ ui.kpi("Created", person.created_at | format_date, sub="Account opened") }}
+    {{ ui.kpi("Password changed", (person.password_changed_at | format_date) if person.password_changed_at else "Never",
+              sub="A reset revokes every other session") }}
+</div>
+
+{{ ui.section_open("Account", "As this installation records it.") }}
+    <div class="pt-stack pt-gap-3">
+        <div class="pt-kv">
+            <span class="pt-kv__key">Email</span>
+            <span class="pt-kv__value">{{ person.email }}</span>
+        </div>
+        <div class="pt-kv">
+            <span class="pt-kv__key">Account id</span>
+            <span class="pt-kv__value"><code class="pt-num">{{ person.id }}</code></span>
+        </div>
+        <div class="pt-kv">
+            <span class="pt-kv__key">Kind</span>
+            <span class="pt-kv__value">
+                {{ "Platform operator — created on the host, no portfolio" if person.is_super_admin else "Tenant account" }}
+            </span>
+        </div>
+    </div>
+{{ ui.section_close() }}
+
+{{ ui.section_open("Portfolios this account reaches", "The role is the authority it holds in that portfolio.") }}
+    {% if person.portfolios %}
+    {{ ui.table_open(label="Portfolios", compact=true) }}
+        <thead>
+            <tr>
+                {{ ui.th("Portfolio") }}
+                {{ ui.th("Role") }}
+                {{ ui.th("Joined") }}
+                {{ ui.th("", cls="pt-table__actions") }}
+            </tr>
+        </thead>
+        <tbody>
+        {% for portfolio in person.portfolios %}
+            <tr>
+                <td class="pt-table__primary">{{ portfolio.name }}</td>
+                <td>{{ ui.badge(portfolio.role, variant="neutral", upper=true) }}</td>
+                <td class="pt-fs-caption">{{ portfolio.joined_at | format_date }}</td>
+                <td class="pt-table__actions">
+                    {{ ui.btn("Manage", variant="subtle", size="sm", href="/admin/tenants/" ~ portfolio.tenant_id) }}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    {{ ui.table_close() }}
+    {% else %}
+    {{ ui.empty_state("No memberships", "This account administers the platform and opens no tenant.",
+                      icon_name="shield") }}
+    {% endif %}
+{{ ui.section_close() }}
+
+{{ ui.section_open(
+    "Sessions",
+    "Recorded sign-ins. Only a digest of the cookie is stored, so this is an audit view of who has been signed in — not a way to sign in."
+) }}
+    {% if person.sessions %}
+    {{ ui.table_open(label="Sessions", compact=true) }}
+        <thead>
+            <tr>
+                {{ ui.th("State") }}
+                {{ ui.th("From") }}
+                {{ ui.th("Created") }}
+                {{ ui.th("Expires") }}
+                {{ ui.th("Client") }}
+            </tr>
+        </thead>
+        <tbody>
+        {% for session in person.sessions %}
+            <tr>
+                <td>
+                    {% if session.live %}{{ ui.badge("LIVE", variant="success", upper=true) }}{% else %}{{ ui.badge("ENDED", variant="neutral", upper=true) }}{% endif %}
+                </td>
+                <td class="pt-fs-caption pt-num">{{ session.ip_address }}</td>
+                <td class="pt-fs-caption">{{ session.created_at | format_date }}</td>
+                <td class="pt-fs-caption">{{ session.expires_at | format_date }}</td>
+                <td class="pt-fs-caption">{{ session.user_agent }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    {{ ui.table_close() }}
+    {% else %}
+    {{ ui.empty_state("No sessions recorded", "This account has not signed in on this host.", icon_name="clock") }}
+    {% endif %}
+{{ ui.section_close() }}
+{% endblock %}

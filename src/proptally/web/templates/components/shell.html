@@ -107,6 +107,13 @@
         {% for section in nav.financial_sections() %}
         {{ nav_section(section, active_page, review_count) }}
         {% endfor %}
+
+        {% set who = current_context() %}
+        {% if who and who.user.is_super_admin %}
+        {% for section in nav.instance_sections() %}
+        {{ nav_section(section, active_page, review_count) }}
+        {% endfor %}
+        {% endif %}
     </nav>
 
     {{ account_controls() }}
@@ -133,7 +140,7 @@
             <span class="pt-avatar" aria-hidden="true">{{ (who.user.display_name or who.user.email) | initials }}</span>
             <span class="pt-account__text">
                 <span class="pt-account__name">{{ who.user.display_name or who.user.email }}</span>
-                <span class="pt-account__meta">{{ who.role }} · {{ who.user.email }}</span>
+                <span class="pt-account__meta">{{ who.role }}</span>
             </span>
         </a>
         <form method="post" action="/auth/logout" class="pt-inline-flex">
@@ -207,6 +214,13 @@
             {% for section in nav.financial_sections() %}
             {{ nav_section(section, active_page, review_count) }}
             {% endfor %}
+
+            {% set who = current_context() %}
+            {% if who and who.user.is_super_admin %}
+            {% for section in nav.instance_sections() %}
+            {{ nav_section(section, active_page, review_count) }}
+            {% endfor %}
+            {% endif %}
         </nav>
 
         {{ account_controls() }}

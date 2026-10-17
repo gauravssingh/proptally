@@ -264,19 +264,19 @@
     ) }}
         <div class="pt-stack pt-gap-3">
             <div class="pt-kv">
-                <span class="pt-kv__key"{% if context.user.is_instance_admin %} title="{{ portfolio_status.database }}"{% endif %}>Ledger database</span>
+                <span class="pt-kv__key"{% if context.user.is_super_admin %} title="{{ portfolio_status.database }}"{% endif %}>Ledger database</span>
                 <span class="pt-kv__value">{{ portfolio_status.database_bytes | format_bytes }}</span>
             </div>
             <div class="pt-kv">
-                <span class="pt-kv__key"{% if context.user.is_instance_admin %} title="{{ portfolio_status.database }}-wal"{% endif %}>Write-ahead log</span>
+                <span class="pt-kv__key"{% if context.user.is_super_admin %} title="{{ portfolio_status.database }}-wal"{% endif %}>Write-ahead log</span>
                 <span class="pt-kv__value">{{ portfolio_status.wal_bytes | format_bytes }}</span>
             </div>
             <div class="pt-kv">
-                <span class="pt-kv__key"{% if context.user.is_instance_admin %} title="{{ portfolio_status.vault }}"{% endif %}>Document vault</span>
+                <span class="pt-kv__key"{% if context.user.is_super_admin %} title="{{ portfolio_status.vault }}"{% endif %}>Document vault</span>
                 <span class="pt-kv__value">{{ portfolio_status.vault_bytes | format_bytes }}</span>
             </div>
             <div class="pt-kv">
-                <span class="pt-kv__key"{% if context.user.is_instance_admin %} title="{{ portfolio_status.photos }}"{% endif %}>Photos</span>
+                <span class="pt-kv__key"{% if context.user.is_super_admin %} title="{{ portfolio_status.photos }}"{% endif %}>Photos</span>
                 <span class="pt-kv__value">{{ portfolio_status.photos_bytes | format_bytes }}</span>
             </div>
             <div class="pt-kv">
@@ -284,10 +284,10 @@
                 <span class="pt-kv__value">{{ portfolio_status.portfolio_bytes | format_bytes }}</span>
             </div>
             <p class="pt-fs-caption pt-text-secondary">
-                {% if context.user.is_instance_admin %}
+                {% if context.user.is_super_admin %}
                 All parts live under <code>{{ portfolio_status.root }}</code>.
                 {% else %}
-                Exact host paths are visible only to the installation operator.
+                Exact host paths are visible only to the super admin.
                 {% endif %}
             </p>
         </div>
@@ -389,7 +389,7 @@
         </div>
     {{ ui.section_close() }}
 
-    {% if context.user.is_instance_admin %}
+    {% if context.user.is_super_admin %}
     {{ ui.section_open(
         "Whole-installation backup",
         "The operator backup covers the control plane and every portfolio. It is separate from the export of this one portfolio."
@@ -397,10 +397,10 @@
     {% else %}
     {{ ui.section_open(
         "Installation backup",
-        "Shared-host backups are managed by the installation operator. This section does not expose the other portfolios or the operator's storage paths."
+        "Shared-host backups are managed by the super admin. This section does not expose the other portfolios or the operator's storage paths."
     ) }}
     {% endif %}
-        {% if context.user.is_instance_admin %}
+        {% if context.user.is_super_admin %}
         <div class="pt-stack pt-gap-4">
             {% if portfolio_status %}
             <p class="pt-fs-caption pt-text-secondary">
@@ -433,8 +433,8 @@
         {% else %}
         {{ ui.alert(
             variant="info",
-            title="Installation operator only",
-            text="A whole-installation backup includes every portfolio and account. Only the installation operator can view its paths and run instructions; your portfolio export is above."
+            title="Super admin only",
+            text="A whole-installation backup includes every portfolio and account. Only the super admin can view its paths and run instructions; your portfolio export is above."
         ) }}
         {% endif %}
     {{ ui.section_close() }}
@@ -456,9 +456,9 @@
                 <span class="pt-kv__value">{{ ui.badge(context.role, variant="neutral", upper=true) }}</span>
             </div>
             <div class="pt-kv">
-                <span class="pt-kv__key">Installation operator</span>
+                <span class="pt-kv__key">Super admin</span>
                 <span class="pt-kv__value">
-                    {% if context.user.is_instance_admin %}
+                    {% if context.user.is_super_admin %}
                     {{ ui.badge("YES", variant="rule", upper=true) }}
                     {% else %}
                     No

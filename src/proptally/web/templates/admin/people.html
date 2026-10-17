@@ -1,0 +1,69 @@
+{% extends "admin_base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}People — Super admin{% endblock %}
+
+{% block content %}
+{{ ui.page_header(
+    "People",
+    "Every account on this installation, the portfolios it reaches, and whether it is signed in. An account is a person; a membership is their access to one portfolio."
+) }}
+
+{% if message %}{{ ui.alert(variant="success", title="Done", text=message) }}{% endif %}
+{% if error %}{{ ui.alert(variant="error", title="Not done", text=error) }}{% endif %}
+
+{{ ui.section_open("Accounts", "Oldest first. A person may belong to more than one portfolio.") }}
+    {% if people %}
+    {{ ui.table_open(label="Accounts") }}
+        <thead>
+            <tr>
+                {{ ui.th("Person") }}
+                {{ ui.th("Kind") }}
+                {{ ui.th("Portfolios") }}
+                {{ ui.th("Sessions", num=true) }}
+                {{ ui.th("Created") }}
+                {{ ui.th("", cls="pt-table__actions") }}
+            </tr>
+        </thead>
+        <tbody>
+        {% for person in people %}
+            <tr>
+                <td>
+                    <span class="pt-table__primary">{{ person.display_name or person.email }}</span>
+                    <span class="pt-fs-caption pt-text-secondary">{{ person.email }}</span>
+                </td>
+                <td>
+                    {% if person.is_super_admin %}
+                        {{ ui.badge("SUPER ADMIN", variant="rule", upper=true) }}
+                    {% else %}
+                        {{ ui.badge("TENANT", variant="neutral", upper=true) }}
+                    {% endif %}
+                    {% if not person.is_active %}{{ ui.badge("INACTIVE", variant="warning", upper=true) }}{% endif %}
+                </td>
+                <td class="pt-fs-caption">
+                    {% if person.portfolios %}
+                        {% for portfolio in person.portfolios %}
+                        <div>
+                            {{ portfolio.name }}
+                            {{ ui.badge(portfolio.role, variant="outline", upper=true, size="sm") }}
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <span class="pt-text-secondary">No portfolio — a super admin administers the platform, not a tenant.</span>
+                    {% endif %}
+                </td>
+                <td class="pt-table__num">{{ person.session_count }}</td>
+                <td class="pt-fs-caption">{{ person.created_at | format_date }}</td>
+                <td class="pt-table__actions">
+                    {{ ui.btn("Open", variant="subtle", size="sm", href="/admin/people/" ~ person.id) }}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    {{ ui.table_close() }}
+    {% else %}
+    {{ ui.empty_state("No accounts yet", "The first account is created by the operator on the host.",
+                      action_label="Back to overview", action_href="/admin", icon_name="user_check") }}
+    {% endif %}
+{{ ui.section_close() }}
+{% endblock %}

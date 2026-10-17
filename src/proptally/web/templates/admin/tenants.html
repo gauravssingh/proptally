@@ -1,0 +1,82 @@
+{% extends "admin_base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Portfolios — Super admin{% endblock %}
+
+{% block content %}
+{{ ui.page_header(
+    "Portfolios",
+    "Every portfolio on this installation. Counts, storage and access only — no portfolio's figures are read or shown."
+) }}
+
+{% if message %}{{ ui.alert(variant="success", title="Done", text=message) }}{% endif %}
+{% if error %}{{ ui.alert(variant="error", title="Not done", text=error) }}{% endif %}
+
+{{ ui.section_open("All portfolios", "Oldest first. Open one to manage its people, roles and invitations.") }}
+    {% if tenants %}
+    {{ ui.table_open(label="Portfolios") }}
+        <thead>
+            <tr>
+                {{ ui.th("Portfolio") }}
+                {{ ui.th("State") }}
+                {{ ui.th("Access") }}
+                {{ ui.th("Contents") }}
+                {{ ui.th("Storage", num=true) }}
+                {{ ui.th("", cls="pt-table__actions") }}
+            </tr>
+        </thead>
+        <tbody>
+        {% for tenant in tenants %}
+            <tr>
+                <td>
+                    <span class="pt-table__primary">{{ tenant.name }}</span>
+                    <span class="pt-fs-caption pt-text-secondary pt-num">{{ tenant.slug }}</span>
+                    <span class="pt-fs-caption pt-text-secondary">Created {{ tenant.created_at | format_date }}</span>
+                </td>
+                <td>
+                    {{ ui.badge(tenant.status, variant=("success" if tenant.status == "ACTIVE" else ("warning" if tenant.status in ["FAILED", "DELETING", "PROVISIONING", "PENDING"] else "neutral")), upper=true) }}
+                    {% if tenant.leases %}{{ ui.badge("IN USE", variant="accent", upper=true, title="A live operation holds this portfolio's lease") }}{% endif %}
+                    {% if not tenant.readable %}{{ ui.badge("UNREADABLE", variant="warning", upper=true, title="This portfolio's database could not be opened, so its counts cannot be reported. Its files are untouched.") }}{% endif %}
+                </td>
+                <td>
+                    {% if tenant.owner_emails %}
+                        {% for email in tenant.owner_emails %}
+                        <div class="pt-table__primary">{{ email }}</div>
+                        {% endfor %}
+                    {% else %}
+                        {{ ui.badge("NO OWNER", variant="error", upper=true) }}
+                    {% endif %}
+                    <span class="pt-fs-caption pt-text-secondary">
+                        {{ tenant.member_count }} member{{ "" if tenant.member_count == 1 else "s" }}
+                        {%- if tenant.pending_invites %} · {{ tenant.pending_invites }} invited{% endif %}
+                    </span>
+                </td>
+                <td class="pt-fs-caption pt-text-secondary">
+                    {% if tenant.counts %}
+                        {{ tenant.counts.properties }} doors · {{ tenant.counts.loans }} loans<br>
+                        {{ tenant.counts.documents }} documents · {{ tenant.counts.transactions }} transactions
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
+                <td class="pt-table__num">
+                    {{ tenant.status_detail.portfolio_bytes | format_bytes if tenant.status_detail else "—" }}
+                </td>
+                <td class="pt-table__actions">
+                    {{ ui.btn("Open", variant="subtle", size="sm", href="/admin/tenants/" ~ tenant.id) }}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    {{ ui.table_close() }}
+    {% else %}
+    {{ ui.empty_state(
+        "No portfolios yet",
+        "A portfolio is created when somebody registers on this installation, or when they redeem an onboarding code you mint.",
+        action_label="Mint an onboarding code",
+        action_href="/admin/onboarding",
+        icon_name="bank"
+    ) }}
+    {% endif %}
+{{ ui.section_close() }}
+{% endblock %}
