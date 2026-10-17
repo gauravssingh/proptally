@@ -126,7 +126,8 @@ elements — modals no longer skip from `h1` to `h3` (audit m1/§4).
 
 * **Sidebar** 256px, fixed on `≥1024px`, drawer below (audit: it currently collapses at 768px).
 * **Top bar** 44px on desktop (environment strip), 52px on mobile.
-* **Content** max 1280px centred, 32px padding desktop / 16px mobile.
+* **Content** fluid beside the sidebar, capped at 1920px on ultra-wide displays; 32px
+  padding desktop, 16px mobile.
 * **Two-surface shell:** chrome is dark, canvas is light; the boundary is a 1px border,
   never a shadow.
 * **Grid:** 12 columns on desktop, 4 on tablet, 1 on mobile, 16–20px gutter.

@@ -40,7 +40,8 @@ CSS custom properties cannot be used in media queries, so `tokens.css` records t
   both at `--pt-z-drawer`.
 * Content reserves space for the bottom bar: `padding-bottom: var(--pt-bottomnav-h) +
   var(--pt-space-6)` below 1024px, reset above.
-* Page padding: 16px mobile, 32px desktop; content capped at `--pt-content-max` (1280px).
+* Page padding: 16px mobile, 32px desktop; the content column is fluid beside the sidebar
+  and capped at `--pt-content-max` (1920px) on ultra-wide displays.
 
 ### 2.2 Navigation
 

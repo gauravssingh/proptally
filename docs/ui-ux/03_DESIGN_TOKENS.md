@@ -233,7 +233,7 @@ section 24px; form row → form row 16px; label → control 4px.
 | `--pt-appbar-h` | 52px | Mobile top app bar. |
 | `--pt-bottomnav-h` | 72px | Mobile bottom navigation (includes safe-area padding). |
 | `--pt-drawer-w` | 288px | Mobile/tablet slide-over. |
-| `--pt-content-max` | 1280px | Content column cap. |
+| `--pt-content-max` | 1920px | Ultra-wide cap on the content column; the workspace is fluid below it. |
 | `--pt-content-pad-x` | 32px / 16px | Desktop / mobile. |
 | `--pt-card-pad` | 20px | Standard card padding. |
 | `--pt-card-pad-lg` | 24px | Hero/statement card padding. |
