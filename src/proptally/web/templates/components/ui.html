@@ -63,6 +63,18 @@
     "sparkline": ["M3 17l6-6 4 4 8-8"],
     "tag": ["M7 7h.01M7 3h5a1.99 1.99 0 011.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.99 1.99 0 013 12V7a4 4 0 014-4z"],
     "scale": ["M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"],
+    "folder": ["M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"],
+    "folder-open": ["M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776"],
+    "file-text": ["M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z", "M14 2v6h6", "M16 13H8", "M16 17H8", "M10 9H8"],
+    "chevron-right": ["M9 5l7 7-7 7"],
+    "chevron-down": ["M6 9l6 6 6-6"],
+    "chevron-up": ["M18 15l-6-6-6 6"],
+    "grid": ["M3 3h7v7H3z", "M14 3h7v7h-7z", "M14 14h7v7h-7z", "M3 14h7v7H3z"],
+    "list": ["M8 6h13", "M8 12h13", "M8 18h13", "M3 6h.01", "M3 12h.01", "M3 18h.01"],
+    "more-vertical": ["M12 5h.01", "M12 12h.01", "M12 19h.01"],
+    "sort": ["M3 6h18", "M7 12h10", "M11 18h2"],
+    "alert_triangle": ["M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z", "M12 9v4", "M12 17h.01"],
+    "check_circle": ["M22 11.08V12a10 10 0 11-5.93-9.14", "M22 4L12 14.01l-3-3"],
 } %}
 
 {% set _SOLID_ICONS = {
@@ -598,10 +610,61 @@ id="{{ id or name }}" name="{{ name }}"
 {# ---------------------------------------------------------------------------
    D5. Filter chip
    --------------------------------------------------------------------------- #}
-{% macro chip(label, href, active=false, count=None) -%}
-<a class="pt-chip{% if active %} is-active{% endif %}" href="{{ href }}">
+{% macro chip(label, href=None, active=false, count=None) -%}
+{#- A chip is a link when it goes somewhere (a filter, a folder) and a plain tag when it
+    does not (the property and type a document belongs to). -#}
+<{{ 'a' if href else 'span' }} class="pt-chip{% if active %} is-active{% endif %}"{% if href %} href="{{ href }}"{% endif %}>
     <span>{{ label }}</span>
     {%- if count is not none %}<span class="pt-chip__count">{{ count }}</span>{% endif -%}
+</{{ 'a' if href else 'span' }}>
+{%- endmacro %}
+
+
+{# ---------------------------------------------------------------------------
+   H6. Title bar (inside a pane)
+   ---------------------------------------------------------------------------
+   Names the folder you are in and the one action that belongs to it; the caller
+   supplies the actions. Distinct from `page_header`, which names the screen.
+   --------------------------------------------------------------------------- #}
+{% macro titlebar(icon_name, title, meta=None) -%}
+<div class="pt-titlebar">
+    <span class="pt-titlebar__icon">{{ icon(icon_name, "lg") }}</span>
+    <div class="pt-titlebar__text">
+        <div class="pt-titlebar__title">{{ title }}</div>
+        {%- if meta %}<div class="pt-titlebar__meta">{{ meta }}</div>{% endif -%}
+    </div>
+    {%- set actions = caller() if caller else "" -%}
+    {%- if actions | trim %}<div class="pt-titlebar__actions">{{ actions | safe }}</div>{% endif -%}
+</div>
+{%- endmacro %}
+
+
+{# ---------------------------------------------------------------------------
+   H7. Tabs
+   ---------------------------------------------------------------------------
+   `items` is a sequence of {key, label, href}; the tab whose key matches `active`
+   is marked. Links, because a tab here is a URL.
+   --------------------------------------------------------------------------- #}
+{% macro tabs(items, active=None) -%}
+<nav class="pt-tabs">
+    {%- for item in items %}
+    <a class="pt-tab{% if item.key == active %} is-active{% endif %}"
+       href="{{ item.href }}"{% if item.key == active %} aria-current="true"{% endif %}>{{ item.label }}</a>
+    {%- endfor %}
+</nav>
+{%- endmacro %}
+
+
+{# ---------------------------------------------------------------------------
+   H8. Action tile
+   ---------------------------------------------------------------------------
+   The icon-over-label control of an inspector: one real action, no menu, no
+   confirmation of its own.
+   --------------------------------------------------------------------------- #}
+{% macro action_tile(label, icon_name, href, attrs="") -%}
+<a class="pt-action-tile" href="{{ href }}"{% if attrs %} {{ attrs | safe }}{% endif %}>
+    {{ icon(icon_name, "md") }}
+    <span>{{ label }}</span>
 </a>
 {%- endmacro %}
 

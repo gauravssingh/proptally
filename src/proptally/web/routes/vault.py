@@ -1,9 +1,14 @@
 """The document vault: the portfolio's documents, navigated as folders.
 
 The model is the one a file manager uses. Folders are opened, not filtered: the
-tree down the left shows every folder with what it holds, the pane on the right
-shows the folder you are in — its subfolders first, then the documents inside it —
-and the breadcrumb is the way back up.
+tree down the left shows every folder with what it holds, the middle shows the
+folder you are in — its subfolders first, then the documents inside it — and the
+pane on the right is the inspector for the one document you have chosen.
+
+Every piece of that state is in the URL and rendered on the server: which folder
+(`property`, `type`), which chip (`kind`), how the files are ordered (`sort`),
+which document is being inspected (`doc`) and which tab of its inspector is open
+(`tab`). Nothing here needs script to work, and any view of it can be shared.
 
 The folder tree is two levels deep and follows the way an owner thinks about a
 document: **which property is it for**, then **what kind of document is it**. A
@@ -64,6 +69,17 @@ STATUS_VARIANTS = {
 
 PAGE_SIZES = ("25", "50", "100", "ALL")
 
+SORTS: tuple[tuple[str, str], ...] = (
+    ("date", "Uploaded"),
+    ("name", "Name"),
+    ("size", "Size"),
+)
+
+INSPECTOR_TABS: tuple[tuple[str, str], ...] = (
+    ("preview", "Preview"),
+    ("details", "Details"),
+)
+
 
 def human_size(num_bytes: int) -> str:
     """A file size a person can read at a glance."""
@@ -92,23 +108,27 @@ def _document_row(
     """One document, with the folder it lives in already worked out."""
     uploaded: datetime = document.uploaded_at
     state = _extraction_state(extraction)
+    mime = document.mime_type or ""
     return {
         "id": document.id,
         "filename": document.original_filename,
-        "mime_type": document.mime_type,
+        "mime_type": mime,
+        "kind": "image" if mime.startswith("image/") else "pdf" if mime == "application/pdf" else "other",
+        "can_preview": mime.startswith("image/") or mime == "application/pdf",
         "property_key": document.property_id or UNFILED,
         "property_name": property_record.name if property_record else "Unfiled",
         "type_key": document.document_type or UNCLASSIFIED,
         "type_label": TYPE_LABELS.get(document.document_type or "", "Unclassified"),
         "size_bytes": document.file_size_bytes,
         "size": human_size(document.file_size_bytes),
+        "type_short": (mime.split("/")[-1].upper() if mime else "—"),
         "uploaded_at": uploaded,
         "uploaded": uploaded.strftime("%d %b %Y"),
         "extraction_id": extraction.id if extraction else None,
+        "extraction_status": extraction.validation_status if extraction else None,
         "state": state,
         "state_label": STATUS_LABELS[state],
         "state_variant": STATUS_VARIANTS[state],
-        "is_image": (document.mime_type or "").startswith("image/"),
     }
 
 
@@ -154,6 +174,8 @@ def _matches(row: dict, needle: str) -> bool:
 
 
 def _vault_url(*, property_key: str | None, type_key: str | None, q: str | None,
+               kind: str | None = None, sort: str | None = None,
+               doc: str | None = None, tab: str | None = None,
                per_page: str, page: int = 1) -> str:
     params: dict[str, str] = {"per_page": per_page}
     if property_key:
@@ -162,6 +184,14 @@ def _vault_url(*, property_key: str | None, type_key: str | None, q: str | None,
         params["type"] = type_key
     if q:
         params["q"] = q
+    if kind and kind != "all":
+        params["kind"] = kind
+    if sort and sort != "date":
+        params["sort"] = sort
+    if doc:
+        params["doc"] = doc
+    if tab and tab != "preview":
+        params["tab"] = tab
     if page > 1:
         params["page"] = str(page)
     return "/documents?" + urlencode(params)
@@ -176,13 +206,17 @@ def get_vault_router(templates, get_session_dep):
         property: str | None = None,
         type: str | None = None,
         q: str | None = None,
+        kind: str = "all",
+        sort: str = "date",
+        doc: str | None = None,
+        tab: str = "preview",
         per_page: str = "25",
         page: int = 1,
         message: str | None = Query(None),
         message_variant: str = Query("info"),
         session: Session = Depends(get_session_dep),
     ):
-        """One folder of the vault, with the tree beside it."""
+        """One folder of the vault, with the tree beside it and the inspector for what is chosen."""
         # A page size is either "ALL" or a number; the form offers 25/50/100, but a
         # URL may ask for any size it likes.
         if per_page != "ALL":
@@ -190,6 +224,7 @@ def get_vault_router(templates, get_session_dep):
                 per_page = str(max(1, min(250, int(per_page))))
             except (TypeError, ValueError):
                 per_page = "25"
+        sort = sort if sort in dict(SORTS) else "date"
 
         documents = session.exec(
             select(Document).order_by(desc(Document.uploaded_at), desc(Document.id))
@@ -204,7 +239,7 @@ def get_vault_router(templates, get_session_dep):
                 latest[extraction.document_id] = extraction
 
         property_map = {p.id: p for p in session.exec(select(Property).order_by(Property.name)).all()}
-        all_rows = [_document_row(doc, latest.get(doc.id), property_map.get(doc.property_id or "")) for doc in documents]
+        all_rows = [_document_row(doc_, latest.get(doc_.id), property_map.get(doc_.property_id or "")) for doc_ in documents]
 
         needle = (q or "").strip().lower()
         searched = [row for row in all_rows if _matches(row, needle)] if needle else all_rows
@@ -220,11 +255,14 @@ def get_vault_router(templates, get_session_dep):
         # The tree counts what the search found, so a match's folder is obvious.
         tree = _folder_tree(searched, property_map)
 
-        # Every node carries its own URL, so the template never assembles one.
+        # Every node carries its own URL, so the template never assembles one. A folder
+        # link drops the inspector: the chosen document belongs to another folder.
         for node in tree:
-            node["href"] = _vault_url(property_key=node["key"], type_key=None, q=None, per_page=per_page)
+            node["href"] = _vault_url(property_key=node["key"], type_key=None, q=None,
+                                      kind=kind, sort=sort, per_page=per_page)
             for child in node["children"]:
-                child["href"] = _vault_url(property_key=node["key"], type_key=child["key"], q=None, per_page=per_page)
+                child["href"] = _vault_url(property_key=node["key"], type_key=child["key"], q=None,
+                                           kind=kind, sort=sort, per_page=per_page)
 
         current_property = next((node for node in tree if node["key"] == property), None)
         current_type = None
@@ -241,18 +279,54 @@ def get_vault_router(templates, get_session_dep):
                            "size": human_size(child["bytes"]), "href": child["href"]}
                           for child in current_property["children"]]
 
-        visible = [
+        in_folder = [
             row for row in searched
             if (current_property is None or row["property_key"] == current_property["key"])
             and (current_type is None or row["type_key"] == current_type["key"])
         ]
-        total = len(visible)
-        total_bytes = sum(row["size_bytes"] for row in visible)
+
+        # The chips are built from what the folder actually holds: a type nobody filed
+        # under is not offered, so a chip never leads to an empty list.
+        kind_counts: dict[str, int] = {}
+        for row in in_folder:
+            kind_counts[row["kind"]] = kind_counts.get(row["kind"], 0) + 1
+        kind_labels = {"pdf": "PDFs", "image": "Images", "other": "Other files"}
+        kind_chips = [
+            {"key": "all", "label": "All", "count": len(in_folder)},
+            {"key": "folders", "label": "Folders", "count": len(subfolders)},
+        ] + [
+            {"key": key, "label": kind_labels.get(key, key.title()), "count": kind_counts[key]}
+            for key in ("pdf", "image", "other") if kind_counts.get(key)
+        ]
+        for chip in kind_chips:
+            chip["href"] = _vault_url(property_key=property, type_key=type, q=q, kind=chip["key"],
+                                      sort=sort, per_page=per_page)
+            chip["active"] = chip["key"] == (kind if kind in {c["key"] for c in kind_chips} else "all")
+
+        if kind not in {chip["key"] for chip in kind_chips}:
+            kind = "all"
+        visible = [row for row in in_folder if kind == "all" or (kind != "folders" and row["kind"] == kind)]
+        if kind == "folders":
+            visible = []
+
+        ordered = sorted(
+            visible,
+            key={
+                "name": lambda row: row["filename"].lower(),
+                "size": lambda row: -row["size_bytes"],
+                "date": lambda row: row["uploaded_at"],
+            }[sort],
+            reverse=(sort == "date"),
+        )
+
+        total = len(ordered)
+        total_bytes = sum(row["size_bytes"] for row in ordered)
 
         # Where each document's own folder is, so the table can link into it.
-        for row in visible:
+        for row in ordered:
             row["folder_href"] = _vault_url(
-                property_key=row["property_key"], type_key=row["type_key"], q=None, per_page=per_page)
+                property_key=row["property_key"], type_key=row["type_key"], q=None,
+                kind="all", sort=sort, per_page=per_page)
 
         per_page_count = max(total, 1) if per_page == "ALL" else int(per_page)
         total_pages = max(1, -(-total // per_page_count))
@@ -260,17 +334,30 @@ def get_vault_router(templates, get_session_dep):
         start = (page - 1) * per_page_count
         end = min(start + per_page_count, total)
 
+        # The inspector: the one document being looked at, and its tab.
+        selected = next((row for row in in_folder if row["id"] == doc), None)
+        inspector_tabs: list[dict] = []
+        if selected is not None:
+            tabs = list(INSPECTOR_TABS) + ([("extraction", "Extraction")] if selected["extraction_id"] else [])
+            if tab not in {key for key, _ in tabs}:
+                tab = "preview"
+            inspector_tabs = [
+                {"key": key, "label": label, "href": _vault_url(
+                    property_key=property, type_key=type, q=q, kind=kind, sort=sort,
+                    doc=selected["id"], tab=key, per_page=per_page)}
+                for key, label in tabs
+            ]
+
         # The path is the way back up; the last crumb is where you are, so it is not a link.
         breadcrumb: list[dict] = [{"label": "Vault", "href": _vault_url(
-            property_key=None, type_key=None, q=None, per_page=per_page)}]
+            property_key=None, type_key=None, q=None, kind=kind, sort=sort, per_page=per_page)}]
         if needle:
             breadcrumb.append({"label": f"search “{q.strip()}”", "href": None})
         if current_property is not None:
-            # The crumb you are standing in is text, not a link; its parent is a link.
             breadcrumb.append({
                 "label": current_property["label"],
                 "href": _vault_url(property_key=current_property["key"], type_key=None, q=None,
-                                   per_page=per_page) if current_type is not None else None,
+                                   kind=kind, sort=sort, per_page=per_page) if current_type is not None else None,
             })
         if current_type is not None:
             breadcrumb.append({"label": current_type["label"], "href": None})
@@ -284,13 +371,28 @@ def get_vault_router(templates, get_session_dep):
                 "message_variant": message_variant if message_variant in {"info", "success", "warning", "error"} else "info",
                 "tree": tree,
                 "breadcrumb": breadcrumb,
-                "vault_href": _vault_url(property_key=None, type_key=None, q=None, per_page=per_page),
+                "vault_href": _vault_url(property_key=None, type_key=None, q=None, kind=kind,
+                                         sort=sort, per_page=per_page),
                 "current_property": current_property,
                 "current_type": current_type,
                 "subfolders": subfolders,
-                "rows": visible[start:end],
+                "rows": ordered[start:end],
                 "q": q or "",
                 "is_searching": bool(needle),
+                "kind": kind,
+                "kind_chips": kind_chips,
+                "sort": sort,
+                "sort_chips": [
+                    {"label": label, "href": _vault_url(property_key=property, type_key=type, q=q,
+                                                        kind=kind, sort=key, per_page=per_page),
+                     "active": key == sort}
+                    for key, label in SORTS
+                ],
+                "selected": selected,
+                "inspector_tabs": inspector_tabs,
+                "active_tab": tab,
+                "inspector_close_href": _vault_url(property_key=property, type_key=type, q=q,
+                                                   kind=kind, sort=sort, per_page=per_page),
                 "per_page": per_page,
                 "page_sizes": PAGE_SIZES,
                 "page": page,
@@ -299,11 +401,16 @@ def get_vault_router(templates, get_session_dep):
                 "end_item": end,
                 "total_items": total,
                 "folder_size": human_size(total_bytes),
+                "folder_documents": len(in_folder),
+                "vault_documents": len(all_rows),
+                "vault_size": human_size(sum(row["size_bytes"] for row in all_rows)),
                 # The tree's counts move with the search, root row included, so the tree
                 # never claims three documents while showing one match inside a folder.
                 "vault_total": len(searched),
-                "prev_url": _vault_url(property_key=property, type_key=type, q=q, per_page=per_page, page=page - 1) if page > 1 else None,
-                "next_url": _vault_url(property_key=property, type_key=type, q=q, per_page=per_page, page=page + 1) if page < total_pages else None,
+                "prev_url": _vault_url(property_key=property, type_key=type, q=q, kind=kind, sort=sort,
+                                       doc=doc, tab=tab, per_page=per_page, page=page - 1) if page > 1 else None,
+                "next_url": _vault_url(property_key=property, type_key=type, q=q, kind=kind, sort=sort,
+                                       doc=doc, tab=tab, per_page=per_page, page=page + 1) if page < total_pages else None,
                 "max_upload_mb": MAX_UPLOAD_BYTES // (1024 * 1024),
                 "per_page_options": [
                     {"value": size, "label": "All" if size == "ALL" else size} for size in PAGE_SIZES

@@ -376,6 +376,9 @@ def _persist_document(
     document = Document(
         id=str(uuid4()), file_sha256=digest, original_filename=original_filename or path.name,
         storage_path=str(stored_path), file_size_bytes=path.stat().st_size,
+        # The media type follows the file, not the model's default: a PNG came in as an
+        # image, and the vault serves, previews and describes it as one.
+        mime_type=VAULT_SUFFIX_TYPES.get(suffix, "application/octet-stream"),
         document_type=document_type, property_id=property_id,
     )
     extraction_id = str(uuid4()) if extraction else None
@@ -465,6 +468,7 @@ VAULT_SUFFIX_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
 }
 
 

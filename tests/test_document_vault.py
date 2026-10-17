@@ -158,7 +158,7 @@ def test_opening_a_folder_shows_what_is_inside_it(vault):
     leaf = client.get(f"/documents?property={vault['property_id']}&type=LEASE_AGREEMENT").text
     assert "lease.pdf" in leaf
     assert "pt-folders" not in leaf
-    assert "This folder holds" in leaf         # the line above the list says where you are
+    assert "1 document" in leaf                # the title bar counts what the folder holds
 
     # The other branch of the tree still holds the unfiled document.
     unfiled = client.get("/documents?property=unfiled").text
@@ -179,6 +179,11 @@ def test_the_uploader_opens_on_demand_rather_than_sitting_on_the_page(vault):
     assert form_at > dialog_at, "the upload form must live inside the dialog"
     assert page.count('action="/documents/upload"') == 1, "exactly one upload form"
     assert 'id="add-documents"' not in page, "the permanent upload panel is gone"
+
+    # A form that posts must carry its own token: reading one from anywhere on the page
+    # passes while the browser's own upload is refused.
+    upload_form = page[form_at:page.index("</form>", form_at)]
+    assert 'name="csrf_token"' in upload_form, "the upload form must carry the session's token"
 
 
 def test_search_finds_a_file_wherever_it_was_filed(vault):
@@ -201,6 +206,29 @@ def test_search_finds_a_file_wherever_it_was_filed(vault):
     # No match at all is an empty state, not an error.
     empty = client.get("/documents?q=zzzz").text
     assert "Nothing here matches" in empty
+
+
+def test_an_uploaded_image_is_stored_and_described_as_an_image(vault):
+    """The media type follows the file: a PNG is not a PDF that happens to be named .png."""
+    client, app = vault["client"], vault["app"]
+    _upload(client, [("receipt.png", RECEIPT_PNG)], document_type="OTHER",
+            property_id=vault["property_id"])
+
+    engine = app.state.tenant_manager.engine_for(vault["tenant_id"])
+    with Session(engine) as session:
+        document = session.exec(select(Document)).one()
+    assert document.mime_type == "image/png"
+
+    # Serving it: rendered in place, because that is what "view" means; downloading it
+    # keeps the portfolio's own filename.
+    viewed = client.get(f"/documents/{document.id}/view")
+    assert viewed.headers["content-type"].startswith("image/png")
+    assert "attachment" not in viewed.headers.get("content-disposition", "")
+    assert "attachment" in client.get(f"/documents/{document.id}/download").headers["content-disposition"]
+
+    page = client.get("/documents").text
+    assert "PNG" in page            # the file is listed as the kind of file it is
+    assert "Images" in page         # and the folder offers the chip for it
 
 
 def test_pagination_walks_the_documents(vault):

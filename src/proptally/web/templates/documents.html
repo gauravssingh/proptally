@@ -1,233 +1,316 @@
 {% extends "base.html" %}
 
-{# The document vault, navigated the way a file manager is: the folder tree down the
-   left, the contents of the open folder on the right — its subfolders first, then the
-   documents inside it, at every level — with the breadcrumb as the way back up. #}
+{# The document vault. Folders are opened rather than filtered: the tree down the left
+   is every folder with what it holds, the middle is the folder you are in, and the pane
+   on the right is the document you have chosen. All of that is URL state rendered on the
+   server, so a view can be shared, refreshed, and used with no script at all. #}
 
 {% block title %}Document Vault — PropTally{% endblock %}
 
 {% block content %}
 <div class="pt-stack-3">
-    {% call ui.page_header(
+    {{ ui.page_header(
         "Document Vault",
-        "Every document this portfolio holds, kept in the folder it belongs to. Open a folder rather than filter for it — the tree shows where everything is, and the pane shows what is inside the folder you are in."
-    ) %}
-        {{ ui.btn("Add documents", variant="primary", type="button", icon_name="plus",
-                  attrs='data-modal-open="upload-documents"') }}
-    {% endcall %}
+        "Every document this portfolio holds, in the folder it belongs to. Open a folder rather than filter for it — the tree shows where everything is, and the pane on the right describes the document you choose."
+    ) }}
 
     {% if message %}{{ ui.alert(message_variant, text=message) }}{% endif %}
 
-    <nav class="pt-breadcrumb" aria-label="Folder path">
-        {% for crumb in breadcrumb -%}
-            {%- if crumb.href %}<a class="pt-breadcrumb__link" href="{{ crumb.href }}">{{ crumb.label }}</a>
-            {%- else %}<span class="pt-breadcrumb__here" aria-current="page">{{ crumb.label }}</span>{% endif %}
-            {%- if not loop.last %}<span class="pt-breadcrumb__sep" aria-hidden="true">/</span>{% endif %}
-        {%- endfor %}
-    </nav>
+    <form class="pt-flex pt-items-end pt-gap-2" method="get" action="/documents" role="search">
+        {% if current_property %}<input type="hidden" name="property" value="{{ current_property.key }}">{% endif %}
+        {% if current_type %}<input type="hidden" name="type" value="{{ current_type.key }}">{% endif %}
+        {{ ui.search_field("q", "Search documents, folders, or content", value=q,
+                           placeholder="Search documents, folders, or content…", cls="pt-flex-1",
+                           hidden_label=true) }}
+        {{ ui.btn("Search", variant="neutral", type="submit") }}
+        {% if is_searching %}{{ ui.btn("Clear", variant="ghost", href="/documents") }}{% endif %}
+    </form>
 
-    <div class="pt-explorer">
-        <nav class="pt-card" aria-label="Folders">
-            <div class="pt-card__body pt-stack-2">
-                <h2 class="pt-section__title">Folders</h2>
-                <div class="pt-tree">
-                    {% set at_root = not current_property %}
-                    <a class="pt-tree__link{% if at_root %} is-active{% endif %}" href="{{ vault_href }}"{% if at_root %} aria-current="page"{% endif %}>
-                        <span class="pt-tree__icon">{{ ui.icon("home", "md") }}</span>
-                        <span class="pt-tree__name">Whole vault</span>
-                        <span class="pt-tree__count">{{ vault_total }}</span>
-                    </a>
-                    {% for node in tree %}
-                    {% set node_open = current_property and current_property.key == node.key %}
-                    <details class="pt-tree__node"{% if node_open %} open{% endif %}>
-                        <summary class="pt-tree__summary">
-                            {% set node_here = node_open and not current_type %}
-                            <span class="pt-tree__link{% if node_here %} is-active{% endif %}"{% if node_here %} aria-current="page"{% endif %}>
-                                <span class="pt-tree__icon">{{ ui.icon("home", "md") }}</span>
-                                <a class="pt-tree__name" href="{{ node.href }}">{{ node.label }}</a>
-                                <span class="pt-tree__count">{{ node.count }}</span>
-                            </span>
-                        </summary>
-                        <div class="pt-tree__group">
-                            {% for child in node.children %}
-                            {% set child_here = node_open and current_type and current_type.key == child.key %}
-                            <a class="pt-tree__link{% if child_here %} is-active{% endif %}" href="{{ child.href }}"{% if child_here %} aria-current="page"{% endif %}>
-                                <span class="pt-tree__icon">{{ ui.icon("file-text", "md") }}</span>
-                                <span class="pt-tree__name">{{ child.label }}</span>
-                                <span class="pt-tree__count">{{ child.count }}</span>
-                            </a>
-                            {% endfor %}
-                        </div>
-                    </details>
-                    {% endfor %}
-                </div>
-                {% if not tree %}
-                <p class="pt-fs-supporting pt-text-muted">No folders yet. Upload a document and the folder it belongs to appears here.</p>
-                {% endif %}
-            </div>
-        </nav>
+    <div class="pt-explorer{% if selected %} pt-explorer--inspecting{% endif %}">
 
-        <section class="pt-stack-3" aria-label="Folder contents">
-            <div class="pt-card">
-                <div class="pt-card__body pt-stack-3">
-                    <div class="pt-filterbar">
-                        <form method="GET" action="/documents">
-                            {% if current_property %}<input type="hidden" name="property" value="{{ current_property.key }}">{% endif %}
-                            {% if current_type %}<input type="hidden" name="type" value="{{ current_type.key }}">{% endif %}
-                            <div class="pt-filterbar__grid">
-                                {{ ui.search_field(
-                                    "q", "Search every folder", value=q,
-                                    placeholder="e.g. lease, policy, insurance, March 2026…"
-                                ) }}
-                                {{ ui.select_field("per_page", "Per page", per_page_options,
-                                                   selected=per_page, cls="pt-field--sm") }}
-                            </div>
-                            <div class="pt-filterbar__actions">
-                                <div>
-                                    {% if is_searching or current_property %}
-                                    {{ ui.btn("Back to the whole vault", variant="secondary", size="sm", href="/documents") }}
-                                    {% endif %}
-                                </div>
-                                {{ ui.btn("Search", variant="neutral", size="sm", type="submit") }}
-                            </div>
-                        </form>
-                    </div>
-
-                    <div class="pt-stack-1">
-                        <h2 class="pt-section__title">
-                            {% if current_type %}{{ current_type.label }}
-                            {%- elif current_property %}{{ current_property.label }}
-                            {%- elif is_searching %}Search results
-                            {%- else %}The whole vault{% endif %}
-                        </h2>
-                        <p class="pt-fs-supporting pt-text-muted">
-                            {%- if current_type %}This folder holds {% elif current_property %}This property's folders are above and its documents below — {% else %}Every folder in this portfolio — {% endif -%}
-                            {{ subfolders | length }} folder{{ '' if subfolders | length == 1 else 's' }} ·
-                            {{ total_items }} document{{ '' if total_items == 1 else 's' }} · {{ folder_size }}
-                            {%- if is_searching %} matching “{{ q }}”{% endif %}
-                        </p>
-                    </div>
-
-                    {% if subfolders %}
-                    <div class="pt-folders">
-                        {% for folder in subfolders %}
-                        <a class="pt-folder" href="{{ folder.href }}">
-                            <span class="pt-folder__top">
-                                <span class="pt-folder__icon">{{ ui.icon("home", "md") }}</span>
-                                <span class="pt-folder__name">{{ folder.label }}</span>
-                            </span>
-                            <span class="pt-folder__meta">{{ folder.count }} document{{ '' if folder.count == 1 else 's' }} · {{ folder.size }}</span>
+        {# ---- The rail: every folder, and what the vault is using. ---------------- #}
+        <div class="pt-explorer__rail">
+            <div class="pt-rail__heading">Folders</div>
+            <div class="pt-tree">
+                {% set at_root = not current_property %}
+                <a class="pt-tree__link{% if at_root %} is-active{% endif %}" href="{{ vault_href }}"{% if at_root %} aria-current="page"{% endif %}>
+                    <span class="pt-tree__icon">{{ ui.icon("folder-open" if at_root else "folder", "sm") }}</span>
+                    <span class="pt-tree__name">Whole vault</span>
+                    <span class="pt-tree__count">{{ vault_total }}</span>
+                </a>
+                {% for node in tree %}
+                {% set node_open = current_property and current_property.key == node.key %}
+                <details class="pt-tree__node"{% if node_open %} open{% endif %}>
+                    <summary class="pt-tree__link{% if node_open and not current_type %} is-active{% endif %}"{% if node_open and not current_type %} aria-current="page"{% endif %}>
+                        <span class="pt-tree__chevron">{{ ui.icon("chevron-right", "sm") }}</span>
+                        <span class="pt-tree__icon">{{ ui.icon("folder-open" if node_open else "folder", "sm") }}</span>
+                        <a class="pt-tree__name" href="{{ node.href }}">{{ node.label }}</a>
+                        <span class="pt-tree__count">{{ node.count }}</span>
+                    </summary>
+                    <div class="pt-tree__group">
+                        {% for child in node.children %}
+                        {% set child_here = node_open and current_type and current_type.key == child.key %}
+                        <a class="pt-tree__link{% if child_here %} is-active{% endif %}" href="{{ child.href }}"{% if child_here %} aria-current="page"{% endif %}>
+                            <span class="pt-tree__icon">{{ ui.icon("folder-open" if child_here else "folder", "sm") }}</span>
+                            <span class="pt-tree__name">{{ child.label }}</span>
+                            <span class="pt-tree__count">{{ child.count }}</span>
                         </a>
                         {% endfor %}
                     </div>
-                    {% endif %}
+                </details>
+                {% endfor %}
+            </div>
+            {% if not tree %}
+            <p class="pt-fs-supporting pt-text-muted">No folders yet. Upload a document and the folder it belongs to appears here.</p>
+            {% endif %}
 
-                    <div class="pt-table-wrap pt-overflow-x">
-                        <table class="pt-table pt-table--compact">
-                            <thead>
-                            <tr>
-                                <th scope="col">Document</th>
-                                {% if not current_type %}<th scope="col">Folder</th>{% endif %}
-                                <th scope="col" class="pt-table__th-num">Size</th>
-                                <th scope="col">Uploaded</th>
-                                <th scope="col">State</th>
-                                <th scope="col">Actions</th>
-                            </tr>
-                            </thead>
-                            <tbody>
-                            {% for row in rows %}
-                            <tr>
-                                <td>
-                                    <span class="pt-table__primary">{{ row.filename }}</span>
-                                    <span class="pt-table__sub">{{ row.mime_type or "unknown type" }}</span>
-                                </td>
-                                {% if not current_type %}
-                                <td><a class="pt-table__sub" href="{{ row.folder_href }}">{{ row.property_name }} / {{ row.type_label }}</a></td>
-                                {% endif %}
-                                <td class="pt-table__num">{{ row.size }}</td>
-                                <td class="pt-table__date">{{ row.uploaded }}</td>
-                                <td>
-                                    <div class="pt-status-cluster">
-                                        {{ ui.badge(row.state_label, variant=row.state_variant, pill=true, dot=true) }}
-                                    </div>
-                                </td>
-                                <td class="pt-table__actions">
-                                    {{ ui.btn("View", variant="ghost", size="sm", href="/documents/" ~ row.id ~ "/view",
-                                              attrs='target="_blank" rel="noopener noreferrer"') }}
-                                    {{ ui.btn("Download", variant="ghost", size="sm", href="/documents/" ~ row.id ~ "/download") }}
-                                    {% if row.extraction_id %}
-                                    {{ ui.btn("Statements", variant="ghost", size="sm",
-                                              href="/statements/extractions/" ~ row.extraction_id) }}
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% else %}
-                            <tr>
-                                <td colspan="{% if current_type %}5{% else %}6{% endif %}">
-                                    {% if is_searching %}
-                                        {{ ui.empty_state("Nothing here matches", "No document matches “" ~ q ~ "”. The folder tree still shows which folders hold what the search found.") }}
-                                    {% elif current_property %}
-                                        {{ ui.empty_state("This folder is empty", "Use Add documents and it is filed in this folder.") }}
-                                    {% else %}
-                                        {{ ui.empty_state("No documents yet", "Use Add documents for a statement, lease or policy. Each one is fingerprinted, stored once, and filed under its property and type.") }}
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
+            <div class="pt-rail__storage">
+                <div class="pt-rail__heading">Storage</div>
+                <p class="pt-fs-supporting pt-text-muted">
+                    {{ vault_total }} document{{ '' if vault_total == 1 else 's' }} · {{ vault_size }} in this portfolio
+                </p>
+            </div>
+        </div>
 
-                    {% if total_pages > 1 %}
-                    {{ ui.pagination(page, total_pages, start_item, end_item, total_items, prev_url, next_url) }}
-                    {% else %}
-                    <p class="pt-fs-caption pt-text-muted">Showing {{ start_item }}–{{ end_item }} of {{ total_items }}.</p>
-                    {% endif %}
+        {# ---- The middle: the folder you are in. --------------------------------- #}
+        <div class="pt-explorer__main pt-stack-3">
+            <nav class="pt-breadcrumb" aria-label="Folder path">
+                {% for crumb in breadcrumb -%}
+                    {%- if crumb.href %}<a class="pt-breadcrumb__link" href="{{ crumb.href }}">{{ crumb.label }}</a>
+                    {%- else %}<span class="pt-breadcrumb__here" aria-current="page">{{ crumb.label }}</span>{% endif %}
+                    {%- if not loop.last %}<span class="pt-breadcrumb__sep" aria-hidden="true">/</span>{% endif %}
+                {%- endfor %}
+            </nav>
+
+            {% set here = current_type.label if current_type else (current_property.label if current_property else ("Search results" if is_searching else "The whole vault")) %}
+            {% set here_meta = subfolders | length ~ " folder" ~ ('' if subfolders | length == 1 else 's')
+                               ~ " · " ~ folder_documents ~ " document" ~ ('' if folder_documents == 1 else 's')
+                               ~ " · " ~ folder_size
+                               ~ (" matching “" ~ q ~ "”" if is_searching else "") %}
+            {% call ui.titlebar("folder", here, here_meta) %}
+                {{ ui.btn("Upload", variant="primary", type="button", icon_name="upload",
+                          attrs='data-modal-open="upload-documents"') }}
+            {% endcall %}
+
+            <div class="pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-3">
+                <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-2">
+                    {% for chip in kind_chips %}
+                    {{ ui.chip(chip.label, chip.href, chip.active, chip.count) }}
+                    {% endfor %}
+                </div>
+                <div class="pt-flex pt-items-center pt-gap-2">
+                    <span class="pt-fs-caption pt-text-muted">Sort</span>
+                    {% for option in sort_chips %}
+                    {{ ui.chip(option.label, option.href, option.active) }}
+                    {% endfor %}
                 </div>
             </div>
 
-            {# The uploader is a dialog, not furniture. This screen is a file browser: a panel
-               that is always open spends a third of the pane repeating what the header button
-               already says, and it pushes the folder's contents — the thing being read — up
-               the page. Dragging a file onto the pane opens this (see the script below). #}
-            {{ ui.modal_open(
-                "upload-documents",
-                "Add documents",
-                "Filed in " ~ (current_property.label if current_property else "the vault")
-                    ~ ((" / " ~ current_type.label) if current_type else "")
-                    ~ ". Files are fingerprinted on arrival: a file already in the vault is reported rather than stored twice, and a statement the parser recognises is staged for review on the statements screen.",
-                size="md"
-            ) }}
-            <form method="POST" action="/documents/upload" enctype="multipart/form-data" class="pt-modal__form">
-                <input type="hidden" name="per_page" value="{{ per_page }}">
-                {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
-                {# The folder being viewed, so the upload returns to it. #}
-                {% if current_property %}<input type="hidden" name="property" value="{{ current_property.key }}">{% endif %}
-                {% if current_type %}<input type="hidden" name="type" value="{{ current_type.key }}">{% endif %}
-                <div class="pt-modal__body">
-                    <div class="pt-stack pt-gap-4">
-                        <div class="pt-dropzone" data-dropzone>
-                            <input type="file" name="files" id="vault-files" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple>
-                            <span class="pt-dropzone__hint">PDF, PNG, JPG or WEBP · up to {{ max_upload_mb }} MB each</span>
-                            <span class="pt-fs-caption" data-dropzone-value>Drop files here, or choose them above</span>
-                        </div>
-                        <div class="pt-form-grid">
-                            {{ ui.select_field("property_id", "Property", property_options,
-                                               selected=current_property.key if current_property else "") }}
-                            {{ ui.select_field("document_type", "Document type", type_options,
-                                               selected=current_type.key if current_type else "") }}
-                        </div>
+            {% if subfolders %}
+            <section class="pt-stack-2">
+                <h2 class="pt-section__title">Folders</h2>
+                <div class="pt-folders">
+                    {% for folder in subfolders %}
+                    <a class="pt-folder" href="{{ folder.href }}">
+                        <span class="pt-folder__top">
+                            <span class="pt-folder__icon">{{ ui.icon("folder", "lg") }}</span>
+                            <span class="pt-folder__name">{{ folder.label }}</span>
+                        </span>
+                        <span class="pt-folder__meta">{{ folder.count }} document{{ '' if folder.count == 1 else 's' }} · {{ folder.size }}</span>
+                    </a>
+                    {% endfor %}
+                </div>
+            </section>
+            {% endif %}
+
+            {% if kind != 'folders' %}
+            <section class="pt-stack-2">
+                <h2 class="pt-section__title">Files</h2>
+                <div class="pt-table-wrap pt-overflow-x">
+                    <table class="pt-table pt-table--compact">
+                        <thead>
+                        <tr>
+                            <th scope="col" class="pt-table__pick"><span class="pt-sr-only">Details</span></th>
+                            <th scope="col">Name</th>
+                            <th scope="col">Type</th>
+                            <th scope="col" class="pt-table__th-num">Size</th>
+                            <th scope="col">Uploaded</th>
+                            <th scope="col">State</th>
+                            <th scope="col"><span class="pt-sr-only">Actions</span></th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {% for row in rows %}
+                        {% set chosen = selected and selected.id == row.id %}
+                        <tr{% if chosen %} class="is-active"{% endif %}>
+                            <td class="pt-table__pick">
+                                {% set row_href = row.folder_href ~ "&doc=" ~ row.id %}
+                                <a class="pt-pick{% if chosen %} is-active{% endif %}"
+                                   href="{{ row_href }}"
+                                   {% if chosen %}aria-current="true"{% else %}aria-label="Show details for {{ row.filename }}"{% endif %}>
+                                    {% if chosen %}{{ ui.icon("check", "sm") }}{% endif %}
+                                </a>
+                            </td>
+                            <td class="pt-table__name">
+                                <div class="pt-flex pt-items-center pt-gap-2">
+                                    <span class="pt-text-muted">{{ ui.icon("image" if row.kind == 'image' else "file-text", "sm") }}</span>
+                                    <a class="pt-table__primary" href="{{ row_href }}" title="{{ row.filename }}">{{ row.filename }}</a>
+                                </div>
+                                <span class="pt-table__sub" title="{{ row.property_name }} / {{ row.type_label }}">{{ row.property_name }} / {{ row.type_label }}</span>
+                            </td>
+                            <td class="pt-table__sub">{{ row.type_short }}</td>
+                            <td class="pt-table__num">{{ row.size }}</td>
+                            <td class="pt-table__date">{{ row.uploaded }}</td>
+                            <td>
+                                <div class="pt-status-cluster">
+                                    {{ ui.badge(row.state_label, variant=row.state_variant, pill=true, dot=true) }}
+                                </div>
+                            </td>
+                            <td class="pt-table__actions">
+                                <details class="pt-menu">
+                                    <summary class="pt-menu__trigger" aria-label="Actions for {{ row.filename }}">
+                                        {{ ui.icon("more-vertical", "sm") }}
+                                    </summary>
+                                    <div class="pt-menu__list">
+                                        <a class="pt-menu__item" href="/documents/{{ row.id }}/view" target="_blank" rel="noopener noreferrer">Open</a>
+                                        <a class="pt-menu__item" href="/documents/{{ row.id }}/download">Download</a>
+                                        {% if row.extraction_id %}
+                                        <a class="pt-menu__item" href="/statements/extractions/{{ row.extraction_id }}">Statements</a>
+                                        {% endif %}
+                                    </div>
+                                </details>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="7">
+                                {% if is_searching %}
+                                    {{ ui.empty_state("Nothing here matches", "No document matches “" ~ q ~ "”. The folder tree still shows which folders hold what the search found.") }}
+                                {% elif current_property %}
+                                    {{ ui.empty_state("This folder is empty", "Use Upload and the document is filed in this folder.") }}
+                                {% else %}
+                                    {{ ui.empty_state("No documents yet", "Use Upload for a statement, lease or policy. Each one is fingerprinted, stored once, and filed under its property and type.") }}
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                {% if total_pages > 1 %}
+                {{ ui.pagination(page, total_pages, start_item, end_item, total_items, prev_url, next_url) }}
+                {% else %}
+                <p class="pt-fs-caption pt-text-muted">Showing {{ start_item }}–{{ end_item }} of {{ total_items }}.</p>
+                {% endif %}
+            </section>
+            {% endif %}
+        </div>
+
+        {# ---- The right: the document you chose. --------------------------------- #}
+        {% if selected %}
+        <div class="pt-explorer__aside pt-inspector">
+            <div class="pt-inspector__head">
+                <span class="pt-inspector__glyph">{{ ui.icon("image" if selected.kind == 'image' else "file-text", "md") }}</span>
+                <span class="pt-inspector__name">{{ selected.filename }}</span>
+                <a class="pt-inspector__close pt-btn pt-btn--ghost pt-btn--sm" href="{{ inspector_close_href }}" aria-label="Close details">{{ ui.icon("close", "sm") }}</a>
+            </div>
+            {{ ui.tabs(inspector_tabs, active_tab) }}
+            <div class="pt-inspector__body">
+                {% if active_tab == 'extraction' %}
+                <div class="pt-stack-2">
+                    {{ ui.statement_open() }}
+                        {{ ui.statement_row("Extraction", selected.extraction_status or "—") }}
+                        {{ ui.statement_row("Document", selected.filename) }}
+                    {{ ui.statement_close() }}
+                    <p class="pt-fs-supporting pt-text-muted">The statements screen holds the figures that were read from this document, and the one next step for it.</p>
+                </div>
+                {% elif active_tab == 'details' %}
+                {{ ui.statement_open() }}
+                    {{ ui.statement_row("Name", selected.filename) }}
+                    {{ ui.statement_row("Type", selected.mime_type or "unknown type") }}
+                    {{ ui.statement_row("Size", selected.size ~ " (" ~ selected.size_bytes ~ " bytes)") }}
+                    {{ ui.statement_row("Folder", selected.property_name ~ " / " ~ selected.type_label) }}
+                    {{ ui.statement_row("Uploaded", selected.uploaded) }}
+                    {{ ui.statement_row("Extraction", selected.state_label) }}
+                {{ ui.statement_close() }}
+                {% else %}
+                {% if selected.can_preview %}
+                <div class="pt-preview">
+                    <iframe class="pt-preview__frame" src="/documents/{{ selected.id }}/view"
+                            title="Preview of {{ selected.filename }}"></iframe>
+                </div>
+                {% else %}
+                <div class="pt-preview">
+                    <p class="pt-preview__fallback">No preview for this file type. Download it to open it.</p>
+                </div>
+                {% endif %}
+                {% endif %}
+
+                <div class="pt-action-tiles">
+                    {{ ui.action_tile("Open", "eye", "/documents/" ~ selected.id ~ "/view",
+                                      'target="_blank" rel="noopener noreferrer"') }}
+                    {{ ui.action_tile("Download", "download", "/documents/" ~ selected.id ~ "/download") }}
+                    {% if selected.extraction_id %}
+                    {{ ui.action_tile("Statements", "ledger", "/statements/extractions/" ~ selected.extraction_id) }}
+                    {% endif %}
+                    <a class="pt-action-tile" href="{{ inspector_close_href }}">
+                        {{ ui.icon("close", "md") }}
+                        <span>Close</span>
+                    </a>
+                </div>
+
+                <div class="pt-stack-2">
+                    <h3 class="pt-section__title">Tags</h3>
+                    <div class="pt-inspector__tags">
+                        {{ ui.chip(selected.property_name) }}
+                        {{ ui.chip(selected.type_label) }}
                     </div>
                 </div>
-                <div class="pt-modal__footer">
-                    {{ ui.btn("Cancel", variant="secondary", size="sm", type="button", attrs="data-modal-close") }}
-                    {{ ui.btn("Upload to this folder", variant="primary", size="sm", type="submit") }}
-                </div>
-            </form>
-            {{ ui.modal_close() }}
-        </section>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
+
+{# The uploader is a dialog, not furniture: this screen is a file browser, and a panel
+   that is always open spends a third of the pane saying what one button says. Dropping
+   a file onto the page opens this (see the script below). #}
+{{ ui.modal_open(
+    "upload-documents",
+    "Add documents",
+    "Filed in " ~ (current_property.label if current_property else "the vault")
+        ~ ((" / " ~ current_type.label) if current_type else "")
+        ~ ". Files are fingerprinted on arrival: a file already in the vault is reported rather than stored twice, and a statement the parser recognises is staged for review on the statements screen.",
+    size="md"
+) }}
+<form method="POST" action="/documents/upload" enctype="multipart/form-data" class="pt-modal__form">
+    {{ csrf_field() }}
+    <input type="hidden" name="per_page" value="{{ per_page }}">
+    {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+    {% if current_property %}<input type="hidden" name="property" value="{{ current_property.key }}">{% endif %}
+    {% if current_type %}<input type="hidden" name="type" value="{{ current_type.key }}">{% endif %}
+    <div class="pt-modal__body">
+        <div class="pt-stack pt-gap-4">
+            <div class="pt-dropzone" data-dropzone>
+                <input type="file" name="files" id="vault-files" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple>
+                <span class="pt-dropzone__hint">PDF, PNG, JPG or WEBP · up to {{ max_upload_mb }} MB each</span>
+                <span class="pt-fs-caption" data-dropzone-value>Drop files here, or choose them above</span>
+            </div>
+            <div class="pt-form-grid">
+                {{ ui.select_field("property_id", "Property", property_options,
+                                   selected=current_property.key if current_property else "") }}
+                {{ ui.select_field("document_type", "Document type", type_options,
+                                   selected=current_type.key if current_type else "") }}
+            </div>
+        </div>
+    </div>
+    <div class="pt-modal__footer">
+        {{ ui.btn("Cancel", variant="secondary", size="sm", type="button", attrs="data-modal-close") }}
+        {{ ui.btn("Upload to this folder", variant="primary", size="sm", type="submit") }}
+    </div>
+</form>
+{{ ui.modal_close() }}
 {% endblock %}
 
 {% block scripts %}

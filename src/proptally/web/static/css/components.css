@@ -2976,31 +2976,187 @@
 .pt-explorer {
     display: grid;
     grid-template-columns: 1fr;
-    gap: var(--pt-space-4);
-    align-items: start;
+    overflow: hidden;
+    background-color: var(--pt-surface);
+    border: var(--pt-border-w) solid var(--pt-border);
+    border-radius: var(--pt-radius-lg);
 }
 
-@media (min-width: 900px) {
+@media (min-width: 1024px) {
     .pt-explorer {
-        grid-template-columns: 15rem minmax(0, 1fr);
+        grid-template-columns: 16rem minmax(0, 1fr);
     }
 }
 
-/* The disclosure row: a native <details> marker, so folders open and close with no
-   script, and the row inside it is the same shape as a leaf folder. */
-.pt-tree__summary {
-    cursor: pointer;
+@media (min-width: 1440px) {
+    .pt-explorer--inspecting {
+        grid-template-columns: 16rem minmax(0, 1fr) 21rem;
+    }
+}
+
+/* Hairlines, not three floating cards: one surface divided the way a file manager
+   divides it — folders, what the folder holds, and the details of what is selected. */
+.pt-explorer__rail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pt-space-2);
+    padding: var(--pt-space-3);
+    border-bottom: var(--pt-border-w) solid var(--pt-border);
+}
+
+.pt-explorer__main {
+    min-width: 0;
+    padding: var(--pt-space-4) var(--pt-space-5) var(--pt-space-5);
+}
+
+.pt-explorer__aside {
+    min-width: 0;
+    border-top: var(--pt-border-w) solid var(--pt-border);
+}
+
+@media (min-width: 1024px) {
+    .pt-explorer__rail {
+        border-bottom: 0;
+        border-right: var(--pt-border-w) solid var(--pt-border);
+    }
+
+    .pt-explorer__aside {
+        border-top: 0;
+        border-left: var(--pt-border-w) solid var(--pt-border);
+    }
+}
+
+/* Below the width where three real columns fit, the inspector is a panel over the list
+   rather than a column squeezing it — the same choice a file manager makes. The list keeps
+   its columns; the details slide over the right edge and are closed by their own link. */
+@media (min-width: 1024px) and (max-width: 1799px) {
+    .pt-explorer--inspecting {
+        grid-template-columns: 16rem minmax(0, 1fr);
+    }
+
+    .pt-explorer--inspecting .pt-explorer__aside {
+        position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        z-index: var(--pt-z-drawer);
+        width: 21rem;
+        max-width: 90vw;
+        overflow-y: auto;
+        background-color: var(--pt-surface);
+        box-shadow: var(--pt-shadow-lg);
+    }
+}
+
+.pt-rail__heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--pt-space-2);
+    padding: var(--pt-space-1) var(--pt-space-2);
+    font-size: var(--pt-fs-label);
+    font-weight: var(--pt-fw-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--pt-text-muted);
+}
+
+.pt-rail__storage {
+    margin-top: auto;
+    padding-top: var(--pt-space-3);
+    border-top: var(--pt-border-w) solid var(--pt-divider);
+}
+
+/* A checkbox-shaped link, not a checkbox: choosing a row opens its inspector, and that
+   is navigation — so it lives in the URL, where a refresh keeps it and a link can share
+   it. No script, and no selection model that only exists inside the browser. */
+.pt-pick {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1rem;
+    height: 1rem;
+    color: var(--pt-text-inverse);
+    background-color: var(--pt-surface);
+    border: var(--pt-border-w) solid var(--pt-border-strong);
     border-radius: var(--pt-radius-sm);
 }
 
-.pt-tree__summary:hover {
-    background-color: var(--pt-surface-hover);
+.pt-pick:hover {
+    border-color: var(--pt-accent);
 }
 
-.pt-tree__summary:focus-visible {
+.pt-pick:focus-visible {
     outline: var(--pt-focus-ring);
     outline-offset: var(--pt-focus-offset);
 }
+
+.pt-pick.is-active {
+    background-color: var(--pt-accent);
+    border-color: var(--pt-accent);
+}
+
+/* A row's actions, disclosed rather than always visible: a `<details>` element, so the
+   menu opens with no script and its trigger is reachable by keyboard. */
+.pt-menu {
+    position: relative;
+}
+
+.pt-menu__trigger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    color: var(--pt-text-muted);
+    cursor: pointer;
+    border-radius: var(--pt-radius-md);
+    list-style: none;
+}
+
+.pt-menu__trigger::-webkit-details-marker {
+    display: none;
+}
+
+.pt-menu__trigger:hover,
+.pt-menu[open] > .pt-menu__trigger {
+    color: var(--pt-text);
+    background-color: var(--pt-surface-hover);
+}
+
+.pt-menu__trigger:focus-visible {
+    outline: var(--pt-focus-ring);
+    outline-offset: var(--pt-focus-offset);
+}
+
+.pt-menu__list {
+    position: absolute;
+    right: 0;
+    z-index: var(--pt-z-sticky);
+    min-width: 9rem;
+    padding: var(--pt-space-1);
+    background-color: var(--pt-surface);
+    border: var(--pt-border-w) solid var(--pt-border);
+    border-radius: var(--pt-radius-md);
+    box-shadow: var(--pt-shadow-md);
+}
+
+.pt-menu__item {
+    display: block;
+    padding: var(--pt-space-2) var(--pt-space-3);
+    font-size: var(--pt-fs-supporting);
+    color: var(--pt-text-secondary);
+    text-decoration: none;
+    border-radius: var(--pt-radius-sm);
+}
+
+.pt-menu__item:hover {
+    color: var(--pt-text);
+    background-color: var(--pt-surface-hover);
+}
+
+/* The disclosure row: a native <details> element, so folders open and close with no
+   script, and the row inside it is the same shape as a leaf folder. */
 
 .pt-tree {
     display: flex;
@@ -3016,10 +3172,6 @@
     margin-left: var(--pt-space-3);
     padding-left: var(--pt-space-2);
     border-left: var(--pt-border-w) solid var(--pt-divider);
-}
-
-.pt-tree__node > summary {
-    cursor: pointer;
 }
 
 .pt-tree__link {
@@ -3071,4 +3223,268 @@
     font-size: var(--pt-fs-caption);
     color: var(--pt-text-muted);
     font-variant-numeric: tabular-nums;
+}
+
+/* The chevron is the whole disclosure affordance, so the native <summary> triangle is
+   removed and the same glyph rotates when the folder is open. */
+.pt-tree__node > summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+.pt-tree__node > summary::-webkit-details-marker {
+    display: none;
+}
+
+.pt-tree__chevron {
+    display: flex;
+    flex-shrink: 0;
+    color: var(--pt-text-muted);
+    transition: transform var(--pt-transition-fast) var(--pt-ease);
+}
+
+.pt-tree__node[open] > summary .pt-tree__chevron {
+    transform: rotate(90deg);
+}
+
+.pt-tree__link:hover .pt-tree__chevron,
+.pt-tree__link.is-active .pt-tree__chevron {
+    color: currentColor;
+}
+
+/* ---------------------------------------------------------------------------
+   H6. Title bar (inside a pane)
+   ---------------------------------------------------------------------------
+   The folder you are in: glyph, name, what it holds, and the one action that
+   belongs to it. Distinct from `page_header`, which names the screen.
+   --------------------------------------------------------------------------- */
+
+.pt-titlebar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--pt-space-3);
+}
+
+.pt-titlebar__icon {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    color: var(--pt-accent);
+    background-color: var(--pt-accent-soft);
+    border-radius: var(--pt-radius-md);
+}
+
+.pt-titlebar__text {
+    min-width: 0;
+    flex: 1;
+}
+
+.pt-titlebar__title {
+    font-size: var(--pt-fs-section);
+    font-weight: var(--pt-fw-semibold);
+    color: var(--pt-text);
+    overflow-wrap: anywhere;
+}
+
+.pt-titlebar__meta {
+    font-size: var(--pt-fs-supporting);
+    color: var(--pt-text-muted);
+}
+
+.pt-titlebar__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--pt-space-2);
+}
+
+/* ---------------------------------------------------------------------------
+   H7. Tabs
+   ---------------------------------------------------------------------------
+   Links, not buttons: a tab here is a URL (?tab=details), so it survives a
+   refresh and can be shared, like every other view state in the app.
+   --------------------------------------------------------------------------- */
+
+.pt-tabs {
+    display: flex;
+    gap: var(--pt-space-1);
+    overflow-x: auto;
+    border-bottom: var(--pt-border-w) solid var(--pt-border);
+}
+
+.pt-tab {
+    padding: var(--pt-space-2) var(--pt-space-3);
+    font-size: var(--pt-fs-supporting);
+    font-weight: var(--pt-fw-medium);
+    color: var(--pt-text-muted);
+    text-decoration: none;
+    white-space: nowrap;
+    border-bottom: var(--pt-border-w-strong) solid transparent;
+}
+
+.pt-tab:hover {
+    color: var(--pt-text);
+}
+
+.pt-tab:focus-visible {
+    outline: var(--pt-focus-ring);
+    outline-offset: var(--pt-focus-offset);
+}
+
+.pt-tab.is-active {
+    color: var(--pt-accent-text);
+    border-bottom-color: var(--pt-accent);
+}
+
+/* ---------------------------------------------------------------------------
+   H8. Inspector
+   ---------------------------------------------------------------------------
+   What is selected, beside what is listed: identity, preview, the actions that
+   exist for it, and its facts. One document at a time, chosen by URL.
+   --------------------------------------------------------------------------- */
+
+.pt-inspector {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.pt-inspector__head {
+    display: flex;
+    align-items: center;
+    gap: var(--pt-space-3);
+    padding: var(--pt-space-4) var(--pt-space-4) var(--pt-space-2);
+}
+
+.pt-inspector__glyph {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    color: var(--pt-text-secondary);
+    background-color: var(--pt-surface-sunken);
+    border-radius: var(--pt-radius-md);
+}
+
+.pt-inspector__name {
+    min-width: 0;
+    font-size: var(--pt-fs-subsection);
+    font-weight: var(--pt-fw-semibold);
+    color: var(--pt-text);
+    overflow-wrap: anywhere;
+}
+
+.pt-inspector__close {
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.pt-inspector__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pt-space-4);
+    padding: var(--pt-space-4);
+}
+
+.pt-preview {
+    overflow: hidden;
+    background-color: var(--pt-surface-sunken);
+    border: var(--pt-border-w) solid var(--pt-border);
+    border-radius: var(--pt-radius-md);
+}
+
+.pt-preview__frame {
+    display: block;
+    width: 100%;
+    height: 21rem;
+    background-color: var(--pt-surface);
+    border: 0;
+}
+
+.pt-preview__fallback {
+    padding: var(--pt-space-6);
+    font-size: var(--pt-fs-supporting);
+    color: var(--pt-text-muted);
+    text-align: center;
+}
+
+.pt-action-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(5rem, 1fr));
+    gap: var(--pt-space-2);
+}
+
+.pt-action-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--pt-space-1);
+    padding: var(--pt-space-3) var(--pt-space-2);
+    font-family: inherit;
+    font-size: var(--pt-fs-caption);
+    color: var(--pt-text-secondary);
+    text-decoration: none;
+    cursor: pointer;
+    background-color: var(--pt-surface);
+    border: var(--pt-border-w) solid var(--pt-border);
+    border-radius: var(--pt-radius-md);
+}
+
+.pt-action-tile:hover {
+    color: var(--pt-text);
+    border-color: var(--pt-border-strong);
+}
+
+.pt-action-tile:focus-visible {
+    outline: var(--pt-focus-ring);
+    outline-offset: var(--pt-focus-offset);
+}
+
+.pt-inspector__tags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--pt-space-2);
+}
+
+/* ---------------------------------------------------------------------------
+   H9. Selection column
+   ---------------------------------------------------------------------------
+   A checkbox per row, so a row can be chosen without leaving the list. The
+   checked row is marked with `is-active`, the same state the tree uses.
+   --------------------------------------------------------------------------- */
+
+.pt-table__pick {
+    width: 2.5rem;
+}
+
+/* The name column is the one that can be arbitrarily long, so it is the one that is
+   bounded: a filename is read at a glance and truncated, never wrapped over three lines
+   and never allowed to stretch the row. */
+.pt-table__name {
+    max-width: 12rem;
+}
+
+.pt-table__name .pt-table__primary {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pt-table__name .pt-table__sub {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pt-table tbody tr.is-active {
+    background-color: var(--pt-accent-soft);
 }

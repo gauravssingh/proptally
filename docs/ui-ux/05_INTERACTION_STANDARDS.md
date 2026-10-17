@@ -79,6 +79,11 @@ while the user is still typing the first time.
   itself has none.
 * **Filtering** is server-side and reflected in the URL, so a filtered view is shareable,
   bookmarkable and survives a refresh (`/reconciliation?q=APPLE&gate=CBD2`).
+* **Selecting a record is view state, not browser state.** Which document or statement a
+  screen is describing lives in the URL (`?doc=<id>&tab=details`), not in a checkbox the
+  browser remembers. A selection made that way survives a refresh, can be sent to somebody
+  else, and works with scripting off; a row that offers one next step puts it on the row
+  rather than behind a menu (`/documents` §3.6, `05` §6.6).
 * **Empty results after filtering** must differ from "no data at all": filtered-empty names
   the filter and offers a reset (`06` §5).
 * **Counts in the shell** always describe the whole queue, never the current filter

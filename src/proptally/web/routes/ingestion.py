@@ -15,7 +15,7 @@ import json
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
@@ -60,6 +60,48 @@ _IDENTITY_FIELDS = ("servicer_name", "loan_number", "account_last4", "institutio
 #: Which of the portfolio's own records it belongs to.
 _CHOICE_FIELDS = ("loan_account_id", "financial_account_id")
 
+#: The states an extraction can be in, and the words the screen shows for them.
+STATUS_LABELS = {"VALIDATED": "Validated", "NEEDS_REVIEW": "Needs review", "UNSUPPORTED": "Unsupported"}
+
+#: The queue's facets, in the order the rail shows them. A row's `action` — the same
+#: value that decides its one next step — decides the facet it belongs to, so the rail's
+#: counts add up to the queue and no facet claims a row it would not show.
+STATUS_FACETS: tuple[tuple[str, str, str], ...] = (
+    ("all", "All", "inbox"),
+    ("review", "Needs review", "alert_triangle"),
+    ("approve", "Ready to approve", "check_circle"),
+    ("approved", "Approved", "check"),
+    ("imported", "Imported", "ledger"),
+)
+
+#: A row's next step, as the URL names the facet that holds it.
+FACET_FOR_ACTION = {"review": "review", "approve": "approve", "import": "approved", "done": "imported"}
+
+SORTS: tuple[tuple[str, str], ...] = (
+    ("received", "Received"),
+    ("name", "Filename"),
+    ("type", "Type"),
+)
+
+INSPECTOR_TABS: tuple[tuple[str, str], ...] = (
+    ("preview", "Preview"),
+    ("figures", "Figures"),
+    ("statement", "Statement"),
+)
+
+#: How the figures the parser read are named.
+MONEY_LABELS: dict[str, str] = {
+    "opening_balance": "Opening balance",
+    "closing_balance": "Closing balance",
+    "principal": "Principal",
+    "interest": "Interest",
+    "escrow": "Escrow",
+    "fees": "Fees",
+    "total_due": "Total due",
+    "outstanding_principal": "Outstanding principal",
+    "escrow_balance": "Escrow balance",
+}
+
 
 def _dollars(cents: int | None) -> str:
     return "" if cents is None else f"{Decimal(cents) / 100:.2f}"
@@ -72,6 +114,22 @@ def _percent(milli_percent: int | None) -> str:
 def _redirect(message: str | None = None) -> RedirectResponse:
     target = "/statements" if not message else f"/statements?message={quote(message)}"
     return RedirectResponse(url=target, status_code=303)
+
+
+def _statements_url(*, status: str | None = None, sort: str | None = None,
+                    doc: str | None = None, tab: str | None = None) -> str:
+    """One address for one view of the queue, so the template never assembles a URL."""
+    params: dict[str, str] = {}
+    if status and status != "all":
+        params["status"] = status
+    if sort and sort != "received":
+        params["sort"] = sort
+    if doc:
+        params["doc"] = doc
+        # A tab only means anything with a statement chosen, so it hangs off `doc`.
+        if tab and tab != "preview":
+            params["tab"] = tab
+    return "/statements" + (f"?{urlencode(params)}" if params else "")
 
 
 def _updates_from_form(form) -> dict:
@@ -122,17 +180,32 @@ def _extraction_row(session: Session, document: Document, extraction: DocumentEx
     )
     account_id = data.get("financial_account_id")
     loan_id = data.get("loan_account_id")
+    status = extraction.validation_status if extraction else "UNSUPPORTED"
+    approval_status = extraction.approval_status if extraction else None
+    mime = document.mime_type or ""
     return {
         "document": document,
         "extraction": extraction,
         "data": data,
-        "status": extraction.validation_status if extraction else "UNSUPPORTED",
-        "approval_status": extraction.approval_status if extraction else None,
+        "status": status,
+        "status_label": STATUS_LABELS.get(status, status),
+        "approval_status": approval_status,
         "reasons": list(data.get("review_reasons") or []) + list(data.get("resolution_reasons") or []),
         "statement": statement,
         "account": session.get(FinancialAccount, account_id) if account_id else None,
         "loan": session.get(LoanAccount, loan_id) if loan_id else None,
         "is_bank": data.get("statement_type") in BANK_STATEMENT_TYPES,
+        "type_label": data.get("statement_type") or "Unrecognised",
+        "can_preview": mime == "application/pdf" or mime.startswith("image/"),
+        # The single next step for this row, decided once here so that the row's button,
+        # its dialog and the rail's counts cannot drift apart. Importing ends the chain,
+        # so an imported statement is never offered again.
+        "action": (
+            "done" if statement
+            else "import" if approval_status == "APPROVED"
+            else "approve" if status == "VALIDATED"
+            else "review"
+        ),
         # Offered only when the statement names its own institution and last four
         # digits but no such account is registered yet: the operator's one-click
         # way to register it without shell access.
@@ -154,10 +227,24 @@ def get_ingestion_router(templates, get_session_dep):
     @router.get("/statements", response_class=HTMLResponse)
     def view_statements(
         request: Request,
+        status: str = "all",
+        sort: str = "received",
+        doc: str | None = None,
+        tab: str = "preview",
         message: str | None = Query(None),
         session: Session = Depends(get_session_dep),
     ):
-        documents = session.exec(select(Document).order_by(desc(Document.uploaded_at))).all()
+        """One facet of the queue, the statement chosen in it, and the one next step for it."""
+        # A facet or a sort a URL invents is not an error: it is the default view, and the
+        # rail still shows what the queue really holds.
+        facet_keys = {key for key, _, _ in STATUS_FACETS}
+        status = status if status in facet_keys else "all"
+        sort = sort if sort in dict(SORTS) else "received"
+        tab = tab if tab in dict(INSPECTOR_TABS) else "preview"
+
+        documents = session.exec(
+            select(Document).order_by(desc(Document.uploaded_at), desc(Document.id))
+        ).all()
 
         # The most recent extraction of each document is the one on screen; older
         # ones stay in the table as history under the same document.
@@ -167,7 +254,43 @@ def get_ingestion_router(templates, get_session_dep):
             if current is None or extraction.created_at >= current.created_at:
                 latest[extraction.document_id] = extraction
 
-        rows = [_extraction_row(session, document, latest.get(document.id)) for document in documents]
+        all_rows = [_extraction_row(session, document, latest.get(document.id)) for document in documents]
+
+        # The rail counts the whole queue, from the same rows the table shows: each row is
+        # in exactly one facet, the one its own next step names.
+        counts = {key: 0 for key in facet_keys}
+        counts["all"] = len(all_rows)
+        for row in all_rows:
+            row["facet"] = FACET_FOR_ACTION[row["action"]]
+            counts[row["facet"]] += 1
+
+        rows = [row for row in all_rows if status == "all" or row["facet"] == status]
+
+        ordered = sorted(
+            rows,
+            key={
+                "received": lambda row: row["document"].uploaded_at,
+                "name": lambda row: row["document"].original_filename.lower(),
+                "type": lambda row: (row["type_label"], row["document"].original_filename.lower()),
+            }[sort],
+            reverse=(sort == "received"),
+        )
+
+        # Selection is navigation: every row carries the address that shows it, so the
+        # pick, the name and the row's own menu item are the same link.
+        for row in ordered:
+            row["select_href"] = _statements_url(status=status, sort=sort, doc=row["document"].id)
+
+        # The inspector: the one statement being looked at, and its tab. A row filtered out
+        # of this facet cannot be the chosen one.
+        selected = next((row for row in ordered if row["document"].id == doc), None)
+        inspector_tabs: list[dict] = []
+        if selected is not None:
+            inspector_tabs = [
+                {"key": key, "label": label, "href": _statements_url(
+                    status=status, sort=sort, doc=selected["document"].id, tab=key)}
+                for key, label in INSPECTOR_TABS
+            ]
 
         loan_options = []
         for loan in session.exec(select(LoanAccount)).all():
@@ -190,7 +313,32 @@ def get_ingestion_router(templates, get_session_dep):
             context={
                 "active_page": "statements",
                 "message": message,
-                "rows": rows,
+                "status": status,
+                "status_facets": [
+                    {"key": key, "label": label, "icon": icon, "count": counts[key],
+                     "href": _statements_url(status=key, sort=sort),
+                     "active": key == status}
+                    for key, label, icon in STATUS_FACETS
+                ],
+                "sort": sort,
+                # Sorting does not change which statements exist, so it keeps the one you
+                # have chosen; opening another facet does not, and closes the inspector.
+                "sort_chips": [
+                    {"label": label, "active": key == sort, "href": _statements_url(
+                        status=status, sort=key, tab=tab,
+                        doc=selected["document"].id if selected else None)}
+                    for key, label in SORTS
+                ],
+                "rows": ordered,
+                "total_documents": len(all_rows),
+                "awaiting_review": counts["review"],
+                "ready_to_import": counts["approve"] + counts["approved"],
+                "imported_total": counts["imported"],
+                "selected": selected,
+                "inspector_tabs": inspector_tabs,
+                "active_tab": tab,
+                "inspector_close_href": _statements_url(status=status, sort=sort),
+                "money_labels": MONEY_LABELS,
                 "loan_options": loan_options,
                 "account_options": account_options,
                 "max_upload_mb": MAX_UPLOAD_BYTES // (1024 * 1024),

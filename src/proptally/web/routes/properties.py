@@ -442,10 +442,12 @@ def get_properties_router(templates, get_session_dep):
         doc = session.get(Document, document_id)
         if not doc or not Path(doc.storage_path).exists():
             raise HTTPException(status_code=404, detail="Document not found")
+        # Viewing, not downloading: the browser renders it in place, which is what the
+        # inspector's preview and the "Open" action both rely on.
         return FileResponse(
             path=doc.storage_path,
             media_type=doc.mime_type or "application/pdf",
-            filename=doc.original_filename,
+            content_disposition_type="inline",
         )
 
     @router.get("/documents/{document_id}/download")

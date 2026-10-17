@@ -121,37 +121,53 @@ new sign-in presents a portfolio chooser rather than silently opening the oldest
 ---
 
 ### 3.6 Document Vault (`/documents`)
-Navigated the way a file manager is, not read like a report.
+One surface divided the way a file manager divides it: what you navigate by on the left, what
+the folder holds in the middle, and the details of the document you chose on the right. Every
+piece of that state is in the URL and rendered on the server — `property`, `type`, `kind`,
+`sort`, `doc`, `tab`, `q`, `per_page` — so a view survives a refresh, can be shared, and
+works with scripting switched off entirely.
 
-* **Folders are opened, not filtered.** The tree down the left is the model: the vault,
-  then one folder per property (with `Unfiled` for documents not yet assigned to one),
-  then one folder per document type inside it (with `Unclassified` when the type is
-  unknown). Every node shows how many documents it holds. Opening a folder fills the pane
-  on the right with that folder's subfolders *and* its documents — so nothing is hidden a
-  level deeper than the level you are reading, and drilling in is a choice, not a
-  requirement. The open branch is expanded and marked `aria-current="page"`.
-* **The path is the way back up.** A breadcrumb states the open folder and links each
-  parent; the last crumb is the folder you are standing in and is not a link. The tree is
-  plain `<details>`/`<summary>`, so it opens and closes with no script at all.
+* **Folders are opened, not filtered.** The rail is the model: the vault, then one folder per
+  property (with `Unfiled` for documents not yet assigned to one), then one folder per
+  document type inside it (with `Unclassified` when the type is unknown). Every node shows
+  how many documents it holds. Opening a folder fills the middle with that folder's
+  subfolders *and* its documents, so nothing is hidden a level deeper than the level you are
+  reading; the open branch is expanded, its row marked `aria-current="page"`, and its icon
+  switches from closed to open. The tree is plain `<details>`/`<summary>` with a rotating
+  chevron, so it opens and closes with no script.
+* **The path is the way back up.** A breadcrumb states the open folder and links each parent;
+  the last crumb is the folder you are standing in and is not a link.
+* **The middle names its subject.** The folder's glyph, name and counts (`N folders ·
+  M documents · size`) sit in a title bar with the one action that belongs to the folder —
+  *Upload* — and below them the chips (All / Folders / and one per file kind actually
+  present, each with its count) and the sort (Uploaded / Name / Size) as URL-backed chips.
+  A chip is only offered when something is behind it.
+* **The right pane is the document you chose.** Selecting a row (`doc`) opens the inspector
+  beside the list — its glyph, filename, a close link, tabs (*Preview*, *Details*, and
+  *Extraction* when the parser staged one), a framed inline preview of the document's own
+  serving endpoint, the actions that exist for it (open, download, statements), and the tags
+  it belongs to (property, type). Selecting again is navigation, so it is a link shaped like
+  a checkbox, not a checkbox: no selection model that lives only inside the browser.
 * **Search looks across every folder**, deliberately: finding a file should not depend on
   guessing which folder somebody filed it in. Opening a folder leaves the search behind and
   searching leaves the folder behind, so neither silently overrides the other. The tree's
   counts follow the search — the root row included — which makes the tree itself the answer
   to "where is it?".
-* **Upload is a dialog, not furniture.** The screen is a file browser, so nothing is spent
-  on a permanent upload panel: *Add documents* in the page header opens the uploader, and
+* **Upload is a dialog, not furniture.** The screen is a file browser, so nothing is spent on
+  a permanent upload panel: *Upload* in the folder's title bar opens the uploader, and
   dropping a file anywhere on the page opens it with those files already staged. Files are
   filed by the folder you are in — the Property and Document-type selects arrive pre-filled
-  from it — and several files can be sent at once (PDF, PNG, JPG, WEBP; 50 MB each).
-  Content already stored is recognised by its SHA-256 and is never written twice;
-  re-uploading known content still files it against a property or gives it a type, and never
-  overwrites a classification that already exists. The verdict is per file — stored, already
-  in the vault, or rejected with the reason — because those are different outcomes and one
-  summary sentence would hide which happened.
-* **Each file row** offers open (inline PDF or image), download (with the original
-  filename), and — when the parser staged an extraction for it — a link straight to that
-  extraction on the statements screen. Files sit in the portfolio's own vault,
-  content-addressed as `<vault>/<sha[:2]>/<sha><ext>`.
+  from it — and several files can be sent at once (PDF, PNG, JPG, WEBP; 50 MB each). Content
+  already stored is recognised by its SHA-256 and is never written twice; re-uploading known
+  content still files it against a property or gives it a type, and never overwrites a
+  classification that already exists. The verdict is per file — stored, already in the vault,
+  or rejected with the reason — because those are different outcomes and one summary sentence
+  would hide which happened.
+* **Each file row** states what the file is (name, its folder, its own type — PDF, PNG — and
+  size, upload date, extraction state) and hides its destinations behind a `<details>` menu:
+  open (inline), download (with the original filename), and the extraction on the statements
+  screen when one was staged. Files sit in the portfolio's own vault, content-addressed as
+  `<vault>/<sha[:2]>/<sha><ext>`, and each row's media type is the type the file actually is.
 * **Paging** is per folder, 25/50/100/all, and the folder's count and size are stated above
   the list so the size of what you are looking at is never a guess.
 * A statement the parser recognises is staged for review exactly as if it had been uploaded
@@ -162,6 +178,19 @@ Navigated the way a file manager is, not read like a report.
 ### 3.7 Statements & Ingestion (`/statements`)
 A statement arrives as a document, and it has to be matched, checked and made
 authoritative — in that order, and never by accident.
+
+The screen is one surface in the same language as the vault (`/documents` §3.6): a rail of
+queue facets — All, Needs review, Ready to approve, Approved, Imported, each with its count,
+the current one marked `aria-current="page"` — and a footer stating the queue in words
+(`N awaiting review · M ready to import`); a middle holding the statements with a title bar,
+the sort chips (Received / Filename / Type) and the table; and, when a statement is selected,
+an inspector beside it with tabs (*Preview*, *Figures*, *Statement*), the actions that exist
+for that statement, and — for anything awaiting review — the reasons it is, stated in full.
+Those reasons are the case for the verdict, so they belong where there is room for a
+sentence: the row shows the verdict, the inspector shows why.
+
+View state is in the URL (`status`, `sort`, `doc`, `tab`) and rendered on the server, and the
+uploader is a dialog like the vault's rather than a permanent form.
 
 * **Upload** takes a PDF, stores it in the portfolio's vault, and matches it against the
   accounts this portfolio has registered. A file already in the vault is reported rather

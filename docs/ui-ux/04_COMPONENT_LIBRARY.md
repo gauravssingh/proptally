@@ -380,46 +380,91 @@ See §E.
 
 ---
 
-## H. Document navigation (folder explorer)
+## H. Explorer surfaces (rail, centre, inspector)
 
-The vault is navigated rather than filtered. Four components carry that, and they are
-deliberately JS-free: the tree is `<details>`, the breadcrumb is links, and the folder cards
-are links, so a folder can be opened with scripting switched off entirely.
+A screen that browses a collection — documents, statements — is one surface divided the way
+a file manager divides it: what you navigate by on the left, what the current selection
+holds in the middle, and the details of the one thing you chose on the right. Everything
+here is JS-free: the tree is `<details>`, selection and tabs are links, the menu is a
+`<details>`, and every piece of view state is in the URL, so a refresh or a shared link
+lands where it was.
 
-### H1. Explorer — `.pt-explorer`
+### H1. Explorer — `.pt-explorer`, `.pt-explorer--inspecting`
 
-Two panes as a grid: the folder tree, then the contents of the open folder. One column
-below `900px`, so on a phone the tree sits above the pane it navigates. Panes are ordinary
-`.pt-card` / `.pt-card__body`, so nothing new is styled by this class beyond the columns.
+One grid, one surface: `.pt-explorer` carries the card's border and radius and its children
+carry the hairlines — `.pt-explorer__rail` (right border), `.pt-explorer__main`, and
+`.pt-explorer__aside` (left border), which is only rendered when something is selected. Two
+columns from `1024px`, three from `1440px` when `--inspecting` is present; one column below,
+where the rail stacks above the pane it navigates. Hairlines rather than three floating
+cards: three cards read as three unrelated things.
 
-### H2. Folder tree — `.pt-tree`, `.pt-tree__node`, `.pt-tree__summary`, `.pt-tree__link`, `.pt-tree__icon`, `.pt-tree__name`, `.pt-tree__count`, `.pt-tree__group`
+### H2. Rail — `.pt-rail__heading`, `.pt-rail__storage`
 
-* `.pt-tree__node` is a real `<details>`, opened (`open`) when it is the branch you are in;
-  its `<summary>` carries the disclosure triangle, so expansion needs no script.
-* `.pt-tree__link` is one row — icon, name, count — used for the root row, the folder row
-  inside a `<summary>`, and each leaf folder. `.pt-tree__group` indents a node's children
-  behind a divider so depth is visible without a second colour.
-* `.pt-tree__count` is the number of documents the row holds. It follows the active search,
-  the root row included, so the tree never claims more documents than the pane can show.
-* The row for the open folder is marked `is-active` **and** `aria-current="page"`.
-* **Branded for the vault only.** Any screen with a two-level identity (a property, then a
-  kind of thing within it) can reuse it: the row content is a name and a count, nothing
-  document-specific.
+The rail's own heading and its footer figure (`Storage` with documents and bytes, or a queue
+summary). The rail does not restate the screen's title: it is a control, not a heading.
 
-### H3. Folder card — `.pt-folders`, `.pt-folder`, `.pt-folder__top`, `.pt-folder__icon`, `.pt-folder__name`, `.pt-folder__meta`
+### H3. Navigation tree — `.pt-tree`, `.pt-tree__node`, `.pt-tree__link`, `.pt-tree__chevron`, `.pt-tree__icon`, `.pt-tree__name`, `.pt-tree__count`, `.pt-tree__group`
+
+* `.pt-tree__node` is a real `<details>`, `open` when it is the branch you are in. The
+  native marker is removed and `.pt-tree__chevron` rotates on `[open]`, so the disclosure
+  affordance is one glyph that needs no script.
+* `.pt-tree__link` is one row — chevron, icon, name, count — used for the root row, the row
+  inside a `<summary>`, and each leaf. `.pt-tree__group` indents children behind a divider.
+* `.pt-tree__count` is how many records the row holds, and it follows the active filter
+  (search included, root row included), so the tree never claims more than the pane shows.
+* The row you are in is marked `is-active` **and** `aria-current="page"`; its icon switches
+  from `folder` to `folder-open`.
+* Reusable for any two-level taxonomy — the vault uses property → document type, the
+  statements screen uses queue status.
+
+### H4. Title bar — `ui.titlebar(icon_name, title, meta)`
+
+The title of *the pane's subject* — the folder you are in, the queue you are looking at —
+with its counts and the caller's actions. Distinct from `ui.page_header`, which names the
+screen: a screen can have both, and a screen with panes needs the distinction.
+
+### H5. Tabs — `ui.tabs(items, active)`, `.pt-tabs`, `.pt-tab`
+
+`items` is a sequence of `{key, label, href}`. Tabs are **links**, because a tab here is a
+URL (`?tab=details`) that survives a refresh and can be shared. The active tab carries
+`is-active` and `aria-current="true"`.
+
+### H6. Inspector — `.pt-inspector`, `__head`, `__glyph`, `__name`, `__close`, `__body`, `__tags`
+
+The one record you chose: its identity, its tabs, then — `.pt-preview` (a framed
+`.pt-preview__frame` iframe of the document's own inline-serving endpoint, or
+`.pt-preview__fallback` when the type cannot preview), `.pt-action-tiles` /
+`.pt-action-tile` for the actions that exist, and facts via
+`ui.statement_open/statement_row`. Nothing in it is a menu, and nothing is offered that the
+app cannot do.
+
+### H7. Selection — `.pt-pick`, `.pt-table__pick`, `.pt-table__name`
+
+* `.pt-pick` is **a link shaped like a checkbox**, not a checkbox: choosing a row opens its
+  inspector, which is navigation, so it belongs in the URL where a refresh keeps it and a
+  link shares it. It fills with the accent colour and a check glyph when its row is the
+  selected one, and the row itself carries `is-active`.
+* `.pt-table__name` bounds the column whose content is arbitrarily long: a filename is read
+  at a glance and truncated with a `title`, never wrapped over three lines and never allowed
+  to stretch its row.
+
+### H8. Row menu — `.pt-menu`, `.pt-menu__trigger`, `.pt-menu__list`, `.pt-menu__item`
+
+A `<details>` element, so the menu opens with no script and its trigger is focusable. Use it
+for two or three secondary destinations; a screen whose row has **one** next step puts that
+step on the row and does not hide it in a menu.
+
+### H9. Folder card — `.pt-folders`, `.pt-folder`, `.pt-folder__top`, `.pt-folder__icon`, `.pt-folder__name`, `.pt-folder__meta`
 
 Auto-filling grid of the subfolders of the open folder, each a link showing name plus
-`N documents · size`. Folders come before the file table, the way a file manager lists a
-folder's own subfolders ahead of its files. There is no "current" variant: the card grid
-lists what is *inside* a folder, so the current folder is marked in the tree and breadcrumb.
+`N documents · size`. Folders come before the files, the way a file manager lists a folder's
+own subfolders ahead of its files.
 
-### H4. Breadcrumb — `.pt-breadcrumb`, `.pt-breadcrumb__link`, `.pt-breadcrumb__here`, `.pt-breadcrumb__sep`
+### H10. Breadcrumb — `.pt-breadcrumb`, `.pt-breadcrumb__link`, `.pt-breadcrumb__here`, `.pt-breadcrumb__sep`
 
-The path back up, one crumb per level of the tree. Every crumb but the last is a link
-(`__link`); the last is the folder you are standing in, so it is text marked `__here` with
-`aria-current="page"` — a link to the page you are on is noise for a keyboard user.
-Separators are `aria-hidden="true"`. Wrapped in `<nav aria-label="Folder path">` so it
-appears in the landmark list as what it is.
+The path back up, one crumb per level. Every crumb but the last is a link; the last is where
+you are, so it is text marked `__here` with `aria-current="page"`. Separators are
+`aria-hidden="true"`, and the whole thing sits in `<nav aria-label="…">`.
 
 ---
 
