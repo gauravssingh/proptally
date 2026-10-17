@@ -40,6 +40,9 @@
 {# ---------------------------------------------------------------------------
    Headline metrics. Each figure states where it came from (ui.evidence).
    --------------------------------------------------------------------------- #}
+<div class="pt-workspace pt-workspace--railed">
+<div class="pt-workspace__main pt-stack-3">
+
 <div class="pt-grid pt-sm-grid-cols-2 pt-lg-grid-cols-4 pt-gap-4">
     {{ ui.kpi(
         "Portfolio Equity",
@@ -81,7 +84,7 @@
    --------------------------------------------------------------------------- #}
 {{ ui.section_open("Portfolio Doors (" ~ equity.property_metrics | length ~ ")",
                    "Rental doors and the primary residence are kept separate: operating metrics apply to rentals only.") }}
-<div class="pt-grid pt-md-grid-cols-3 pt-gap-4">
+<div class="pt-doors">
     {% for prop_meta in equity.property_metrics %}
     {% set p = prop_meta.property %}
     {% set loan = prop_meta.loan %}
@@ -203,5 +206,50 @@
     ) }}
 {{ ui.statement_close() }}
 {{ ui.section_close() }}
+</div>{# /pt-workspace__main #}
+
+{# The context rail: what is waiting on a person, where the figures came from, and the
+   ways into the screens that act on them — instead of a column of full-width cards. #}
+<aside class="pt-workspace__rail pt-stack-3">
+    {{ ui.card_open() }}
+    <div class="pt-card__body pt-stack-3">
+        <h2 class="pt-section__title">Action required</h2>
+        {% if review_count %}
+        <p class="pt-fs-supporting pt-text-muted">
+            {{ review_count }} transaction{{ '' if review_count == 1 else 's' }} in the review queue.
+        </p>
+        {{ ui.btn("Open the review queue", variant="primary", size="sm", href="/reconciliation") }}
+        {% else %}
+        <p class="pt-fs-supporting pt-text-muted">
+            Nothing is waiting on you: every transaction this period is allocated.
+        </p>
+        {% endif %}
+    </div>
+    {{ ui.card_close() }}
+
+    {{ ui.card_open() }}
+    <div class="pt-card__body pt-stack-3">
+        <h2 class="pt-section__title">This period</h2>
+        {{ ui.statement_open() }}
+            {{ ui.statement_row("Period", period_label ~ (" (filtered)" if period_is_filtered else "")) }}
+            {{ ui.statement_row("Debt basis", debt_basis_label) }}
+            {{ ui.statement_row("Doors", equity.property_metrics | length) }}
+        {{ ui.statement_close() }}
+    </div>
+    {{ ui.card_close() }}
+
+    {{ ui.card_open() }}
+    <div class="pt-card__body pt-stack-3">
+        <h2 class="pt-section__title">Quick actions</h2>
+        <div class="pt-flex pt-flex-wrap pt-gap-2">
+            {{ ui.btn("Add a document", variant="secondary", size="sm", href="/documents") }}
+            {{ ui.btn("Upload a statement", variant="secondary", size="sm", href="/statements") }}
+            {{ ui.btn("Transactions", variant="secondary", size="sm", href="/transactions") }}
+            {{ ui.btn("Tax centre", variant="secondary", size="sm", href="/tax-center") }}
+        </div>
+    </div>
+    {{ ui.card_close() }}
+</aside>
+</div>{# /pt-workspace #}
 {% endif %}
 {% endblock %}

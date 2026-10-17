@@ -466,6 +466,25 @@ The path back up, one crumb per level. Every crumb but the last is a link; the l
 you are, so it is text marked `__here` with `aria-current="page"`. Separators are
 `aria-hidden="true"`, and the whole thing sits in `<nav aria-label="…">`.
 
+### H11. Motion — `@view-transition`, `pt-rise`, `pt-unfold`, `pt-slide-in`
+
+Three rules, every one of them inside `prefers-reduced-motion: no-preference`, so a reader
+who asked for less motion gets none of it and no other rule has to remember that:
+
+* **Navigation is a page load, so the cross-document view transition is the one that
+  matters.** The explorer's panes carry `view-transition-name`s (`explorer-rail`,
+  `explorer-main`, `explorer-aside`), which keeps the rail and the layout in place and
+  replaces only what changed — moving between folders, documents and screens stops being a
+  white flash. Browsers without it cross-fade the page; nothing depends on it.
+* **What appears arrives**: a folder's children unfold, the pane's sections and the
+  inspector's body rise, the row menu unfolds, and the selection panel slides in from the
+  edge when it is drawn over the list.
+* **What is hovered or chosen settles in**: row, link, chip, pick and tile states
+  transition on `--pt-transition-fast`.
+
+No component animates on its own initiative, nothing loops, and no motion carries meaning
+that is not also stated in the markup.
+
 ---
 
 ## I. Adding a component

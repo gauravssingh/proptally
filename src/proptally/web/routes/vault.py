@@ -403,6 +403,9 @@ def get_vault_router(templates, get_session_dep):
                 "folder_size": human_size(total_bytes),
                 "folder_documents": len(in_folder),
                 "vault_documents": len(all_rows),
+                "portfolio_documents": len(all_rows),
+                "portfolio_size": human_size(sum(row["size_bytes"] for row in all_rows)),
+                "awaiting_review": sum(1 for row in all_rows if row["state"] == "review"),
                 "vault_size": human_size(sum(row["size_bytes"] for row in all_rows)),
                 # The tree's counts move with the search, root row included, so the tree
                 # never claims three documents while showing one match inside a folder.

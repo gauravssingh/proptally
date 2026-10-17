@@ -26,7 +26,7 @@
         {% if is_searching %}{{ ui.btn("Clear", variant="ghost", href="/documents") }}{% endif %}
     </form>
 
-    <div class="pt-explorer{% if selected %} pt-explorer--inspecting{% endif %}">
+    <div class="pt-explorer pt-explorer--railed{% if selected %} pt-explorer--inspecting{% endif %}">
 
         {# ---- The rail: every folder, and what the vault is using. ---------------- #}
         <div class="pt-explorer__rail">
@@ -207,9 +207,11 @@
             {% endif %}
         </div>
 
-        {# ---- The right: the document you chose. --------------------------------- #}
-        {% if selected %}
+        {# ---- The right: the document you chose, or the vault itself. ------------- #}
+        {# An empty panel would waste the width this layout just won, so when nothing is
+           chosen the pane states what the vault holds and what is waiting for a person. #}
         <div class="pt-explorer__aside pt-inspector">
+        {% if selected %}
             <div class="pt-inspector__head">
                 <span class="pt-inspector__glyph">{{ ui.icon("image" if selected.kind == 'image' else "file-text", "md") }}</span>
                 <span class="pt-inspector__name">{{ selected.filename }}</span>
@@ -268,8 +270,42 @@
                     </div>
                 </div>
             </div>
-        </div>
+        {% else %}
+            <div class="pt-inspector__head">
+                <span class="pt-inspector__glyph">{{ ui.icon("ledger", "md") }}</span>
+                <span class="pt-inspector__name">Vault at a glance</span>
+            </div>
+            <div class="pt-inspector__body">
+                {{ ui.statement_open() }}
+                    {{ ui.statement_row("Documents", portfolio_documents) }}
+                    {{ ui.statement_row("Stored", portfolio_size) }}
+                    {{ ui.statement_row("Properties", tree | length) }}
+                    {{ ui.statement_row("Awaiting review", awaiting_review) }}
+                {{ ui.statement_close() }}
+
+                {% if awaiting_review %}
+                <div class="pt-stack-2">
+                    <p class="pt-fs-supporting pt-text-muted">
+                        {{ awaiting_review }} document{{ '' if awaiting_review == 1 else 's' }} the parser
+                        read but nobody has checked yet.
+                    </p>
+                    <div class="pt-action-tiles">
+                        {{ ui.action_tile("Review queue", "check", "/statements?status=review") }}
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="pt-stack-2">
+                    <h3 class="pt-section__title">Which folder holds what</h3>
+                    {{ ui.statement_open() }}
+                        {% for node in tree %}
+                        {{ ui.statement_row(node.label, node.count) }}
+                        {% endfor %}
+                    {{ ui.statement_close() }}
+                </div>
+            </div>
         {% endif %}
+        </div>
     </div>
 </div>
 

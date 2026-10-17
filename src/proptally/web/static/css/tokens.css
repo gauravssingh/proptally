@@ -188,7 +188,10 @@
     --pt-appbar-h: 3.25rem;
     --pt-bottomnav-h: 4.5rem;
     --pt-drawer-w: 18rem;
-    --pt-content-max: 80rem;
+    /* The workspace is fluid: the content region fills everything beside the sidebar and
+       stops capping at 1920px, so a wide display spends its width on the tables rather
+       than on gutters. */
+    --pt-content-max: 120rem;
     --pt-content-pad-x: var(--pt-space-8);
     --pt-content-pad-x-mobile: var(--pt-space-4);
 

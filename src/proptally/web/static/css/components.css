@@ -3026,15 +3026,15 @@
     }
 }
 
-/* Below the width where three real columns fit, the inspector is a panel over the list
-   rather than a column squeezing it — the same choice a file manager makes. The list keeps
-   its columns; the details slide over the right edge and are closed by their own link. */
+/* Below the width where three real columns fit, a *selection* panel is drawn over the list
+   rather than squeezing it — the same choice a file manager makes. The list keeps its
+   columns; the panel slides over the right edge and is closed by its own link. */
 @media (min-width: 1024px) and (max-width: 1799px) {
-    .pt-explorer--inspecting {
+    .pt-explorer--inspecting:not(.pt-explorer--railed) {
         grid-template-columns: 16rem minmax(0, 1fr);
     }
 
-    .pt-explorer--inspecting .pt-explorer__aside {
+    .pt-explorer--inspecting:not(.pt-explorer--railed) .pt-explorer__aside {
         position: fixed;
         top: 0;
         right: 0;
@@ -3045,6 +3045,25 @@
         overflow-y: auto;
         background-color: var(--pt-surface);
         box-shadow: var(--pt-shadow-lg);
+    }
+}
+
+/* An always-on context pane is a real third column as soon as there is room for one, and
+   it stacks beneath the list when there is not — it never covers what it describes. */
+@media (min-width: 1024px) and (max-width: 1439px) {
+    .pt-explorer--railed .pt-explorer__aside {
+        grid-column: 1 / -1;
+        border-top: var(--pt-border-w) solid var(--pt-border);
+    }
+}
+
+@media (min-width: 1440px) {
+    .pt-explorer--railed {
+        grid-template-columns: 16rem minmax(0, 1fr) 22rem;
+    }
+
+    .pt-explorer--railed .pt-explorer__aside {
+        border-left: var(--pt-border-w) solid var(--pt-border);
     }
 }
 
@@ -3487,4 +3506,155 @@
 
 .pt-table tbody tr.is-active {
     background-color: var(--pt-accent-soft);
+}
+
+/* ---------------------------------------------------------------------------
+   A. Workspace page (fluid, with an optional context rail)
+   ---------------------------------------------------------------------------
+   The page shape for overview and analytical screens: a twelve-column grid whose main
+   content fills nine and whose context rail takes three. Fluid by default — the rail
+   moves under the main column when there is no room for both, and nothing is centred
+   inside a narrower box.
+
+   Maps to the brief's `<WorkspacePage>`: same container, in the idiom this codebase
+   uses (a class here, a macro in `ui.html`).
+   --------------------------------------------------------------------------- */
+
+.pt-workspace {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: var(--pt-space-6);
+    align-items: start;
+}
+
+.pt-workspace__main,
+.pt-workspace__rail {
+    grid-column: span 12;
+    min-width: 0;
+}
+
+@media (min-width: 1280px) {
+    .pt-workspace--railed .pt-workspace__main {
+        grid-column: span 9;
+    }
+
+    .pt-workspace--railed .pt-workspace__rail {
+        grid-column: span 3;
+        position: sticky;
+        top: var(--pt-space-6);
+    }
+}
+
+/* "Doors across the portfolio": as many cards as fit at a readable width, never a fixed
+   count that leaves the last row half empty on a wide screen. */
+.pt-doors {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+    gap: var(--pt-space-4);
+}
+
+/* ---------------------------------------------------------------------------
+   A2. Motion
+   ---------------------------------------------------------------------------
+   Only what helps somebody follow what just happened: which folder opened, which
+   document was chosen, that a panel arrived. Every rule lives inside
+   `prefers-reduced-motion: no-preference`, so a reader who asked for less motion gets
+   none of it and there is no override to remember elsewhere.
+
+   The one that matters most in this app is `@view-transition`: navigation here is a page
+   load, so naming the explorer's panes is what makes moving from one folder, one document
+   or one screen to the next feel continuous — the rail and the layout stay put while only
+   what changed is replaced — instead of the whole page flashing white.
+   --------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: no-preference) {
+    @view-transition {
+        navigation: auto;
+    }
+
+    .pt-explorer__rail {
+        view-transition-name: explorer-rail;
+    }
+
+    .pt-explorer__main {
+        view-transition-name: explorer-main;
+    }
+
+    .pt-explorer__aside {
+        view-transition-name: explorer-aside;
+    }
+
+    @keyframes pt-rise {
+        from {
+            opacity: 0;
+            transform: translateY(6px);
+        }
+        to {
+            opacity: 1;
+            transform: none;
+        }
+    }
+
+    @keyframes pt-unfold {
+        from {
+            opacity: 0;
+            transform: translateY(-4px);
+        }
+        to {
+            opacity: 1;
+            transform: none;
+        }
+    }
+
+    @keyframes pt-slide-in {
+        from {
+            opacity: 0;
+            transform: translateX(10%);
+        }
+        to {
+            opacity: 1;
+            transform: none;
+        }
+    }
+
+    /* A folder opening unfolds its children rather than snapping them into place. */
+    .pt-tree__node[open] > .pt-tree__group {
+        animation: pt-unfold var(--pt-transition-fast) var(--pt-ease) both;
+    }
+
+    /* Hover and selection states arrive instead of switching. */
+    .pt-tree__link,
+    .pt-tab,
+    .pt-action-tile,
+    .pt-menu__item {
+        transition: background-color var(--pt-transition-fast) var(--pt-ease),
+            color var(--pt-transition-fast) var(--pt-ease),
+            border-color var(--pt-transition-fast) var(--pt-ease);
+    }
+
+    .pt-chip,
+    .pt-pick {
+        transition: background-color var(--pt-transition-fast) var(--pt-ease),
+            border-color var(--pt-transition-fast) var(--pt-ease),
+            color var(--pt-transition-fast) var(--pt-ease);
+    }
+
+    .pt-table tbody tr {
+        transition: background-color var(--pt-transition-fast) var(--pt-ease);
+    }
+
+    /* The menu and the inspector arrive rather than appear. */
+    .pt-menu[open] .pt-menu__list {
+        animation: pt-unfold var(--pt-transition-fast) var(--pt-ease) both;
+    }
+
+    .pt-inspector__body,
+    .pt-explorer__main > * {
+        animation: pt-rise var(--pt-transition-fast) var(--pt-ease) both;
+    }
+
+    /* When the selection panel is drawn over the list, it slides in from the edge. */
+    .pt-explorer--inspecting:not(.pt-explorer--railed) .pt-explorer__aside {
+        animation: pt-slide-in var(--pt-transition-fast) var(--pt-ease) both;
+    }
 }
