@@ -1122,6 +1122,26 @@ def registration_is_open(control_engine: Engine) -> bool:
     return flag or count_users(control_engine) == 0
 
 
+def portfolio_invite_code() -> str:
+    """The operator's invitation code for starting a portfolio, if one is configured."""
+    return os.environ.get("PROPTALLY_PORTFOLIO_INVITE_CODE", "").strip()
+
+
+def portfolio_code_matches(submitted: str) -> bool:
+    """Whether a submitted code may create a portfolio.
+
+    With no code configured this is not a gate at all — self-registration is then decided
+    entirely by ``registration_is_open``, which is how a fresh self-hosted instance is
+    bootstrapped. With one configured, nothing else opens the door: a portfolio is started
+    by somebody the operator handed the code to. The comparison is constant-time, so a
+    wrong guess tells an attacker nothing about the right one.
+    """
+    expected = portfolio_invite_code()
+    if not expected:
+        return True
+    return secrets.compare_digest(expected, (submitted or "").strip())
+
+
 
 def _acquire_tenant_operation(
     control_engine: Engine, tenant_id: str, user_id: str, session_id: str, role: str

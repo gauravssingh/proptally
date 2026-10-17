@@ -55,6 +55,8 @@ from proptally.web.auth import (
     memberships_for,
     pre_session_csrf_valid,
     register_portfolio,
+    portfolio_code_matches,
+    portfolio_invite_code,
     registration_is_open,
     resolve_context,
     revoke_session,
@@ -281,7 +283,8 @@ def get_auth_router(
         return _render(
             templates, request, "register.html",
             {"error": None, "email": "", "display_name": "", "portfolio_name": "",
-             "min_password_length": MIN_PASSWORD_LENGTH},
+             "min_password_length": MIN_PASSWORD_LENGTH,
+             "portfolio_code_required": bool(portfolio_invite_code())},
             csrf_token=csrf_token, set_cookie=set_cookie,
         )
 
@@ -292,6 +295,7 @@ def get_auth_router(
         password: str = Form(...),
         display_name: str = Form(""),
         portfolio_name: str = Form(""),
+        portfolio_code: str = Form(""),
         csrf_token: str = Form(None),
     ):
         csrf_token, set_cookie = issue_pre_session_csrf(request)
@@ -300,7 +304,8 @@ def get_auth_router(
             return _render(
                 templates, request, "register.html",
                 {"error": message, "email": email, "display_name": display_name,
-                 "portfolio_name": portfolio_name, "min_password_length": MIN_PASSWORD_LENGTH},
+                 "portfolio_name": portfolio_name, "min_password_length": MIN_PASSWORD_LENGTH,
+                 "portfolio_code_required": bool(portfolio_invite_code())},
                 csrf_token=csrf_token, set_cookie=set_cookie,
             )
 
@@ -308,6 +313,11 @@ def get_auth_router(
             return RedirectResponse(url="/auth/login", status_code=303)
         if not pre_session_csrf_valid(request, csrf_token):
             return failure("Your form expired. Please try again.")
+
+        # The portfolio invitation code, when the operator has set one: starting a portfolio
+        # is for the people they handed the code to, and for nobody else.
+        if not portfolio_code_matches(portfolio_code):
+            return failure("That portfolio invitation code is not right.")
 
         try:
             user, tenant, _ = register_portfolio(

@@ -1,36 +1,83 @@
 {% extends "auth_base.html" %}
 {% block title %}Create a portfolio — PropTally{% endblock %}
-{% block card %}
-{{ ui.card_open() }}
-<h1>Create a portfolio</h1>
-<p class="pt-fs-supporting pt-text-secondary">
-    This creates your account and your own private portfolio. Your properties,
-    statements and ledger are stored in your own database on this host.
-</p>
 
-{% if error %}{{ ui.alert(variant="error", title="Could not create your portfolio", text=error) }}{% endif %}
+{# ---------------------------------------------------------------------------
+   The first thing somebody sees, so it carries the same scene as sign-in — but the calm
+   variant of the artwork: no houses, no car, no leaves, no kite, no pins, and the artwork's
+   own rule that nothing in it moves.
 
-<form method="post" action="/auth/register">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="pt-stack pt-gap-4">
-        {{ ui.text_field("display_name", "Your name", value=display_name or "",
-                         extra='autocomplete="name"') }}
-        {{ ui.text_field("portfolio_name", "Portfolio name", value=portfolio_name or "",
-                         placeholder="e.g. Bluebonnet Holdings",
-                         help="Used to label your workspace; you can change it later.") }}
-        {{ ui.text_field("email", "Email", value=email or "", type="email", required=true,
-                         extra='autocomplete="username"') }}
-        {{ ui.text_field("password", "Password", type="password", required=true,
-                         extra='autocomplete="new-password"',
-                         help="At least " ~ min_password_length ~ " characters.") }}
-        <div class="pt-form-actions">
-            {{ ui.btn("Create account", variant="primary", type="submit", block=true) }}
+   Same shell as login.html (`.auth-root` / `.auth-scene` / `.auth-panel` / `.auth-form`),
+   one pane instead of sign-in's three. `.auth-form` sets no vertical rhythm of its own, so
+   the block carries one explicitly: brand, what this is, the form, and the way back to
+   sign-in are one stack. The heading is screen-reader structure only and lives inside the
+   brand row, where a clipped 1px element costs nothing instead of eating a stack gap.
+   --------------------------------------------------------------------------- #}
+
+{% block shell %}
+<div class="auth-root relative h-screen w-screen overflow-hidden">
+    <img class="auth-scene absolute inset-0 w-full h-full object-cover z-0"
+         src="/static/img/register-calm.svg" alt="">
+
+    <div class="auth-panel w-full z-10">
+        <div class="auth-form">
+            <div class="pt-stack-5">
+
+                <div class="flex items-center gap-3">
+                    <span class="auth-mark">P</span>
+                    <span>
+                        <span class="block auth-wordmark font-bold text-slate-900">PropTally</span>
+                        {% if instance_name != "PropTally" %}
+                        <span class="auth-instance">
+                            <span class="auth-instance__dot" aria-hidden="true"></span>
+                            {{ instance_name }}
+                        </span>
+                        {% endif %}
+                    </span>
+                    <h1 class="pt-sr-only" tabindex="-1">Create a portfolio</h1>
+                </div>
+
+                <p class="pt-fs-supporting">
+                    Your own private portfolio: its properties, statements and ledger live in
+                    your own database on this host.
+                </p>
+
+                {% if error %}
+                {{ ui.alert(variant="error", title="Could not create your portfolio", text=error) }}
+                {% endif %}
+
+                <form method="post" action="/auth/register">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="pt-stack pt-gap-4">
+                        {{ ui.text_field("display_name", "Your name", value=display_name or "",
+                                         extra='autocomplete="name"') }}
+                        {{ ui.text_field("portfolio_name", "Portfolio name", value=portfolio_name or "",
+                                         placeholder="e.g. Bluebonnet Holdings",
+                                         help="Labels your workspace; you can change it later.") }}
+                        {{ ui.text_field("email", "Email", value=email or "", type="email", required=true,
+                                         extra='autocomplete="username"') }}
+                        {{ ui.text_field("password", "Password", type="password", required=true,
+                                         extra='autocomplete="new-password"',
+                                         help="At least " ~ min_password_length ~ " characters.") }}
+
+                        {# Asked for last: it is permission to be here, not information about you.
+                           Never echoed back — a mistyped code is retyped, not repeated on screen. #}
+                        {% if portfolio_code_required %}
+                        {{ ui.text_field("portfolio_code", "Portfolio invitation code", required=true,
+                                         extra='autocomplete="off" spellcheck="false"',
+                                         help="Given to you by whoever runs this instance.") }}
+                        {% endif %}
+
+                        <div class="pt-form-actions">
+                            {{ ui.btn("Create portfolio", variant="primary", type="submit", block=true) }}
+                        </div>
+                    </div>
+                </form>
+
+                <p class="pt-fs-caption">
+                    Already have an account? <a href="/auth/login">Sign in</a>.
+                </p>
+            </div>
         </div>
     </div>
-</form>
-
-<div class="pt-stack pt-gap-2 pt-fs-caption">
-    <span>Already have an account? <a href="/auth/login">Sign in</a>.</span>
 </div>
-{{ ui.card_close() }}
 {% endblock %}
