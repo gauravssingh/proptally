@@ -165,6 +165,22 @@ def test_opening_a_folder_shows_what_is_inside_it(vault):
     assert "receipt.png" in unfiled and "lease.pdf" not in unfiled
 
 
+def test_the_uploader_opens_on_demand_rather_than_sitting_on_the_page(vault):
+    """The screen is a file browser: the uploader is behind the header action, not always open."""
+    client = vault["client"]
+    _upload(client, [("lease.pdf", LEASE_PDF)], document_type="LEASE_AGREEMENT", property_id=vault["property_id"])
+
+    page = client.get("/documents").text
+
+    # The header offers it, the dialog is closed until it is used, and the form is inside it.
+    assert 'data-modal-open="upload-documents"' in page
+    dialog_at = page.index('id="upload-documents" class="pt-modal" hidden')
+    form_at = page.index('action="/documents/upload"')
+    assert form_at > dialog_at, "the upload form must live inside the dialog"
+    assert page.count('action="/documents/upload"') == 1, "exactly one upload form"
+    assert 'id="add-documents"' not in page, "the permanent upload panel is gone"
+
+
 def test_search_finds_a_file_wherever_it_was_filed(vault):
     client = vault["client"]
     _upload(client, [("lease.pdf", LEASE_PDF)], document_type="LEASE_AGREEMENT", property_id=vault["property_id"])

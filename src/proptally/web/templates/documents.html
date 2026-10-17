@@ -12,7 +12,8 @@
         "Document Vault",
         "Every document this portfolio holds, kept in the folder it belongs to. Open a folder rather than filter for it — the tree shows where everything is, and the pane shows what is inside the folder you are in."
     ) %}
-        {{ ui.btn("Add documents", variant="primary", href="#add-documents") }}
+        {{ ui.btn("Add documents", variant="primary", type="button", icon_name="plus",
+                  attrs='data-modal-open="upload-documents"') }}
     {% endcall %}
 
     {% if message %}{{ ui.alert(message_variant, text=message) }}{% endif %}
@@ -166,9 +167,9 @@
                                     {% if is_searching %}
                                         {{ ui.empty_state("Nothing here matches", "No document matches “" ~ q ~ "”. The folder tree still shows which folders hold what the search found.") }}
                                     {% elif current_property %}
-                                        {{ ui.empty_state("This folder is empty", "Add a document below and it is filed in this folder.") }}
+                                        {{ ui.empty_state("This folder is empty", "Use Add documents and it is filed in this folder.") }}
                                     {% else %}
-                                        {{ ui.empty_state("No documents yet", "Upload a statement, lease or policy below. Each one is fingerprinted, stored once, and filed under its property and type.") }}
+                                        {{ ui.empty_state("No documents yet", "Use Add documents for a statement, lease or policy. Each one is fingerprinted, stored once, and filed under its property and type.") }}
                                     {% endif %}
                                 </td>
                             </tr>
@@ -185,18 +186,26 @@
                 </div>
             </div>
 
-            <div class="pt-card" id="add-documents">
-                <div class="pt-card__body pt-stack-3">
-                    <h2 class="pt-section__title">
-                        {%- if current_property %}Add documents to {{ current_property.label }}{% if current_type %} / {{ current_type.label }}{% endif %}
-                        {%- else %}Add documents{% endif %}
-                    </h2>
-                    <form method="POST" action="/documents/upload" enctype="multipart/form-data">
-                        <input type="hidden" name="per_page" value="{{ per_page }}">
-                        {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
-                        {# The folder being viewed, so the upload returns to it. #}
-                        {% if current_property %}<input type="hidden" name="property" value="{{ current_property.key }}">{% endif %}
-                        {% if current_type %}<input type="hidden" name="type" value="{{ current_type.key }}">{% endif %}
+            {# The uploader is a dialog, not furniture. This screen is a file browser: a panel
+               that is always open spends a third of the pane repeating what the header button
+               already says, and it pushes the folder's contents — the thing being read — up
+               the page. Dragging a file onto the pane opens this (see the script below). #}
+            {{ ui.modal_open(
+                "upload-documents",
+                "Add documents",
+                "Filed in " ~ (current_property.label if current_property else "the vault")
+                    ~ ((" / " ~ current_type.label) if current_type else "")
+                    ~ ". Files are fingerprinted on arrival: a file already in the vault is reported rather than stored twice, and a statement the parser recognises is staged for review on the statements screen.",
+                size="md"
+            ) }}
+            <form method="POST" action="/documents/upload" enctype="multipart/form-data" class="pt-modal__form">
+                <input type="hidden" name="per_page" value="{{ per_page }}">
+                {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+                {# The folder being viewed, so the upload returns to it. #}
+                {% if current_property %}<input type="hidden" name="property" value="{{ current_property.key }}">{% endif %}
+                {% if current_type %}<input type="hidden" name="type" value="{{ current_type.key }}">{% endif %}
+                <div class="pt-modal__body">
+                    <div class="pt-stack pt-gap-4">
                         <div class="pt-dropzone" data-dropzone>
                             <input type="file" name="files" id="vault-files" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple>
                             <span class="pt-dropzone__hint">PDF, PNG, JPG or WEBP · up to {{ max_upload_mb }} MB each</span>
@@ -208,13 +217,14 @@
                             {{ ui.select_field("document_type", "Document type", type_options,
                                                selected=current_type.key if current_type else "") }}
                         </div>
-                        <div class="pt-flex pt-justify-end pt-gap-2">
-                            {{ ui.btn("Upload to this folder", variant="primary", type="submit") }}
-                        </div>
-                    </form>
-                    <p class="pt-fs-supporting pt-text-muted">Files are fingerprinted on arrival. A file already in the vault is reported rather than stored twice, and a statement the parser recognises is staged for review on the statements screen.</p>
+                    </div>
                 </div>
-            </div>
+                <div class="pt-modal__footer">
+                    {{ ui.btn("Cancel", variant="secondary", size="sm", type="button", attrs="data-modal-close") }}
+                    {{ ui.btn("Upload to this folder", variant="primary", size="sm", type="submit") }}
+                </div>
+            </form>
+            {{ ui.modal_close() }}
         </section>
     </div>
 </div>
@@ -250,6 +260,36 @@
             }
         });
     });
+
+    /* A file dropped anywhere on this screen opens the uploader and stages itself. The
+       panel that used to sit at the foot of the page was the drag target, and a target
+       nobody can see is no target at all. */
+    const uploader = document.getElementById("upload-documents");
+    const dropzone = uploader ? uploader.querySelector("[data-dropzone]") : null;
+    if (uploader && dropzone && window.PT && window.PT.openModal) {
+        const openUploader = () => window.PT.openModal("upload-documents");
+        // A drag event's target is an element for a real drag, but not for every synthetic
+        // one; contains() throws on anything that is not a Node, which would take the
+        // handler — and with it the affordance — down with it.
+        const inDropzone = (target) => target instanceof Node && dropzone.contains(target);
+        ["dragenter", "dragover"].forEach((event) => {
+            window.addEventListener(event, (e) => {
+                if (inDropzone(e.target) || !uploader.hidden) return;
+                e.preventDefault();
+                openUploader();
+            });
+        });
+        window.addEventListener("drop", (e) => {
+            if (inDropzone(e.target)) return;   // the dialog's own zone takes it
+            e.preventDefault();
+            openUploader();
+            const input = dropzone.querySelector('input[type="file"]');
+            if (input && e.dataTransfer && e.dataTransfer.files.length) {
+                input.files = e.dataTransfer.files;
+                input.dispatchEvent(new Event("change"));
+            }
+        });
+    }
 })();
 </script>
 {% endblock %}

@@ -138,13 +138,16 @@ Navigated the way a file manager is, not read like a report.
   searching leaves the folder behind, so neither silently overrides the other. The tree's
   counts follow the search — the root row included — which makes the tree itself the answer
   to "where is it?".
-* **Upload is filed by the folder you are in.** The drop zone accepts several files at once
-  (PDF, PNG, JPG, WEBP; 50 MB each) and its Property and Document-type selects arrive
-  pre-filled from the open folder. Content already stored is recognised by its SHA-256 and
-  is never written twice; re-uploading known content still files it against a property or
-  gives it a type, and never overwrites a classification that already exists. The verdict is
-  per file — stored, already in the vault, or rejected with the reason — because those are
-  different outcomes and one summary sentence would hide which happened.
+* **Upload is a dialog, not furniture.** The screen is a file browser, so nothing is spent
+  on a permanent upload panel: *Add documents* in the page header opens the uploader, and
+  dropping a file anywhere on the page opens it with those files already staged. Files are
+  filed by the folder you are in — the Property and Document-type selects arrive pre-filled
+  from it — and several files can be sent at once (PDF, PNG, JPG, WEBP; 50 MB each).
+  Content already stored is recognised by its SHA-256 and is never written twice;
+  re-uploading known content still files it against a property or gives it a type, and never
+  overwrites a classification that already exists. The verdict is per file — stored, already
+  in the vault, or rejected with the reason — because those are different outcomes and one
+  summary sentence would hide which happened.
 * **Each file row** offers open (inline PDF or image), download (with the original
   filename), and — when the parser staged an extraction for it — a link straight to that
   extraction on the statements screen. Files sit in the portfolio's own vault,
