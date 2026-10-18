@@ -141,7 +141,19 @@ def _line_matches(page: dict, search: str, *, whole_lines: bool = False) -> list
     return matches
 
 
-def _available(page: dict, page_number: int, match: dict) -> dict:
+def _available(page: dict, page_number: int, matches: list[dict]) -> dict:
+    rects = []
+    seen = set()
+    for match in matches:
+        for rect in match["rects"]:
+            key = (round(rect["x0"], 2), round(rect["y0"], 2),
+                   round(rect["x1"], 2), round(rect["y1"], 2))
+            if key in seen:
+                continue
+            seen.add(key)
+            rects.append(rect)
+    single = matches[0]
+    match_type = single["match_type"] if len(matches) == 1 else "MULTIPLE"
     return {
         "version": SOURCE_VERSION,
         "status": "AVAILABLE",
@@ -150,10 +162,11 @@ def _available(page: dict, page_number: int, match: dict) -> dict:
         "page_width": float(page.get("width") or 0),
         "page_height": float(page.get("height") or 0),
         "rotation": int(page.get("rotation") or 0),
-        "matched_text": match["matched_text"],
-        "match_type": match["match_type"],
-        "confidence": 0.99 if match["match_type"] in {"EXACT", "NORMALIZED"} else 0.8,
-        "rects": match["rects"],
+        "matched_text": single["matched_text"],
+        "match_type": match_type,
+        "candidate_count": len(matches),
+        "confidence": 0.99 if match_type in {"EXACT", "NORMALIZED"} else 0.9,
+        "rects": rects,
     }
 
 
@@ -247,17 +260,13 @@ def locate_source(
         matches = _choose_value_matches(
             _line_matches(page_data, value_text), evidence, field_name
         )
-        if len(matches) == 1:
-            return _available(page_data, page_number, matches[0])
-        if len(matches) > 1:
-            return _ambiguous(page_number, len(matches))
+        if matches:
+            return _available(page_data, page_number, matches)
 
     if evidence:
         matches = _line_matches(page_data, evidence)
-        if len(matches) == 1:
-            return _available(page_data, page_number, matches[0])
-        if len(matches) > 1:
-            return _ambiguous(page_number, len(matches))
+        if matches:
+            return _available(page_data, page_number, matches)
 
     # The page hint was wrong; search all pages, but still never choose arbitrarily.
     if value_text and value_text != "—":
@@ -267,10 +276,14 @@ def locate_source(
                 _line_matches(candidate, value_text), evidence, field_name
             )
             found.extend((index, candidate, match) for match in matches)
-        if len(found) == 1:
-            index, candidate, match = found[0]
-            return _available(candidate, index, match)
-        if len(found) > 1:
+        if found:
+            pages = {index for index, _candidate, _match in found}
+            if len(pages) == 1:
+                index, candidate, _match = found[0]
+                return _available(
+                    candidate, index,
+                    [match for _index, _candidate, match in found],
+                )
             return _ambiguous(page_number, len(found))
 
     return _unavailable(page_number, "NOT_FOUND")

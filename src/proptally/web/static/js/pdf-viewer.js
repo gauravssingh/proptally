@@ -140,7 +140,10 @@
             setStatus("Source location unavailable for this value.");
             return;
         }
-        setStatus("Highlighted source text.");
+        var count = Number(location.candidate_count) || 1;
+        setStatus(count > 1
+            ? "Highlighted " + count + " source occurrences."
+            : "Highlighted source text.");
         focusLocation(location);
     }
 

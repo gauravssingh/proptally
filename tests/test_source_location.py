@@ -69,7 +69,7 @@ def test_repeated_value_uses_evidence_context():
     assert location["rects"][0]["y0"] == 160.0
 
 
-def test_repeated_value_without_context_is_ambiguous():
+def test_repeated_value_without_context_highlights_all_occurrences():
     page = _page(
         (_word("$3,857.96", 250, 1, 0, 0),),
         (_word("$3,857.96", 250, 3, 0, 0),),
@@ -81,8 +81,10 @@ def test_repeated_value_without_context_is_ambiguous():
         page=1,
         geometry=[page],
     )
-    assert location["status"] == "AMBIGUOUS"
-    assert location["rects"] == []
+    assert location["status"] == "AVAILABLE"
+    assert location["match_type"] == "MULTIPLE"
+    assert location["candidate_count"] == 2
+    assert len(location["rects"]) == 2
 
 
 def test_missing_geometry_is_unavailable_not_an_exception():

@@ -128,8 +128,11 @@ Matching order in the shipped locator:
 1. Exact text match.
 2. Normalized match (whitespace, currency symbols, commas, case).
 3. Line/context match around the value.
-4. Multiple residual candidates: `AMBIGUOUS`, with no highlight.
-5. No match: `UNAVAILABLE`, never a guessed location.
+4. Multiple occurrences on the same page: highlight every occurrence, with
+   `match_type: MULTIPLE` and a candidate count.
+5. Multiple pages with no page hint: `AMBIGUOUS`, because the viewer can show only
+   one page at a time.
+6. No match: `UNAVAILABLE`, never a guessed location.
 
 Fuzzy matching is deliberately deferred. Incorrect highlighting is worse than an
 unavailable highlight.
@@ -139,7 +142,10 @@ Requirements:
 - Prefer the evidence page when known.
 - Search all pages when the page hint fails.
 - Return every match rectangle, not only the first.
-- If several ambiguous candidates exist, return `AMBIGUOUS` instead of choosing.
+- If several occurrences remain on the selected page, return all rectangles and
+  highlight them together. Do not choose one arbitrarily.
+- If the same value only matches on several different pages without a page hint,
+  report `AMBIGUOUS`.
 - Do not run OCR coordinates in the MVP. OCR text can keep page numbers and text,
   but its evidence is marked `SOURCE_UNAVAILABLE` for highlighting.
 - Re-open the PDF at proposal-build time, or capture word boxes in the extraction
@@ -203,6 +209,8 @@ The panel never imports viewer internals.
 | Same page already displayed | Highlight immediately |
 | Different page | Navigate to the page, then scroll and highlight |
 | Text spans multiple lines | Highlight all matching rectangles |
+| Same value occurs several times on the page | Highlight every exact occurrence |
+| Same value occurs on several pages with no page hint | Report ambiguous |
 | Select another evidence | Replace the previous active highlight |
 | Select the same evidence again | Keep the selection |
 | Source cannot be located | Show “Source location unavailable” |
