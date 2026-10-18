@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}{{ proposal.title }} — Review — PropTally{% endblock %}
+
+{% block content %}
+{% set record_url = "/onboarding/import/" ~ session.id ~ "/records/" ~ proposal.id %}
+{% set header_meta %}
+    {{ ui.badge(entity_label, variant="neutral", upper=true) }}
+    {{ ui.badge(status_label, variant=status_variant, upper=true) }}
+{% endset %}
+{{ ui.page_header(
+    proposal.title,
+    "Check each value against the document beside it. Your original extraction is kept even when you edit a value.",
+    meta=header_meta
+) }}
+
+<div class="pt-record-actions">
+    {{ ui.btn("Back to review", variant="ghost", size="sm",
+              href="/onboarding/import/" ~ session.id ~ "/review", icon_name="chevron_left") }}
+    {% if can_review %}
+    <div class="pt-flex pt-gap-2 pt-flex-wrap">
+        <form method="post" action="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}/decision" class="pt-inline-flex">
+            {{ csrf_field() }}
+            <input type="hidden" name="decision" value="ACCEPT">
+            {{ ui.btn("Accept record", variant="primary", size="sm", type="submit", icon_name="check") }}
+        </form>
+        <form method="post" action="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}/decision" class="pt-inline-flex">
+            {{ csrf_field() }}
+            <input type="hidden" name="decision" value="DEFER">
+            {{ ui.btn("Defer", variant="secondary", size="sm", type="submit", icon_name="clock") }}
+        </form>
+        <form method="post" action="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}/decision" class="pt-inline-flex">
+            {{ csrf_field() }}
+            <input type="hidden" name="decision" value="REJECT">
+            {{ ui.btn("Reject", variant="ghost", size="sm", type="submit", icon_name="close") }}
+        </form>
+    </div>
+    {% endif %}
+</div>
+
+<div class="pt-record-grid">
+    <div class="pt-record-fields">
+        <section class="pt-record-help">
+            <strong>How to review a field</strong>
+            <ul>
+                <li><strong>Check</strong> saves the value shown for that field. It does not accept the whole record.</li>
+                <li><strong>Edit</strong> corrects a value; save it with the check.</li>
+                <li><strong>Unknown</strong> leaves the field empty for later; it is not treated as a fact.</li>
+                <li>If documents disagree, choose one of the shown values. Use <strong>Accept record</strong> at the top when the record is ready.</li>
+            </ul>
+        </section>
+        {% for field in fields %}
+        <section class="pt-field{% if field.conflict %} pt-field--conflict{% endif %}" id="field-{{ field.name }}">
+            <div class="pt-field__head">
+                <span class="pt-field__label">
+                    {{ field.label }}
+                    {% if field.required %}<span class="pt-field__required" title="Required">*</span>{% endif %}
+                </span>
+                <span class="pt-field__badges">
+                    {% if field.conflict %}{{ ui.badge("Conflict", variant="error", upper=true) }}{% endif %}
+                    {% if field.edited %}{{ ui.badge("Edited", variant="info", upper=true) }}{% endif %}
+                    {% if not field.editable %}{{ ui.badge("From document", variant="neutral", upper=true) }}{% endif %}
+                </span>
+            </div>
+
+            {% if field.conflict %}
+            <p class="pt-field__conflict-note">
+                The documents disagree. Choose the value that is correct, or edit it below.
+            </p>
+            <form method="post" action="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}/field" class="pt-stack-2">
+                {{ csrf_field() }}
+                <input type="hidden" name="field" value="{{ field.name }}">
+                <input type="hidden" name="action" value="resolve">
+                {% for option in field.conflict_options %}
+                <label class="pt-conflict-option">
+                    <input type="radio" name="value_index" value="{{ option.index }}"
+                           {% if loop.first %}checked{% endif %}>
+                    <span class="pt-conflict-option__body">
+                        <strong>{{ option.display }}</strong>
+                        <span class="pt-fs-caption pt-text-muted">
+                            {{ option.evidence or "No supporting text captured" }}
+                        </span>
+                        {% if option.document_id %}
+                        <a class="pt-fs-caption" href="/onboarding/import/{{ session.id }}/documents/{{ option.document_id }}?page={{ option.page }}"
+                           target="_blank" rel="noopener">Open source · page {{ option.page }}</a>
+                        {% endif %}
+                    </span>
+                </label>
+                {% endfor %}
+                {% if can_review %}
+                {{ ui.btn("Use this value", variant="secondary", size="sm", type="submit", icon_name="check") }}
+                {% endif %}
+            </form>
+            {% elif field.editable and can_review %}
+            <div class="pt-field__read">
+                <div class="pt-field__read-main">
+                    <span class="pt-field__value">{{ field.display }}</span>
+                    {% if field.edited %}
+                    <span class="pt-field__extracted pt-fs-caption pt-text-muted">Extracted: {{ field.original_display }}</span>
+                    {% endif %}
+                </div>
+                <details class="pt-field__edit">
+                    <summary class="pt-btn pt-btn--ghost pt-btn--sm">
+                        {{ ui.icon("edit", "sm") }} Edit
+                    </summary>
+                    <form method="post" action="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}/field"
+                          class="pt-field__form" data-record-field-form>
+                        {{ csrf_field() }}
+                        <input type="hidden" name="field" value="{{ field.name }}">
+                        {% if field.type in ["money", "percentage_rate", "percentage", "int"] %}
+                        {{ ui.number_field("value", field.label, value=field.input_value, id=field.name,
+                                           step=("0.001" if field.type == "percentage_rate" else ("1" if field.type in ["int", "percentage"] else "0.01")),
+                                           hidden_label=true) }}
+                        {% elif field.type == "date" %}
+                        {{ ui.date_field("value", field.label, value=field.input_value, id=field.name, hidden_label=true) }}
+                        {% elif field.type == "enum" %}
+                        {{ ui.select_field("value", field.label, field.choices,
+                                           selected=field.value, id=field.name, hidden_label=true) }}
+                        {% elif field.type == "property" %}
+                        {{ ui.select_field("value", field.label, property_options,
+                                           selected=field.value, id=field.name, placeholder="Choose a property…",
+                                           hidden_label=true) }}
+                        {% elif field.type == "list" %}
+                        {{ ui.text_field("value", field.label, value=field.input_value, id=field.name,
+                                         placeholder="Separate names with commas", hidden_label=true) }}
+                        {% else %}
+                        {{ ui.text_field("value", field.label, value=field.input_value, id=field.name, hidden_label=true) }}
+                        {% endif %}
+                        <div class="pt-field__form-actions">
+                            {{ ui.icon_btn("Save this value", "check", variant="primary", size="sm",
+                                           type="submit", title="Save this value",
+                                           attrs='name="action" value="save"') }}
+                            <button class="pt-btn pt-btn--ghost pt-btn--sm" type="submit" name="action" value="unknown"
+                                    title="Leave this field empty; it will not be treated as a fact.">
+                                Mark unknown
+                            </button>
+                        </div>
+                        <p class="pt-field__help">
+                            The check saves only this field. “Unknown” leaves it empty for later.
+                        </p>
+                    </form>
+                </details>
+            </div>
+            {% else %}
+            <div class="pt-field__value">{{ field.display }}</div>
+            {% if field.edited %}
+            <span class="pt-fs-caption pt-text-muted">Extracted: {{ field.original_display }}</span>
+            {% endif %}
+            {% endif %}
+
+            {% if field.evidence %}
+            <details class="pt-field__evidence" {% if field.conflict %}open{% endif %}>
+                <summary>{{ field.evidence|length }} source passage{{ "" if field.evidence|length == 1 else "s" }}</summary>
+                <ul>
+                    {% for item in field.evidence %}
+                    <li>
+                        <span class="pt-field__evidence-value">{{ item.value_display }}</span>
+                        {% if item.text %}<span class="pt-field__evidence-text">{{ item.text }}</span>{% endif %}
+                        <a class="pt-fs-caption" href="/onboarding/import/{{ session.id }}/documents/{{ item.document_id }}?page={{ item.page }}&next={{ record_url | urlencode }}"
+                           target="_blank" rel="noopener">
+                            Page {{ item.page }} · {{ item.method }} · {{ "%.0f"|format(item.confidence * 100) }}%
+                        </a>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </details>
+            {% endif %}
+        </section>
+        {% endfor %}
+    </div>
+
+    <aside class="pt-record-source" aria-label="Source documents">
+        <div class="pt-record-source__head">
+            <strong>Source documents</strong>
+            <span class="pt-fs-caption pt-text-muted">{{ source_documents|length }} linked</span>
+        </div>
+        <div class="pt-record-source__list">
+            {% for item in source_documents %}
+            <a class="pt-record-source__doc{% if selected_document and item.document.id == selected_document.id %} is-current{% endif %}"
+               href="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}?doc={{ item.document.id }}&page=1">
+                {{ ui.icon("file_text", "sm") }}
+                <span>
+                    <strong>{{ item.document.original_filename }}</strong>
+                    <span class="pt-fs-caption pt-text-muted">{{ item.category_label }}</span>
+                </span>
+            </a>
+            {% endfor %}
+        </div>
+
+        {% if selected_document %}
+        <div class="pt-record-source__preview">
+            {% if selected_is_pdf %}
+            <iframe src="/onboarding/import/{{ session.id }}/documents/{{ selected_document.id }}/file#page={{ selected_page }}"
+                    title="Preview of {{ selected_document.original_filename }}" loading="lazy"></iframe>
+            {% elif selected_is_image %}
+            <img src="/onboarding/import/{{ session.id }}/documents/{{ selected_document.id }}/file"
+                 alt="Preview of {{ selected_document.original_filename }}">
+            {% else %}
+            <div class="pt-record-source__fallback">
+                <p>This file type cannot be previewed in the browser.</p>
+            </div>
+            {% endif %}
+        </div>
+        <div class="pt-record-source__foot">
+            <span class="pt-fs-caption pt-text-muted">
+                Page {{ selected_page }} · {{ selected_document.original_filename }}
+            </span>
+            <a class="pt-fs-caption" href="/onboarding/import/{{ session.id }}/documents/{{ selected_document.id }}?page={{ selected_page }}&next={{ (record_url ~ "?doc=" ~ selected_document.id ~ "&page=" ~ selected_page) | urlencode }}">
+                Open inspector
+            </a>
+        </div>
+        {% else %}
+        <div class="pt-record-source__fallback"><p>No source document is linked to this record.</p></div>
+        {% endif %}
+    </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/record.js?v={{ asset_version() }}"></script>
+{% endblock %}

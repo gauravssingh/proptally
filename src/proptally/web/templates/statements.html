@@ -31,10 +31,6 @@
         meta=header_meta
     ) }}
 
-    {% if message %}
-    {{ ui.alert(variant="info", title="INGESTION", text=message) }}
-    {% endif %}
-
     <div class="pt-explorer{% if selected %} pt-explorer--inspecting{% endif %}">
 
         {# ---- The rail: what the queue holds, and what is waiting in it. -------- #}

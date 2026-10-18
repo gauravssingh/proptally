@@ -67,7 +67,9 @@
     </div>
 </main>
 
-{{ shell.bottomnav(active_page, active_property, review_count) }}
+{{ shell.bottomnav(doors, active_page, active_property, review_count) }}
+{% include "components/toast.html" %}
+<script src="/static/js/toast.js" defer></script>
 {{ shell.shell_scripts() }}
 {% block scripts %}{% endblock %}
 </body>

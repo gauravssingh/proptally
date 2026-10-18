@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Final approval — PropTally{% endblock %}
+
+{% block content %}
+{{ ui.page_header(
+    "Final approval",
+    "This is the last step before PropTally creates permanent records in your portfolio."
+) }}
+
+{% if problems %}
+{{ ui.alert(
+    variant="error",
+    title="Not ready to import",
+    text="Resolve the items below in review, then come back."
+) }}
+<ul class="pt-onboarding-problems">
+    {% for problem in problems %}<li>{{ problem }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+<div class="pt-onboarding-kpis">
+    <div class="pt-onboarding-kpi">
+        <span class="pt-fs-caption pt-text-muted">Accepted</span>
+        <strong class="pt-num">{{ counts.accepted }}</strong>
+        <span class="pt-fs-caption">Will be created</span>
+    </div>
+    <div class="pt-onboarding-kpi">
+        <span class="pt-fs-caption pt-text-muted">Rejected</span>
+        <strong class="pt-num">{{ counts.rejected }}</strong>
+        <span class="pt-fs-caption">Will not be created</span>
+    </div>
+    <div class="pt-onboarding-kpi">
+        <span class="pt-fs-caption pt-text-muted">Deferred</span>
+        <strong class="pt-num">{{ counts.deferred }}</strong>
+        <span class="pt-fs-caption">Left for later</span>
+    </div>
+    <div class="pt-onboarding-kpi">
+        <span class="pt-fs-caption pt-text-muted">Undecided</span>
+        <strong class="pt-num">{{ counts.needs_review }}</strong>
+        <span class="pt-fs-caption">Will not be created</span>
+    </div>
+</div>
+
+{% if approved %}
+{{ ui.section_open("Records that will be created", "Every one was accepted by you.") }}
+<ul class="pt-onboarding-approval-list">
+    {% for proposal in approved %}
+    <li>
+        <span class="pt-onboarding-approval-list__type">{{ entity_labels[proposal.entity_type] }}</span>
+        <strong>{{ proposal.title }}</strong>
+        <a class="pt-fs-caption" href="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}">Open record</a>
+    </li>
+    {% endfor %}
+</ul>
+{{ ui.section_close() }}
+{% endif %}
+
+{% if rejected or deferred or undecided %}
+{{ ui.section_open("Records that will not be created", "Nothing here enters the portfolio.") }}
+<ul class="pt-onboarding-approval-list pt-onboarding-approval-list--muted">
+    {% for proposal in rejected %}
+    <li><span class="pt-onboarding-approval-list__type">Rejected</span><strong>{{ proposal.title }}</strong></li>
+    {% endfor %}
+    {% for proposal in deferred %}
+    <li><span class="pt-onboarding-approval-list__type">Deferred</span><strong>{{ proposal.title }}</strong></li>
+    {% endfor %}
+    {% for proposal in undecided %}
+    <li><span class="pt-onboarding-approval-list__type">Undecided</span><strong>{{ proposal.title }}</strong></li>
+    {% endfor %}
+</ul>
+{{ ui.section_close() }}
+{% endif %}
+
+<section class="pt-card pt-card--xl">
+    <div class="pt-card__body pt-card__body--lg pt-stack-3">
+        <h2 class="pt-card__title">What approval does</h2>
+        <ul class="pt-onboarding-card__list">
+            <li>Creates a property for each accepted property record, with its ledger account.</li>
+            <li>Creates accepted accounts and mortgages through the same domain services the setup wizard uses.</li>
+            <li>Copies every source document into the portfolio's document vault.</li>
+            <li>Leaves opening balances, transactions and anything deferred for you to complete in Guided Setup.</li>
+        </ul>
+        {% if not can_confirm %}
+        {{ ui.alert(
+            variant="neutral",
+            title="Owner approval required",
+            text="Only the portfolio owner can approve an import, because it creates permanent records."
+        ) }}
+        {{ ui.btn("Back to review", variant="secondary", href="/onboarding/import/" ~ session.id ~ "/review") }}
+        {% elif can_approve %}
+        <form method="post" action="/onboarding/import/{{ session.id }}/approve" class="pt-stack-2">
+            {{ csrf_field() }}
+            {{ ui.checkbox_field("confirm",
+                "I have reviewed the accepted records and want PropTally to create them in this portfolio.",
+                value="yes", extra="required") }}
+            <div class="pt-flex pt-gap-2 pt-flex-wrap">
+                {{ ui.btn("Create the portfolio", variant="primary", type="submit", icon_name="check_circle") }}
+                {{ ui.btn("Back to review", variant="ghost", href="/onboarding/import/" ~ session.id ~ "/review") }}
+            </div>
+        </form>
+        {% else %}
+        {{ ui.btn("Back to review", variant="secondary", href="/onboarding/import/" ~ session.id ~ "/review") }}
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

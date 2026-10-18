@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Review proposed portfolio — PropTally{% endblock %}
+
+{% block content %}
+{% set review_url = "/onboarding/import/" ~ session.id ~ "/review" %}
+{{ ui.page_header(
+    "Review what PropTally found",
+    "Processing is not approval. Nothing below is in your portfolio until you accept it and confirm the final import."
+) }}
+
+{% import "onboarding/_journey.html" as journey with context %}
+{% set decided = counts.total - counts.needs_review %}
+{% set review_progress = ((decided * 100 / counts.total) | round | int) if counts.total else 0 %}
+{% set review_meta %}
+    {{ ui.badge(status_label, variant=status_variant, upper=true, pill=true) }}
+    <span class="pt-journey-pill{% if counts.accepted %} pt-journey-pill--success{% endif %}">
+        {{ counts.accepted }} accepted
+    </span>
+    {% if counts.conflicts %}
+    <span class="pt-journey-pill pt-journey-pill--warning">{{ counts.conflicts }} conflicts</span>
+    {% endif %}
+{% endset %}
+{% set review_actions %}
+    {% if can_approve %}
+    {{ ui.btn("Finish", variant="primary",
+              href="/onboarding/import/" ~ session.id ~ "/approve", icon_name="check_circle",
+              title="Review the final summary and create the portfolio") }}
+    {% endif %}
+{% endset %}
+{% set review_secondary_actions %}
+    {{ ui.btn("Back to status", variant="ghost", href="/onboarding/import/" ~ session.id) }}
+    {% if not can_approve %}
+    <span class="pt-fs-caption pt-text-muted">Accept at least one record to continue.</span>
+    {% endif %}
+{% endset %}
+{{ journey.card(
+    steps=journey_steps,
+    icon_name="eye",
+    title="Review the proposed records",
+    text="Every proposed value keeps its source document and page. Accept, edit, reject or defer each record.",
+    meta=review_meta,
+    progress_value=review_progress,
+    progress_label="Records decided",
+    actions=review_actions,
+    secondary_actions=review_secondary_actions
+) }}
+
+<div class="pt-onboarding-kpis">
+    <div class="pt-onboarding-kpi">
+        <span class="pt-fs-caption pt-text-muted">Proposed records</span>
+        <strong class="pt-num">{{ counts.total }}</strong>
+        <span class="pt-fs-caption">{{ counts.accepted }} accepted · {{ counts.needs_review }} undecided</span>
+    </div>
+    <div class="pt-onboarding-kpi">
+        <span class="pt-fs-caption pt-text-muted">Conflicts</span>
+        <strong class="pt-num">{{ counts.conflicts }}</strong>
+        <span class="pt-fs-caption">Values that disagree between documents</span>
+    </div>
+    <div class="pt-onboarding-kpi">
+        <span class="pt-fs-caption pt-text-muted">Documents</span>
+        <strong class="pt-num">{{ documents|length }}</strong>
+        <span class="pt-fs-caption">{{ attention_documents|length }} need attention</span>
+    </div>
+    <div class="pt-onboarding-kpi">
+        <span class="pt-fs-caption pt-text-muted">Deferred</span>
+        <strong class="pt-num">{{ counts.deferred }}</strong>
+        <span class="pt-fs-caption">Left for later; not imported</span>
+    </div>
+</div>
+
+{% if counts.conflicts %}
+{{ ui.alert(
+    variant="warning",
+    title="Some values disagree",
+    text="PropTally never chooses between conflicting values. Open the record, compare the sources, and either pick one or edit the value yourself."
+) }}
+{% endif %}
+
+{% set total = groups.values() | map("length") | sum %}
+{% if total == 0 %}
+{{ ui.empty_state(
+    "No records were proposed",
+    "The documents were processed but no property, mortgage or account information could be recognised. Inspect the files and retry, or continue with manual setup.",
+    action_label="Manual setup",
+    action_href="/setup",
+    icon_name="file_text"
+) }}
+{% else %}
+{% for entity in group_order %}
+{% set items = groups.get(entity, []) %}
+{% if items %}
+{{ ui.section_open(entity_labels[entity] ~ "s" if entity != "PROPERTY" else "Properties",
+                   "Each proposed record can be accepted, edited, rejected or deferred.") }}
+<div class="pt-onboarding-records">
+    {% for item in items %}
+    {% set record_url = "/onboarding/import/" ~ session.id ~ "/records/" ~ item.proposal.id %}
+    <article class="pt-onboarding-record">
+        <div class="pt-onboarding-record__main">
+            <div class="pt-onboarding-record__title">
+                <strong>{{ item.proposal.title }}</strong>
+                {{ ui.badge(item.status_label, variant=item.status_variant, upper=true) }}
+                {% if item.conflicts %}
+                {{ ui.badge(item.conflicts ~ " conflict" ~ ("" if item.conflicts == 1 else "s"), variant="error", upper=true) }}
+                {% endif %}
+                {% if item.association == "AMBIGUOUS" or item.association == "MISSING" %}
+                {{ ui.badge("Property not linked", variant="warning", upper=true) }}
+                {% endif %}
+            </div>
+            <span class="pt-onboarding-record__summary">{{ item.summary }}</span>
+            <div class="pt-onboarding-record__meta">
+                <span class="pt-fs-caption pt-text-muted">{{ item.sources }} source document{{ "" if item.sources == 1 else "s" }}</span>
+            </div>
+        </div>
+        <div class="pt-onboarding-record__actions">
+            {{ ui.btn(
+                ("Resolve " if item.conflicts else "Review ") ~ item.entity_name,
+                variant="primary", size="sm", href=record_url,
+                icon_name=("alert_triangle" if item.conflicts else "eye"),
+                title="Open this proposed record and every value behind it"
+            ) }}
+            {% if item.can_accept %}
+            <form method="post" action="/onboarding/import/{{ session.id }}/records/{{ item.proposal.id }}/decision" class="pt-inline-flex">
+                {{ csrf_field() }}
+                <input type="hidden" name="decision" value="ACCEPT">
+                <input type="hidden" name="return_to" value="{{ review_url }}">
+                {{ ui.btn("Accept", variant="secondary", size="sm", type="submit",
+                          icon_name="check", title="Accept this record without opening it") }}
+            </form>
+            {% endif %}
+        </div>
+    </article>
+    {% endfor %}
+</div>
+{{ ui.section_close() }}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if attention_documents %}
+{{ ui.section_open("Documents requiring attention", "These files were retained; nothing was silently discarded.") }}
+<div class="pt-table-wrap">
+    <table class="pt-table pt-table--compact">
+        <thead><tr><th>File</th><th>Status</th><th>Reason</th><th></th></tr></thead>
+        <tbody>
+            {% for row in attention_documents %}
+            <tr>
+                <td class="pt-table__primary">{{ row.document.original_filename }}</td>
+                <td>{{ ui.badge(row.label, variant=row.variant, upper=true) }}</td>
+                <td class="pt-table__sub">{{ row.document.error or "Manual review needed." }}</td>
+                <td>{{ ui.btn("Inspect", variant="ghost", size="sm",
+                              href="/onboarding/import/" ~ session.id ~ "/documents/" ~ row.document.id) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{{ ui.section_close() }}
+{% endif %}
+
+{% endblock %}

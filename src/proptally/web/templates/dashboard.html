@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "components/ui.html" as ui with context %}
 
-{% block title %}Portfolio Overview — PropTally{% endblock %}
+{% block title %}{{ "Portfolio Overview" if has_properties else "Portfolio Onboarding" }} — PropTally{% endblock %}
 
 {% block content %}
 {% if not has_properties %}
@@ -11,31 +11,14 @@
    --------------------------------------------------------------------------- #}
 {% call ui.page_header(
     "Set up your portfolio",
-    "PropTally reports on the doors, accounts and loans you declare. None are declared yet."
+    "Two ways in. Both end in the same guided setup — choose the one that fits what you already have."
 ) %}{% endcall %}
 
-{{ ui.section_open("Nothing to report on yet",
-                   "Add a property, then its accounts and mortgage details; you can edit them later.") }}
-<div class="pt-stack">
-    <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-3">
-        {% if setup_progress %}
-        {{ ui.btn("Start guided setup", variant="primary", href="/setup", icon_name="sliders") }}
-        {% else %}
-        {{ ui.btn("Set up your portfolio", variant="primary", href="/settings", icon_name="sliders") }}
-        {% endif %}
-        {{ ui.btn("Manage portfolio data", variant="ghost", href="/settings") }}
-    </div>
-    {% if setup_progress %}
-    <div class="pt-stack-2">
-        <div class="pt-flex pt-items-center pt-justify-between">
-            <span class="pt-fs-caption pt-text-muted">{{ setup_progress.done_count }} of {{ setup_progress.total }} steps</span>
-            <strong class="pt-num">{{ setup_progress.percent }}%</strong>
-        </div>
-        {{ ui.progress(setup_progress.percent, "Portfolio setup progress") }}
-    </div>
-    {% endif %}
-</div>
-{{ ui.section_close() }}
+{% if resume and resume.needs_action %}
+{% set resume_show_secondary = false %}
+{% include "onboarding/_resume.html" %}
+{% endif %}
+{% include "onboarding/_paths.html" %}
 {% else %}
 {% if setup_progress and setup_progress.enrolled and not setup_progress.published %}
 {% set next_href = "/setup/" ~ setup_progress.next_step if setup_progress.next_step else "/setup" %}
@@ -63,6 +46,7 @@
 </div>
 {% endif %}
 {% set actions %}
+    {{ ui.btn("Import documents", variant="ghost", href="/onboarding/import", icon_name="upload") }}
     {{ ui.btn("New Transaction", variant="neutral", href="/transactions", icon_name="plus") }}
 {% endset %}
 {% set header_meta %}

@@ -76,7 +76,7 @@ def test_multi_membership_sign_in_prompts_for_workspace_and_switches_as_read_onl
     assert chooser.status_code == 200
     assert "Choose a portfolio" in chooser.text
     assert "First" in chooser.text and "Second" in chooser.text
-    assert "Workspaces" in chooser.text and "Current portfolio" in chooser.text
+    assert "Portfolios" in chooser.text and "Current portfolio" in chooser.text
     assert 'class="pt-brand__meta">First</span>' in chooser.text
     assert chooser.text.count('class="pt-workspace-switcher__select"') >= 1
     assert 'href="/static/css/components.css?v=' in chooser.text

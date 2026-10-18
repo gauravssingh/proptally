@@ -16,6 +16,10 @@ from datetime import UTC, datetime
 from sqlalchemy import CheckConstraint, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
+# Imported for two reasons: the staging tables are control-plane tables, and
+# importing them registers their metadata before ``init_system_schema`` runs.
+from proptally.db.onboarding_models import ONBOARDING_TABLES
+
 #: Portfolio roles. They answer three separate questions, and keeping them separate is
 #: what lets a team share a portfolio without one person's authority leaking to another:
 #:
@@ -307,4 +311,5 @@ SYSTEM_TABLES = (
     PasswordResetToken.__table__,
     AccessEvent.__table__,
     LegacyMigration.__table__,
+    *ONBOARDING_TABLES,
 )

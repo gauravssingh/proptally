@@ -1,0 +1,25 @@
+{% import "onboarding/_journey.html" as journey with context %}
+{% import "components/ui.html" as ui with context %}
+{% if resume %}
+{% set meta %}
+    {{ ui.badge(resume.label, variant=resume.variant, upper=true, pill=true) }}
+    <span class="pt-journey-pill">Started {{ resume.session.created_at | format_date }}</span>
+{% endset %}
+{% set primary_actions %}
+    {{ ui.btn(resume.action, variant="primary", href=resume.href, icon_name="arrow_right") }}
+{% endset %}
+{% set secondary_actions %}
+    {% if resume_show_secondary is not defined or resume_show_secondary %}
+    <a class="pt-btn pt-btn--ghost pt-btn--sm" href="/onboarding/import">Start another import</a>
+    {% endif %}
+{% endset %}
+{{ journey.card(
+    steps=resume.steps,
+    icon_name="file_text",
+    title=resume.headline,
+    text=resume.description,
+    meta=meta,
+    actions=primary_actions,
+    secondary_actions=secondary_actions
+) }}
+{% endif %}

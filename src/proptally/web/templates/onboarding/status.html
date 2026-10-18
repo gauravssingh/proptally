@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Import status — PropTally{% endblock %}
+
+{% block content %}
+{% if session.status == "COMPLETED" %}
+{% set page_subtitle = "The records you approved are now part of this portfolio." %}
+{% elif session.status in ["READY_FOR_REVIEW", "PARTIALLY_PROCESSED", "REVIEWING"] %}
+{% set page_subtitle = "Review the proposed records; nothing enters the portfolio until you approve." %}
+{% elif session.status in ["PROCESSING_FAILED", "PROVISIONING_FAILED"] %}
+{% set page_subtitle = "The import needs attention. The reason is below the summary." %}
+{% else %}
+{% set page_subtitle = "Processing continues in the background. You can close this page and come back." %}
+{% endif %}
+{{ ui.page_header("Document import", page_subtitle) }}
+
+{% import "onboarding/_journey.html" as journey with context %}
+{% set journey_meta %}
+    {{ ui.badge(status_label, variant=status_variant, upper=true, pill=true) }}
+    {% if session.status == "COMPLETED" %}
+    <span class="pt-journey-pill">
+        {{ created.properties }} properties · {{ created.mortgages }} mortgages ·
+        {{ created.accounts }} accounts · {{ created.leases }} leases
+    </span>
+    {% else %}
+    {% if document_counts.get("READY", 0) %}
+    <a class="pt-journey-pill pt-journey-pill--success"
+       href="{{ documents_url }}?doc_status=ready#documents">
+        <span class="pt-journey-pill__dot"></span>
+        {{ document_counts.get("READY", 0) }} ready
+    </a>
+    {% endif %}
+    {% if document_counts.get("DUPLICATE", 0) %}
+    <a class="pt-journey-pill pt-journey-pill--warning"
+       href="{{ documents_url }}?doc_status=duplicate#documents">
+        {{ ui.icon("alert_triangle", "sm") }}
+        {{ document_counts.get("DUPLICATE", 0) }} duplicate
+    </a>
+    {% endif %}
+    {% if document_counts.get("EXTRACTION_FAILED", 0) %}
+    <a class="pt-journey-pill pt-journey-pill--error"
+       href="{{ documents_url }}?doc_status=attention#documents">
+        {{ document_counts.get("EXTRACTION_FAILED", 0) }} failed
+    </a>
+    {% endif %}
+    {% endif %}
+{% endset %}
+
+{% set journey_primary_actions %}
+    {% if is_reviewable %}
+    {{ ui.btn("Review proposed portfolio", variant="primary",
+              href="/onboarding/import/" ~ session.id ~ "/review", icon_name="eye") }}
+    {% elif session.status == "COMPLETED" %}
+    {{ ui.btn("Continue portfolio setup", variant="primary", href="/setup", icon_name="sliders") }}
+    {% elif session.status == "PROVISIONING_FAILED" %}
+    <form method="post" action="/onboarding/import/{{ session.id }}/provision/retry">
+        {{ csrf_field() }}
+        {{ ui.btn("Retry import", variant="primary", type="submit", icon_name="refresh") }}
+    </form>
+    {% elif session.status == "PROCESSING_FAILED" and document_counts.get("EXTRACTION_FAILED", 0) %}
+    <form method="post" action="/onboarding/import/{{ session.id }}/retry">
+        {{ csrf_field() }}
+        {{ ui.btn("Retry failed files", variant="primary", type="submit", icon_name="refresh") }}
+    </form>
+    {% endif %}
+{% endset %}
+
+{% set journey_secondary_actions %}
+    {% if session.status == "COMPLETED" %}
+    {{ ui.btn("Open dashboard", variant="secondary", href="/", icon_name="home") }}
+    {% else %}
+    {% if document_counts.get("EXTRACTION_FAILED", 0) and is_reviewable %}
+    <form method="post" action="/onboarding/import/{{ session.id }}/retry">
+        {{ csrf_field() }}
+        {{ ui.btn("Retry failed files", variant="secondary", type="submit", icon_name="refresh") }}
+    </form>
+    {% endif %}
+    {{ ui.btn("Back to imports", variant="ghost", href="/onboarding") }}
+    {% endif %}
+{% endset %}
+
+{{ journey.card(
+    steps=journey_steps,
+    icon_name=journey_icon,
+    title=journey_title,
+    text=journey_text,
+    meta=journey_meta,
+    progress_value=(progress if total_documents else none),
+    progress_label=("Processing documents one at a time…" if is_processing else ""),
+    note=(session.last_error if session.status in ["PARTIALLY_PROCESSED", "PROCESSING_FAILED", "PROVISIONING_FAILED"] else none),
+    actions=journey_primary_actions,
+    secondary_actions=journey_secondary_actions
+) }}
+
+<a id="documents" class="pt-anchor" aria-hidden="true"></a>
+{{ ui.section_open("Documents in this archive", "Every file is listed, including ones that could not be read. Scroll within the table to see all files.") }}
+{% set q_suffix = ("&q=" ~ (doc_query | urlencode)) if doc_query else "" %}
+<div class="pt-doc-toolbar">
+    <div class="pt-doc-toolbar__filters">
+        {{ ui.chip("All", href=documents_url ~ (("?q=" ~ (doc_query | urlencode)) if doc_query else "") ~ "#documents",
+                   active=(doc_status == "all"), count=filter_counts.all) }}
+        {{ ui.chip("Ready", href=documents_url ~ "?doc_status=ready" ~ q_suffix ~ "#documents",
+                   active=(doc_status == "ready"), count=filter_counts.ready) }}
+        {{ ui.chip("Duplicates", href=documents_url ~ "?doc_status=duplicate" ~ q_suffix ~ "#documents",
+                   active=(doc_status == "duplicate"), count=filter_counts.duplicate) }}
+        {{ ui.chip("Needs attention", href=documents_url ~ "?doc_status=attention" ~ q_suffix ~ "#documents",
+                   active=(doc_status == "attention"), count=filter_counts.attention) }}
+    </div>
+    <form method="get" action="{{ documents_url }}#documents" class="pt-doc-toolbar__search">
+        <input type="hidden" name="doc_status" value="{{ doc_status }}">
+        {{ ui.search_field("q", "Search documents", value=doc_query,
+                           placeholder="Search file, hash or type…", hidden_label=true) }}
+        {{ ui.btn("Search", variant="secondary", size="sm", type="submit") }}
+        {% if doc_query or doc_status != "all" %}
+        <a class="pt-btn pt-btn--ghost pt-btn--sm" href="{{ documents_url }}#documents">Clear</a>
+        {% endif %}
+    </form>
+</div>
+{% if document_rows %}
+<div class="pt-table-wrap pt-table-wrap--scroll">
+    <table class="pt-table">
+        <thead>
+            <tr>
+                <th>File</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th class="pt-table__th-num">Pages</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in document_rows %}
+            <tr>
+                <td>
+                    <div class="pt-table__primary">{{ row.document.original_filename }}</div>
+                    <div class="pt-table__sub">{{ row.size }} · {{ row.document.sha256[:12] }}</div>
+                    {% if row.document.error %}
+                    <div class="pt-onboarding-row-error">{{ row.document.error }}</div>
+                    {% endif %}
+                </td>
+                <td>
+                    <div>{{ row.category_label }}</div>
+                    <div class="pt-table__sub">{{ row.format_label }}</div>
+                </td>
+                <td>{{ ui.badge(row.label, variant=row.variant, upper=true) }}</td>
+                <td class="pt-table__num">{{ row.document.page_count or "—" }}</td>
+                <td class="pt-onboarding-row-actions">
+                    {{ ui.btn("Inspect", variant="ghost", size="sm",
+                              href="/onboarding/import/" ~ session.id ~ "/documents/" ~ row.document.id) }}
+                    {% if row.retryable %}
+                    <form method="post"
+                          action="/onboarding/import/{{ session.id }}/documents/{{ row.document.id }}/retry"
+                          class="pt-inline-flex">
+                        {{ csrf_field() }}
+                        {{ ui.btn("Retry", variant="ghost", size="sm", type="submit") }}
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+{{ ui.empty_state(
+    "No documents match this view",
+    "Try a different filter or clear the search.",
+    action_label="Clear filters",
+    action_href=documents_url ~ "#documents",
+    icon_name="search"
+) }}
+{% endif %}
+<div class="pt-doc-table-footer">
+    <span>Showing {{ filtered_count }} of {{ total_documents }} files</span>
+    {% if doc_status != "all" or doc_query %}
+    <a href="{{ documents_url }}#documents">Clear filters</a>
+    {% endif %}
+</div>
+{{ ui.section_close() }}
+
+{% if failed_jobs %}
+{{ ui.section_open("Processing errors", "Technical detail for the operator. A failed file does not stop the others.") }}
+<ul class="pt-onboarding-errors">
+    {% for job in failed_jobs %}
+    <li><strong>{{ job.kind|replace("_", " ")|title }}</strong> — {{ job.error or "No detail recorded." }}</li>
+    {% endfor %}
+</ul>
+{{ ui.section_close() }}
+{% endif %}
+
+{% if session.status not in ["COMPLETED", "PROVISIONING"] %}
+<section class="pt-danger-zone" aria-labelledby="cancel-import-title">
+    <div class="pt-danger-zone__body">
+        <span class="pt-danger-zone__icon">{{ ui.icon("alert_triangle", "lg") }}</span>
+        <div>
+            <h2 class="pt-danger-zone__title" id="cancel-import-title">Cancel this import</h2>
+            <p class="pt-danger-zone__text">
+                The uploaded archive and its extracted documents are deleted now. The audit
+                rows remain and the portfolio is not changed. Staged documents otherwise
+                expire after 30 days.
+            </p>
+        </div>
+    </div>
+    <form method="post" action="/onboarding/import/{{ session.id }}/cancel"
+          onsubmit="return confirm('Cancel this import and delete its uploaded documents? This cannot be undone.');">
+        {{ csrf_field() }}
+        {{ ui.btn("Cancel and delete documents", variant="destructive", type="submit", icon_name="trash") }}
+    </form>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if is_processing %}
+<script>
+    setTimeout(function () { window.location.reload(); }, 4000);
+</script>
+{% endif %}
+{% endblock %}

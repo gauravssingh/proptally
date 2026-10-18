@@ -15,7 +15,6 @@
     meta=header_meta
 ) %}{% endcall %}
 
-{% if error %}{{ ui.alert(variant="error", title="Not available", text=error) }}{% endif %}
 {% if choose_portfolio %}
 {{ ui.alert(
     variant="info",

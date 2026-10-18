@@ -313,6 +313,7 @@ def get_ingestion_router(templates, get_session_dep):
             context={
                 "active_page": "statements",
                 "message": message,
+                "message_variant": "info",
                 "status": status,
                 "status_facets": [
                     {"key": key, "label": label, "icon": icon, "count": counts[key],

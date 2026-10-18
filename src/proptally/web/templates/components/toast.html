@@ -1,0 +1,32 @@
+{% import "components/ui.html" as ui with context %}
+{% set toast_variant = message_variant if message_variant is defined and message_variant in ["success", "info", "warning", "error"] else "success" %}
+{% set toast_titles = {"success": "Done", "info": "Notice", "warning": "Attention", "error": "Not saved"} %}
+{% if message or error %}
+<div class="pt-toast-region" data-toast-region aria-live="polite" aria-atomic="false">
+    {% if message %}
+    <div class="pt-toast pt-toast--{{ toast_variant }}" data-toast
+         role="{{ 'alert' if toast_variant in ['warning', 'error'] else 'status' }}">
+        <span class="pt-toast__icon">{{ ui.icon("alert_triangle" if toast_variant in ["warning", "error"] else ("info" if toast_variant == "info" else "check_circle"), "sm") }}</span>
+        <div class="pt-toast__body">
+            <strong class="pt-toast__title">{{ toast_titles[toast_variant] }}</strong>
+            <span class="pt-toast__text">{{ message }}</span>
+        </div>
+        <button type="button" class="pt-toast__close" data-toast-close aria-label="Dismiss notification">
+            {{ ui.icon("close", "sm") }}
+        </button>
+    </div>
+    {% endif %}
+    {% if error %}
+    <div class="pt-toast pt-toast--error" data-toast role="alert">
+        <span class="pt-toast__icon">{{ ui.icon("alert_triangle", "sm") }}</span>
+        <div class="pt-toast__body">
+            <strong class="pt-toast__title">Not saved</strong>
+            <span class="pt-toast__text">{{ error }}</span>
+        </div>
+        <button type="button" class="pt-toast__close" data-toast-close aria-label="Dismiss notification">
+            {{ ui.icon("close", "sm") }}
+        </button>
+    </div>
+    {% endif %}
+</div>
+{% endif %}

@@ -70,23 +70,27 @@ def format_date(d: Optional[date]) -> str:
 
 
 def asset_version() -> str:
-    """Cache-busting version for the design-system stylesheets.
+    """Cache-busting version for the design-system stylesheets and scripts.
 
     Static files are served with `Last-Modified` and `ETag` but no `Cache-Control`, so
-    browsers fall back to heuristic freshness and can keep serving a stylesheet that has
-    already changed — the change is then invisible until a hard refresh. Appending this
-    to the link's URL makes a changed stylesheet a different URL, so the fix reaches the
-    reader on a normal reload. It is derived from the files themselves, so it moves with
-    them and needs no manual bump.
+    browsers fall back to heuristic freshness and can keep serving a stylesheet or
+    script that has already changed — the change is then invisible until a hard
+    refresh. Appending this to the asset URL makes a changed file a different URL, so
+    the fix reaches the reader on a normal reload. It is derived from the files
+    themselves, so it moves with them and needs no manual bump.
     """
     digest = hashlib.sha256()
-    for name in ("tokens.css", "base.css", "components.css"):
-        path = Path(__file__).resolve().parent / "static" / "css" / name
+    root = Path(__file__).resolve().parent / "static"
+    assets = [
+        *(root / "css" / name for name in ("tokens.css", "base.css", "components.css", "auth.css")),
+        *sorted((root / "js").glob("*.js")),
+    ]
+    for path in assets:
         try:
             stat = path.stat()
         except OSError:
             continue
-        digest.update(f"{name}:{stat.st_mtime_ns}:{stat.st_size}".encode())
+        digest.update(f"{path.relative_to(root)}:{stat.st_mtime_ns}:{stat.st_size}".encode())
     return digest.hexdigest()[:10]
 
 

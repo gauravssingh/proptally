@@ -15,7 +15,6 @@
         subtitle_cls="pt-page-header__subtitle--compact"
     ) }}
 
-    {% if message %}{{ ui.alert(message_variant, text=message) }}{% endif %}
 
     <form class="pt-flex pt-items-end pt-gap-2" method="get" action="/documents" role="search">
         {% if current_property %}<input type="hidden" name="property" value="{{ current_property.key }}">{% endif %}

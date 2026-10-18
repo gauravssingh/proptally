@@ -24,8 +24,6 @@
     meta=header_meta
 ) %}{{ header_actions }}{% endcall %}
 
-{% if message %}{{ ui.alert(variant="success", title="Saved", text=message) }}{% endif %}
-{% if error %}{{ ui.alert(variant="error", title="Not saved", text=error) }}{% endif %}
 
 {# ---------------------------------------------------------------------------
    Empty portfolio: the one action that matters is the first door.
@@ -392,6 +390,21 @@
 </div>
 {% endif %}
 {{ ui.section_close() }}
+
+{% set who = current_context() %}
+{% if who and who.is_owner %}
+{{ ui.section_open(
+    "Portfolio data",
+    "Export the whole portfolio as a database-and-documents archive, or remove it permanently. Both actions apply to the entire portfolio, not one door."
+) }}
+<div class="pt-flex pt-flex-wrap pt-items-center pt-gap-3">
+    {{ ui.btn("Export portfolio", variant="secondary",
+              href="/portfolios/" ~ who.tenant.id ~ "/export", icon_name="download") }}
+    {{ ui.btn("Delete portfolio", variant="ghost",
+              href="/portfolios/" ~ who.tenant.id ~ "/delete", icon_name="trash") }}
+</div>
+{{ ui.section_close() }}
+{% endif %}
 
 {# ---------------------------------------------------------------------------
    Modals

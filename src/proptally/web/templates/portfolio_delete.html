@@ -9,7 +9,6 @@
     "This portfolio is its own database. Removing it destroys that database and its document store, and nothing is kept."
 ) %}{% endcall %}
 
-{% if error %}{{ ui.alert(variant="error", title="Not removed", text=error) }}{% endif %}
 
 <div class="pt-stack pt-gap-6">
     {{ ui.section_open("What would be destroyed") }}

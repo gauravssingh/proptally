@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Bring your portfolio with you — PropTally{% endblock %}
+
+{% block content %}
+{{ ui.page_header(
+    "Set up your portfolio",
+    "Two ways in. Both end in the same guided setup — choose the one that fits what you already have."
+) }}
+
+{% include "onboarding/_resume.html" %}
+
+{% include "onboarding/_paths.html" %}
+
+<section class="pt-onboarding-privacy">
+    <h2 class="pt-onboarding-privacy__title">Where your documents go</h2>
+    <p>
+        Documents are stored outside the web root, under this installation's own storage, and
+        are readable only by your signed-in account. Text extraction runs on this server.
+        PropTally does not send a document to an external service unless the operator has
+        explicitly configured a provider. Nothing is written into your portfolio's books until
+        you approve the proposed records.
+    </p>
+</section>
+{% endblock %}

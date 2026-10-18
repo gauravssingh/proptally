@@ -23,6 +23,11 @@ from proptally.db.models import (
     PropertyValuation,
     VendorRule,
 )
+from proptally.db.onboarding_models import (
+    ONBOARDING_COMPLETED,
+    ONBOARDING_READY,
+    OnboardingSession,
+)
 from proptally.db.system_models import ROLE_READ_ONLY, TenantMembership, User
 from proptally.web.auth import cookie_name, hash_password, issue_session
 
@@ -418,3 +423,45 @@ def _read_only_client(signed_in) -> TestClient:
     client.__enter__()
     client.cookies.set(cookie_name(), token)
     return client
+
+
+def test_new_portfolio_nav_is_onboarding_and_shows_an_actionable_import(owner):
+    """An empty portfolio is onboarding, not an overview, and resumes an existing import.
+
+    The Overview link only means something once a door exists. Until then the
+    navigation calls the destination Portfolio Onboarding, and the empty overview
+    surfaces the import that is waiting for review instead of hiding it on another
+    screen. Finished imports are not resurfaced.
+    """
+    signed_in = owner()
+    with Session(signed_in.control_engine) as session:
+        user = session.exec(select(User).where(User.email == signed_in.email)).first()
+        session.add(OnboardingSession(
+            id="onb_dashboard_resume",
+            user_id=user.id,
+            tenant_id=signed_in.tenant_id,
+            status=ONBOARDING_READY,
+        ))
+        session.commit()
+
+    page = signed_in.client.get("/").text
+    assert "Portfolio Onboarding" in page
+    assert 'href="/onboarding"' in page
+    assert "Portfolio Overview" not in page
+    assert "An import is ready for your review" in page
+    assert 'href="/onboarding/import/onb_dashboard_resume/review"' in page
+
+    with Session(signed_in.control_engine) as session:
+        onboarding = session.get(OnboardingSession, "onb_dashboard_resume")
+        onboarding.status = ONBOARDING_COMPLETED
+        session.add(onboarding)
+        session.commit()
+
+    finished = signed_in.client.get("/").text
+    assert "An import is ready for your review" not in finished
+
+    saved = signed_in.post("/properties/create", PROPERTY_FORM, follow_redirects=False)
+    assert saved.status_code == 303
+    overview = signed_in.client.get("/").text
+    assert "Portfolio Overview" in overview
+    assert "Portfolio Onboarding" not in overview

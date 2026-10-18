@@ -52,14 +52,15 @@
             {% endfor %}
         </ol>
 
+        <a class="pt-btn pt-btn--ghost pt-btn--sm pt-btn--block" href="/onboarding">
+            Compare both setup paths
+        </a>
         <a class="pt-btn pt-btn--ghost pt-btn--sm pt-btn--block" href="/settings">
             Manage all portfolio data
         </a>
     </aside>
 
     <section class="pt-wizard__body" aria-labelledby="setup-step-title">
-        {% if message %}{{ ui.alert(variant="success", title="Saved", text=message) }}{% endif %}
-        {% if error %}{{ ui.alert(variant="error", title="Not saved", text=error) }}{% endif %}
 
         {% if progress.publishable and not progress.published %}
         <div class="pt-wizard__publish">
@@ -92,6 +93,20 @@
             <h2 class="pt-wizard__title" id="setup-step-title">{{ step.title }}</h2>
             <p class="pt-wizard__why">{{ step.why }}</p>
         </div>
+
+        {% if step.key == "property" and not existing_properties %}
+        <div class="pt-onboarding-inline-choice">
+            <div>
+                <strong>Already have the paperwork?</strong>
+                <span class="pt-fs-caption pt-text-muted">
+                    Upload a ZIP of your deeds, mortgage and bank statements. PropTally proposes the
+                    records and you approve them — then this wizard asks only for what is still missing.
+                </span>
+            </div>
+            {{ ui.btn("Import documents instead", variant="secondary", size="sm",
+                      href="/onboarding/import", icon_name="upload") }}
+        </div>
+        {% endif %}
 
         {% if not can_work %}
         {{ ui.alert(

@@ -1,0 +1,40 @@
+{% import "components/ui.html" as ui with context %}
+
+<div class="pt-onboarding-choice">
+    <section class="pt-onboarding-card">
+        <span class="pt-onboarding-card__icon">{{ ui.icon("sliders", "lg") }}</span>
+        <h2 class="pt-onboarding-card__title">Set up manually</h2>
+        <p class="pt-onboarding-card__text">
+            Enter your properties, accounts and mortgages one at a time. Best when your records
+            are in your head, in a spreadsheet, or spread across a few documents.
+        </p>
+        <ul class="pt-onboarding-card__list">
+            <li>Guided steps, saved as you go</li>
+            <li>Works for a free-and-clear property</li>
+            <li>Nothing to upload</li>
+        </ul>
+        <div class="pt-onboarding-card__actions">
+            {{ ui.btn("Start guided setup", variant="primary", href="/setup", icon_name="sliders") }}
+            {{ ui.btn("Manage data directly", variant="ghost", href="/settings") }}
+        </div>
+    </section>
+
+    <section class="pt-onboarding-card pt-onboarding-card--accent">
+        <span class="pt-onboarding-card__icon">{{ ui.icon("file_text", "lg") }}</span>
+        <h2 class="pt-onboarding-card__title">Import existing documents</h2>
+        <p class="pt-onboarding-card__text">
+            Upload a ZIP of your property and financial documents. PropTally reads them,
+            groups what belongs together, and shows you every proposed value with the document
+            and page it came from — before anything enters your portfolio.
+        </p>
+        <ul class="pt-onboarding-card__list">
+            <li>Sale deeds, mortgage statements, bank statements, leases, tax and insurance</li>
+            <li>Processes in the background; you can close the browser</li>
+            <li>You accept, edit, reject or defer every record</li>
+        </ul>
+        <div class="pt-onboarding-card__actions">
+            {{ ui.btn("Import documents", variant="primary", href="/onboarding/import", icon_name="upload") }}
+            <span class="pt-fs-caption pt-text-muted">ZIP archives only · documents stay on this server</span>
+        </div>
+    </section>
+</div>

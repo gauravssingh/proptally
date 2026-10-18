@@ -18,8 +18,6 @@
     "A single-use code that starts exactly one new portfolio. Mint one per person you are letting in; it confers no platform authority and no access to anybody else's books."
 ) }}
 
-{% if message %}{{ ui.alert(variant="success", title="Done", text=message) }}{% endif %}
-{% if error %}{{ ui.alert(variant="error", title="Not done", text=error) }}{% endif %}
 
 {% if code %}
 {{ ui.alert(

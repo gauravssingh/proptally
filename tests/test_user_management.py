@@ -266,7 +266,7 @@ def test_the_account_screen_and_sign_out_are_reachable_from_the_shell(owner):
     # the label the navigation module declares for it.
     administration = [
         item
-        for section in navigation.primary_sections()
+        for section in navigation.primary_sections() + navigation.financial_sections()
         for item in section.items
         if item.href == "/account"
     ]

@@ -51,8 +51,7 @@
 {%- endmacro %}
 
 
-{% macro workspace_switcher(select_id) -%}
-{% set portfolios = nav_portfolios() %}
+{% macro workspace_switcher(select_id, portfolios) -%}
 {% if portfolios | length > 1 %}
 {% set return_to = request.url.path ~ ("?" ~ request.url.query if request.url.query else "") %}
 <div class="pt-workspace-switcher">
@@ -100,17 +99,21 @@
         {{ brand() }}
         {{ mode_badge() }}
     </div>
-    {{ workspace_switcher("sidebar-portfolio") }}
+    {% set portfolios = nav_portfolios() %}
+    {{ workspace_switcher("sidebar-portfolio", portfolios) }}
 
+    {% set journey = nav.journey_state() %}
     <nav class="pt-nav">
-        {% for section in nav.primary_sections() %}
+        {% for section in nav.primary_sections(journey, portfolios | length) %}
         {{ nav_section(section, active_page, review_count) }}
         {% endfor %}
 
-        <div class="pt-nav__section">Portfolio doors ({{ doors | length }})</div>
+        {% if doors %}
+        <div class="pt-nav__section">Properties ({{ doors | length }})</div>
         {% for door in nav.door_items(doors, active_property) %}{{ door_nav_item(door) }}{% endfor %}
+        {% endif %}
 
-        {% for section in nav.financial_sections() %}
+        {% for section in nav.financial_sections(journey) %}
         {{ nav_section(section, active_page, review_count) }}
         {% endfor %}
 
@@ -207,17 +210,21 @@
                 {{ ui.icon("close", "lg") }}
             </button>
         </div>
-        {{ workspace_switcher("drawer-portfolio") }}
+        {% set portfolios = nav_portfolios() %}
+        {{ workspace_switcher("drawer-portfolio", portfolios) }}
 
+        {% set journey = nav.journey_state() %}
         <nav class="pt-nav pt-drawer__body">
-            {% for section in nav.primary_sections() %}
+            {% for section in nav.primary_sections(journey, portfolios | length) %}
             {{ nav_section(section, active_page, review_count) }}
             {% endfor %}
 
-            <div class="pt-nav__section">Portfolio doors ({{ doors | length }})</div>
+            {% if doors %}
+            <div class="pt-nav__section">Properties ({{ doors | length }})</div>
             {% for door in nav.door_items(doors, active_property) %}{{ door_nav_item(door) }}{% endfor %}
+            {% endif %}
 
-            {% for section in nav.financial_sections() %}
+            {% for section in nav.financial_sections(journey) %}
             {{ nav_section(section, active_page, review_count) }}
             {% endfor %}
 
@@ -238,11 +245,11 @@
 {# ---------------------------------------------------------------------------
    A5. Mobile bottom navigation
    --------------------------------------------------------------------------- #}
-{% macro bottomnav(active_page, active_property, review_count) -%}
-{% set items = nav.bottom_items() %}
+{% macro bottomnav(doors, active_page, active_property, review_count) -%}
+{% set items = nav.bottom_items(nav.journey_state()) %}
 <nav class="pt-bottomnav" aria-label="Mobile Bottom Navigation">
     {% for item in items %}
-        {% if loop.index == 2 %}
+        {% if loop.index == 2 and doors %}
         <button type="button" class="pt-bottomnav__item{% if active_property %} is-active{% endif %}"
                 data-drawer-open aria-controls="mobileDrawer" aria-expanded="false">
             {{ ui.icon("bank", "lg") }}

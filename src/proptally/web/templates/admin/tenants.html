@@ -9,8 +9,6 @@
     "Every portfolio on this installation. Counts, storage and access only — no portfolio's figures are read or shown."
 ) }}
 
-{% if message %}{{ ui.alert(variant="success", title="Done", text=message) }}{% endif %}
-{% if error %}{{ ui.alert(variant="error", title="Not done", text=error) }}{% endif %}
 
 {{ ui.section_open("All portfolios", "Oldest first. Open one to manage its people, roles and invitations.") }}
     {% if tenants %}

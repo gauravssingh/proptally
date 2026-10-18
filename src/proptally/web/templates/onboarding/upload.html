@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Upload documents — PropTally{% endblock %}
+
+{% block content %}
+{{ ui.page_header(
+    "Import existing documents",
+    "Upload one ZIP archive containing the documents for your properties. You will review everything PropTally proposes before any records are created."
+) }}
+
+{% if resume %}
+{% set resume_show_secondary = false %}
+{% include "onboarding/_resume.html" %}
+{% else %}
+{% import "onboarding/_journey.html" as journey with context %}
+{% set upload_actions %}
+    {{ ui.btn("Choose a ZIP", variant="primary", href="#upload-form", icon_name="upload") }}
+{% endset %}
+{{ journey.card(
+    steps=upload_steps,
+    icon_name="upload",
+    title="Upload documents",
+    text="One ZIP archive. Files may be in folders; processing continues in the background.",
+    actions=upload_actions
+) }}
+{% endif %}
+
+{% if not can_work %}
+{{ ui.alert(
+    variant="neutral",
+    title="Read-only role",
+    text="Your role may read this portfolio but not import documents into it."
+) }}
+{% else %}
+<section class="pt-card pt-card--xl">
+    <div class="pt-card__body pt-card__body--lg pt-stack-3">
+        <form action="/onboarding/import/upload" method="post" enctype="multipart/form-data"
+              class="pt-stack" id="upload-form" data-onboarding-upload>
+            {{ csrf_field() }}
+            <label class="pt-dropzone" data-dropzone for="archive">
+                <span class="pt-dropzone__icon">{{ ui.icon("upload", "lg") }}</span>
+                <strong class="pt-dropzone__title">Drop your ZIP archive here</strong>
+                <span class="pt-dropzone__hint">or</span>
+                <span class="pt-btn pt-btn--secondary pt-btn--sm">Browse files</span>
+                <input type="file" id="archive" name="archive" accept=".zip,application/zip"
+                       required class="pt-dropzone__input" data-dropzone-input>
+                <span class="pt-dropzone__filename" data-dropzone-filename></span>
+            </label>
+
+            <div class="pt-upload-progress" data-upload-progress hidden>
+                <div class="pt-flex pt-items-center pt-justify-between">
+                    <span class="pt-fs-caption pt-text-muted" data-upload-status>Uploading…</span>
+                    <strong class="pt-num" data-upload-percent>0%</strong>
+                </div>
+                {{ ui.progress(0, "Upload progress") }}
+            </div>
+
+            <div class="pt-onboarding-actions">
+                {{ ui.btn("Upload and process", variant="primary", type="submit", icon_name="upload") }}
+                {{ ui.btn("Choose the manual path instead", variant="ghost", href="/onboarding") }}
+            </div>
+        </form>
+
+        <div class="pt-onboarding-facts">
+            <div>
+                <span class="pt-fs-caption pt-text-muted">Archive</span>
+                <strong>ZIP · up to {{ max_archive }}</strong>
+                <span class="pt-fs-caption">One archive at a time. Files may be in folders.</span>
+            </div>
+            <div>
+                <span class="pt-fs-caption pt-text-muted">Inside</span>
+                <strong>Up to {{ max_files }} files</strong>
+                <span class="pt-fs-caption">Each up to {{ max_file }}; {{ max_extracted }} extracted in total.</span>
+            </div>
+            <div>
+                <span class="pt-fs-caption pt-text-muted">Accepted</span>
+                <strong>{{ extensions }}</strong>
+                <span class="pt-fs-caption">Unknown files are retained and flagged, never discarded.</span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="pt-onboarding-notes">
+    <h2>What happens next</h2>
+    <ol>
+        <li>The archive is checked for unsafe paths, oversized content and ZIP bombs.</li>
+        <li>Each document is classified and read in the background — one job per file.</li>
+        <li>Related documents are reconciled, and disagreements are shown as conflicts.</li>
+        <li>You review each record against the original document and page.</li>
+        <li>Only what you approve is used to create the portfolio through PropTally's normal setup.</li>
+    </ol>
+</section>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/onboarding.js?v={{ asset_version() }}"></script>
+{% endblock %}

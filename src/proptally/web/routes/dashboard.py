@@ -19,6 +19,7 @@ from proptally.domain.accounting.metrics import (
 from proptally.domain.setup_progress import evaluate as evaluate_setup
 from proptally.web.auth import current_context
 from proptally.web.helpers import period_label
+from proptally.web.onboarding_resume import latest_resume
 
 
 def _debt_basis_label(equity) -> str:
@@ -82,14 +83,20 @@ def get_dashboard_router(templates, get_session_dep):
         # populated rendering below is untouched.
         context = current_context()
         has_properties = session.exec(
-            select(Property).where(Property.is_active == True)  # noqa: E712
+            select(Property).where(Property.is_active.is_(True))
         ).first() is not None
+        resume = None
+        if not has_properties and context is not None:
+            resume = latest_resume(
+                request.app.state.control_engine, context.user.id, context.tenant.id
+            )
 
         return templates.TemplateResponse(
             request=request,
             name="dashboard.html",
             context={
-                "active_page": "dashboard",
+                "active_page": "dashboard" if has_properties else "onboarding",
+                "resume": resume,
                 "equity": equity,
                 "financials": financials,
                 "review_count": review_count,

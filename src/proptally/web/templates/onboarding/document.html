@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}{{ document.original_filename }} — Source document — PropTally{% endblock %}
+
+{% block content %}
+{% set header_meta %}
+    {{ ui.badge(document_label, variant=document_variant, upper=true) }}
+    {{ ui.badge(format_label, variant="neutral", upper=true) }}
+{% endset %}
+{{ ui.page_header(document.original_filename, category_label, meta=header_meta) }}
+
+<div class="pt-record-actions">
+    {{ ui.btn(back_label, variant="ghost", size="sm",
+              href=back_href, icon_name="chevron_left") }}
+    <span class="pt-fs-caption pt-text-muted">{{ size }} · {{ document.page_count }} page{{ "" if document.page_count == 1 else "s" }}</span>
+</div>
+
+{% if document.error %}
+{{ ui.alert(variant="warning", title="Processing note", text=document.error|e) }}
+{% endif %}
+
+<div class="pt-document-layout">
+    <div class="pt-document-preview">
+        {% if is_pdf %}
+        <iframe src="/onboarding/import/{{ session.id }}/documents/{{ document.id }}/file#page={{ page }}"
+                title="Preview of {{ document.original_filename }}" loading="lazy"></iframe>
+        {% elif is_image %}
+        <img src="/onboarding/import/{{ session.id }}/documents/{{ document.id }}/file"
+             alt="Preview of {{ document.original_filename }}">
+        {% else %}
+        <div class="pt-record-source__fallback">
+            <p>This file cannot be previewed in the browser.</p>
+            <a class="pt-btn pt-btn--secondary pt-btn--sm"
+               href="/onboarding/import/{{ session.id }}/documents/{{ document.id }}/file">Open file</a>
+        </div>
+        {% endif %}
+    </div>
+
+    <aside class="pt-document-side">
+        <section class="pt-document-section">
+            <h2>Evidence from this document</h2>
+            {% if evidence %}
+            <ul class="pt-evidence-list">
+                {% for item in evidence %}
+                <li>
+                    <span class="pt-fs-caption pt-text-muted">{{ item.field }} · page {{ item.page }}</span>
+                    <strong>{{ item.display }}</strong>
+                    {% if item.text %}<span class="pt-field__evidence-text">{{ item.text }}</span>{% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="pt-fs-caption pt-text-muted">No proposed value cites this document yet.</p>
+            {% endif %}
+        </section>
+
+        <section class="pt-document-section">
+            <h2>Related proposed records</h2>
+            {% if related %}
+            <ul class="pt-onboarding-related">
+                {% for proposal in related %}
+                <li>
+                    <a href="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}">
+                        {{ proposal.title }}
+                    </a>
+                    <span class="pt-fs-caption pt-text-muted">{{ proposal.entity_type|title }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="pt-fs-caption pt-text-muted">No proposal was built from this file.</p>
+            {% endif %}
+        </section>
+
+        <section class="pt-document-section">
+            <h2>File details</h2>
+            <dl class="pt-document-meta">
+                <dt>Original name</dt><dd>{{ document.original_filename }}</dd>
+                <dt>Stored as</dt><dd>{{ document.internal_filename }}</dd>
+                <dt>SHA-256</dt><dd class="pt-mono">{{ document.sha256 }}</dd>
+                <dt>MIME type</dt><dd>{{ document.mime_type }}</dd>
+                <dt>Extraction</dt><dd>{{ document.extraction_method or "Not read" }}</dd>
+            </dl>
+        </section>
+    </aside>
+</div>
+{% endblock %}

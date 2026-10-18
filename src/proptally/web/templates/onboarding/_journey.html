@@ -1,0 +1,55 @@
+{% import "components/ui.html" as ui with context %}
+
+{% macro card(steps, icon_name, title, text, meta=None, progress_value=None,
+              progress_label="", note=None, actions="", secondary_actions="") -%}
+<section class="pt-journey-card pt-journey-card--step" aria-labelledby="journey-title">
+    <span class="pt-journey-card__icon">{{ ui.icon(icon_name, "lg") }}</span>
+    <div class="pt-journey-card__body">
+        <ol class="pt-journey-steps" aria-label="Onboarding progress">
+            {% for step in steps %}
+            <li class="pt-journey-steps__item is-{{ step.state }}">
+                <span class="pt-journey-steps__marker" aria-hidden="true">
+                    {%- if step.state == "done" -%}✓{%- else -%}{{ loop.index }}{%- endif -%}
+                </span>
+                <span class="pt-journey-steps__label">{{ step.label }}</span>
+            </li>
+            {% endfor %}
+        </ol>
+
+        <div class="pt-journey-card__intro">
+            <div class="pt-journey-card__copy">
+                <h2 class="pt-journey-card__title" id="journey-title">{{ title }}</h2>
+                <p class="pt-journey-card__text">{{ text }}</p>
+            </div>
+            {% if meta %}
+            <div class="pt-journey-card__meta">{{ meta | safe }}</div>
+            {% endif %}
+        </div>
+
+        {% if note %}
+        <p class="pt-journey-card__note">{{ note }}</p>
+        {% endif %}
+
+        {% if progress_value is not none %}
+        <div class="pt-journey-card__progress">
+            <div class="pt-flex pt-items-center pt-justify-between">
+                <span class="pt-fs-caption pt-text-muted">{{ progress_label }}</span>
+                <strong class="pt-num">{{ progress_value }}%</strong>
+            </div>
+            {{ ui.progress(progress_value, "Onboarding progress") }}
+        </div>
+        {% endif %}
+    </div>
+
+    {% if actions or secondary_actions %}
+    <div class="pt-journey-card__actions">
+        {% if secondary_actions %}
+        <div class="pt-journey-card__actions-secondary">{{ secondary_actions | safe }}</div>
+        {% endif %}
+        {% if actions %}
+        <div class="pt-journey-card__actions-primary">{{ actions | safe }}</div>
+        {% endif %}
+    </div>
+    {% endif %}
+</section>
+{%- endmacro %}

@@ -56,6 +56,7 @@ from proptally.web.routes.auth import get_auth_router
 from proptally.web.routes.dashboard import get_dashboard_router
 from proptally.web.routes.ingestion import get_ingestion_router
 from proptally.web.routes.mortgages import get_mortgages_router
+from proptally.web.routes.onboarding import get_onboarding_router
 from proptally.web.routes.portfolios import get_portfolios_router
 from proptally.web.routes.properties import get_properties_router
 from proptally.web.routes.reconciliation import get_reconciliation_router
@@ -64,6 +65,8 @@ from proptally.web.routes.setup import get_setup_router
 from proptally.web.routes.tax import get_tax_router
 from proptally.web.routes.transactions import get_transactions_router
 from proptally.web.routes.vault import get_vault_router
+from proptally.onboarding.store import OnboardingStore
+from proptally.onboarding.worker import OnboardingWorker, worker_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +87,19 @@ def create_app(
     control_engine = get_system_engine(system_db_url)
     tenant_manager = TenantManager(db_url=db_url, storage_root_path=storage_root)
     rate_limiter = LoginRateLimiter()
+    onboarding_store = OnboardingStore(tenant_manager.root)
+    onboarding_worker = OnboardingWorker(control_engine, tenant_manager, onboarding_store)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         init_system_schema(control_engine)
         retry_incomplete_provisioning(control_engine, tenant_manager)
-        yield
+        if worker_enabled():
+            onboarding_worker.start()
+        try:
+            yield
+        finally:
+            onboarding_worker.stop()
 
     app = FastAPI(
         title="PropTally",
@@ -309,6 +319,7 @@ def create_app(
         get_setup_router(templates, get_session),
         get_ingestion_router(templates, get_session),
         get_vault_router(templates, get_session),
+        get_onboarding_router(templates, control_engine, tenant_manager, get_session),
     ]
     for router in protected:
         app.include_router(router, dependencies=[Depends(auth_dep)])
@@ -322,6 +333,8 @@ def create_app(
     # Exposed for inspection: this limiter is deliberately per-process, which is the one
     # behaviour a multi-worker deployment changes (see ADR-010).
     app.state.login_rate_limiter = rate_limiter
+    app.state.onboarding_store = onboarding_store
+    app.state.onboarding_worker = onboarding_worker
 
     return app
 

@@ -9,8 +9,6 @@
     "Every account on this installation, the portfolios it reaches, and whether it is signed in. An account is a person; a membership is their access to one portfolio."
 ) }}
 
-{% if message %}{{ ui.alert(variant="success", title="Done", text=message) }}{% endif %}
-{% if error %}{{ ui.alert(variant="error", title="Not done", text=error) }}{% endif %}
 
 {{ ui.section_open("Accounts", "Oldest first. A person may belong to more than one portfolio.") }}
     {% if people %}

@@ -45,8 +45,6 @@
     </div>
 {% endcall %}
 
-{% if message %}{{ ui.alert(variant="success", title="Done", text=message) }}{% endif %}
-{% if error %}{{ ui.alert(variant="error", title="Not saved", text=error) }}{% endif %}
 
 {% if invite_token %}
 {{ ui.alert(
