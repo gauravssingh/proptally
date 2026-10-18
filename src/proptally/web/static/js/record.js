@@ -52,12 +52,23 @@
     Array.prototype.forEach.call(
         document.querySelectorAll("details.pt-extracted-field__edit, details.pt-field__edit"),
         function (details) {
-            var label = details.querySelector("[data-edit-label]");
             var read = details.closest(".pt-extracted-field__read, .pt-field__read");
 
             function sync() {
-                if (label) label.textContent = details.open ? "Cancel" : "Edit";
                 if (read) read.classList.toggle("is-editing", details.open);
+                var action = details.open ? "Cancel editing" : "Edit value";
+                var summary = details.querySelector("summary");
+                if (summary) {
+                    summary.setAttribute("aria-label", action);
+                    summary.setAttribute("title", action);
+                }
+                if (!details.open) return;
+                var input = details.querySelector(
+                    "form input:not([type=hidden]), form select, form textarea"
+                );
+                if (input) {
+                    window.requestAnimationFrame(function () { input.focus(); });
+                }
             }
 
             details.addEventListener("toggle", sync);

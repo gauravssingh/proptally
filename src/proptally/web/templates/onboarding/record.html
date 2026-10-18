@@ -110,8 +110,10 @@
                     {% endif %}
                 </div>
                 <details class="pt-extracted-field__edit">
-                    <summary class="pt-btn pt-btn--ghost pt-btn--sm">
-                        {{ ui.icon("edit", "sm") }} <span data-edit-label>Edit</span>
+                    <summary class="pt-btn pt-btn--ghost pt-btn--icon pt-btn--sm"
+                             aria-label="Edit value" title="Edit value">
+                        <span class="pt-field-edit-icon">{{ ui.icon("edit", "sm") }}</span>
+                        <span class="pt-field-cancel-icon">{{ ui.icon("close", "sm") }}</span>
                     </summary>
                     <form method="post" action="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}/field"
                           class="pt-extracted-field__form" data-record-field-form>
@@ -137,13 +139,13 @@
                         {{ ui.text_field("value", field.label, value=field.input_value, id=field.name, hidden_label=true) }}
                         {% endif %}
                         <div class="pt-extracted-field__form-actions">
+                            {{ ui.icon_btn("Mark unknown", "info", variant="ghost", size="sm",
+                                           type="submit",
+                                           title="Leave this field empty; it will not be treated as a fact.",
+                                           attrs='name="action" value="unknown"') }}
                             {{ ui.icon_btn("Save this value", "check", variant="primary", size="sm",
                                            type="submit", title="Save this value",
                                            attrs='name="action" value="save"') }}
-                            <button class="pt-btn pt-btn--ghost pt-btn--sm" type="submit" name="action" value="unknown"
-                                    title="Leave this field empty; it will not be treated as a fact.">
-                                Mark unknown
-                            </button>
                         </div>
                         <p class="pt-extracted-field__help">
                             The check saves only this field. “Unknown” leaves it empty for later.
@@ -215,9 +217,9 @@
             <span class="pt-fs-caption pt-text-muted">
                 Page {{ selected_page }} · {{ selected_document.original_filename }}
             </span>
-            <a class="pt-fs-caption" href="/onboarding/import/{{ session.id }}/documents/{{ selected_document.id }}?page={{ selected_page }}&next={{ (record_url ~ "?doc=" ~ selected_document.id ~ "&page=" ~ selected_page) | urlencode }}">
-                Open inspector
-            </a>
+            {{ ui.btn("Open inspector", variant="secondary", size="sm",
+                      href="/onboarding/import/" ~ session.id ~ "/documents/" ~ selected_document.id ~ "?page=" ~ selected_page ~ "&next=" ~ ((record_url ~ "?doc=" ~ selected_document.id ~ "&page=" ~ selected_page) | urlencode),
+                      icon_name="eye") }}
         </div>
         {% else %}
         <div class="pt-record-source__fallback"><p>No source document is linked to this record.</p></div>

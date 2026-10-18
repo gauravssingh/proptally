@@ -5712,10 +5712,29 @@ a.pt-journey-pill:hover {
 
 .pt-extracted-field__edit {
     flex-shrink: 0;
+    margin-left: auto;
 }
 
 .pt-extracted-field__edit[open] {
     flex: 1 1 100%;
+}
+
+.pt-extracted-field__edit > summary {
+    margin-left: auto;
+}
+
+.pt-field-cancel-icon {
+    display: none;
+}
+
+.pt-extracted-field__edit[open] .pt-field-edit-icon,
+.pt-field__edit[open] .pt-field-edit-icon {
+    display: none;
+}
+
+.pt-extracted-field__edit[open] .pt-field-cancel-icon,
+.pt-field__edit[open] .pt-field-cancel-icon {
+    display: inline-flex;
 }
 
 .pt-extracted-field__edit > summary {
@@ -5765,6 +5784,7 @@ a.pt-journey-pill:hover {
 .pt-extracted-field__form-actions {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: var(--pt-space-2);
     flex-wrap: wrap;
 }
