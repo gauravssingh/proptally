@@ -903,6 +903,10 @@ def get_onboarding_router(templates, control_engine, tenant_manager, get_session
                 "status_label": PROPOSAL_LABELS.get(proposal.status, proposal.status),
                 "status_variant": PROPOSAL_VARIANTS.get(proposal.status, "neutral"),
                 "can_review": onboarding.status in REVIEWABLE_STATES,
+                "can_decide": (
+                    onboarding.status in REVIEWABLE_STATES
+                    and proposal.status not in {"ACCEPTED", "REJECTED", "IMPORTED"}
+                ),
                 "message": request.query_params.get("message"),
                 "error": request.query_params.get("error"),
             },

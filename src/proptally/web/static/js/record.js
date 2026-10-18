@@ -17,19 +17,26 @@
         return badge;
     }
 
+    function part(field, name) {
+        return field.querySelector(".pt-extracted-field__" + name)
+            || field.querySelector(".pt-field__" + name);
+    }
+
     function updateField(field, result) {
-        var value = field.querySelector(".pt-field__value");
+        var value = part(field, "value");
         if (value) value.textContent = result.display;
 
-        var extracted = field.querySelector(".pt-field__extracted");
+        var extracted = part(field, "extracted");
         if (!extracted && value && value.parentElement) {
             extracted = document.createElement("span");
-            extracted.className = "pt-field__extracted pt-fs-caption pt-text-muted";
+            extracted.className = field.classList.contains("pt-extracted-field")
+                ? "pt-extracted-field__extracted pt-fs-caption pt-text-muted"
+                : "pt-field__extracted pt-fs-caption pt-text-muted";
             value.parentElement.appendChild(extracted);
         }
         if (extracted) extracted.textContent = "Extracted: " + result.original_display;
 
-        var badges = field.querySelector(".pt-field__badges");
+        var badges = part(field, "badges");
         if (badges) {
             var hasEdited = Array.prototype.some.call(
                 badges.querySelectorAll(".pt-badge"),
@@ -41,6 +48,22 @@
         var details = field.querySelector("details");
         if (details) details.open = false;
     }
+
+    Array.prototype.forEach.call(
+        document.querySelectorAll("details.pt-extracted-field__edit, details.pt-field__edit"),
+        function (details) {
+            var label = details.querySelector("[data-edit-label]");
+            var read = details.closest(".pt-extracted-field__read, .pt-field__read");
+
+            function sync() {
+                if (label) label.textContent = details.open ? "Cancel" : "Edit";
+                if (read) read.classList.toggle("is-editing", details.open);
+            }
+
+            details.addEventListener("toggle", sync);
+            sync();
+        }
+    );
 
     Array.prototype.forEach.call(forms, function (form) {
         form.addEventListener("submit", function (event) {
@@ -85,7 +108,7 @@
                     notify("error", result.body.error || "That value could not be saved.");
                     return;
                 }
-                var field = form.closest(".pt-field");
+                var field = form.closest('[id^="field-"]');
                 if (field) updateField(field, result.body);
                 notify("success", result.body.message);
             }).catch(function () {

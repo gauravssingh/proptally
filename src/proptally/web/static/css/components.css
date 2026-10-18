@@ -5693,18 +5693,29 @@ a.pt-journey-pill:hover {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: var(--pt-space-3);
+    flex-wrap: wrap;
+    gap: var(--pt-space-2) var(--pt-space-3);
 }
 
 .pt-extracted-field__read-main {
     display: flex;
+    flex: 1;
     flex-direction: column;
     gap: 2px;
     min-width: 0;
 }
 
+.pt-extracted-field__read.is-editing .pt-extracted-field__read-main,
+.pt-field__read.is-editing .pt-field__read-main {
+    display: none;
+}
+
 .pt-extracted-field__edit {
     flex-shrink: 0;
+}
+
+.pt-extracted-field__edit[open] {
+    flex: 1 1 100%;
 }
 
 .pt-extracted-field__edit > summary {

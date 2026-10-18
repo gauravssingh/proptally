@@ -18,7 +18,7 @@
 <div class="pt-record-actions">
     {{ ui.btn("Back to review", variant="ghost", size="sm",
               href="/onboarding/import/" ~ session.id ~ "/review", icon_name="chevron_left") }}
-    {% if can_review %}
+    {% if can_decide %}
     <div class="pt-flex pt-gap-2 pt-flex-wrap">
         <form method="post" action="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}/decision" class="pt-inline-flex">
             {{ csrf_field() }}
@@ -47,7 +47,16 @@
                 <li><strong>Check</strong> saves the value shown for that field. It does not accept the whole record.</li>
                 <li><strong>Edit</strong> corrects a value; save it with the check.</li>
                 <li><strong>Unknown</strong> leaves the field empty for later; it is not treated as a fact.</li>
+                {% if can_decide %}
                 <li>If documents disagree, choose one of the shown values. Use <strong>Accept record</strong> at the top when the record is ready.</li>
+                {% endif %}
+                {% if proposal.status == "ACCEPTED" %}
+                <li>This record is accepted; its values are locked for the import.</li>
+                {% elif proposal.status == "REJECTED" %}
+                <li>This record is rejected; it will not be imported.</li>
+                {% elif proposal.status == "DEFERRED" %}
+                <li>This record is deferred; accept it if you want it imported.</li>
+                {% endif %}
             </ul>
         </section>
         {% for field in fields %}
@@ -88,11 +97,11 @@
                     </span>
                 </label>
                 {% endfor %}
-                {% if can_review %}
+                {% if can_decide %}
                 {{ ui.btn("Use this value", variant="secondary", size="sm", type="submit", icon_name="check") }}
                 {% endif %}
             </form>
-            {% elif field.editable and can_review %}
+            {% elif field.editable and can_decide %}
             <div class="pt-extracted-field__read">
                 <div class="pt-extracted-field__read-main">
                     <span class="pt-extracted-field__value">{{ field.display }}</span>
@@ -102,7 +111,7 @@
                 </div>
                 <details class="pt-extracted-field__edit">
                     <summary class="pt-btn pt-btn--ghost pt-btn--sm">
-                        {{ ui.icon("edit", "sm") }} Edit
+                        {{ ui.icon("edit", "sm") }} <span data-edit-label>Edit</span>
                     </summary>
                     <form method="post" action="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}/field"
                           class="pt-extracted-field__form" data-record-field-form>

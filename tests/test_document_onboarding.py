@@ -313,6 +313,14 @@ def test_review_cards_have_explicit_actions_and_quick_accept_returns_to_review(o
     with Session(signed_in.app.state.control_engine) as control:
         assert control.get(OnboardingProposal, property_proposal.id).status == "ACCEPTED"
 
+    detail = signed_in.client.get(
+        f"/onboarding/import/{onboarding_id}/records/{property_proposal.id}"
+    )
+    assert "ACCEPTED" in detail.text.upper()
+    assert "Accept record" not in detail.text
+    assert "Defer" not in detail.text
+    assert "Reject" not in detail.text
+
     unsafe = signed_in.client.post(
         f"/onboarding/import/{onboarding_id}/records/{property_proposal.id}/decision",
         data={
@@ -326,6 +334,12 @@ def test_review_cards_have_explicit_actions_and_quick_accept_returns_to_review(o
     assert unsafe.headers["location"].startswith(
         f"/onboarding/import/{onboarding_id}/records/{property_proposal.id}"
     )
+
+    # Deferred is not final: the record still needs review, so decisions remain.
+    deferred_page = signed_in.client.get(unsafe.headers["location"])
+    assert "Accept record" in deferred_page.text
+    assert "Defer" in deferred_page.text
+    assert "Reject" in deferred_page.text
 
 
 def test_conflicting_values_must_be_resolved_before_acceptance(owner):
