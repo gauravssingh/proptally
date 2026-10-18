@@ -16,6 +16,32 @@ from proptally.onboarding.fields import display_value
 SOURCE_VERSION = 1
 COORDINATE_SYSTEM = "pdf_points_top_left"
 
+#: Labels that make one occurrence of a repeated value the right one. A mortgage
+#: statement can print the same amount as amount due, monthly payment, and history;
+#: the label around the value is the cheapest reliable discriminator.
+CONTEXT_LABELS: dict[str, tuple[str, ...]] = {
+    "address_line1": ("property address", "property", "address"),
+    "address_line2": ("property address", "property", "address"),
+    "city": ("property address", "property", "address"),
+    "state": ("property address", "property", "address"),
+    "zip_code": ("property address", "property", "address"),
+    "owner_names": ("borrower", "owner", "mortgagor"),
+    "seller_names": ("seller", "grantor"),
+    "lender": ("lender", "servicer"),
+    "loan_number": ("loan number", "loan no", "account number"),
+    "account_number_masked": ("account number", "loan number", "loan no"),
+    "purchase_price_cents": ("purchase price", "sale price", "consideration"),
+    "acquisition_date": ("sale date", "purchase date", "acquisition date"),
+    "outstanding_principal_cents": ("outstanding principal", "principal balance", "unpaid principal"),
+    "original_principal_cents": ("original principal", "loan amount", "sanctioned amount"),
+    "escrow_balance_cents": ("escrow balance", "escrow"),
+    "emi_amount_cents": ("monthly payment", "amount due", "payment amount"),
+    "interest_rate_bps": ("interest rate", "note rate", "rate"),
+    "statement_date": ("statement date", "period ending", "statement period"),
+    "monthly_rent_cents": ("monthly rent", "rent"),
+    "security_deposit_cents": ("security deposit", "deposit"),
+}
+
 
 @dataclass(frozen=True)
 class Line:
@@ -75,7 +101,7 @@ def _line_matches(page: dict, search: str, *, whole_lines: bool = False) -> list
     matches: list[dict] = []
     seen: set[tuple] = set()
 
-    def add(rects, match_type, matched_text, line_text):
+    def add(rects, match_type, matched_text, line_text, start, window):
         key = tuple(
             (round(rect["x0"], 2), round(rect["y0"], 2), round(rect["x1"], 2), round(rect["y1"], 2))
             for rect in rects
@@ -83,11 +109,15 @@ def _line_matches(page: dict, search: str, *, whole_lines: bool = False) -> list
         if key in seen:
             return
         seen.add(key)
+        context = " ".join(
+            line.text for line in lines[max(0, start - 2):start + window]
+        )
         matches.append({
             "rects": rects,
             "match_type": match_type,
             "matched_text": matched_text,
             "line_text": line_text,
+            "context": context,
         })
 
     # Multi-line windows handle addresses and evidence text that wraps.
@@ -97,18 +127,18 @@ def _line_matches(page: dict, search: str, *, whole_lines: bool = False) -> list
             text = " ".join(line.text for line in chosen)
             if _normalise(text) == _normalise(search):
                 add(_match_rects(lines, start, start + window),
-                    "EXACT" if text == search else "NORMALIZED", text, text)
+                    "EXACT" if text == search else "NORMALIZED", text, text, start, window)
 
     if matches:
         return matches
 
     if not whole_lines:
-        for line in lines:
+        for index, line in enumerate(lines):
             found = _phrase_match(line, search, wanted)
             if found is not None:
-                add(found[0], found[1], search, line.text)
+                add(found[0], found[1], search, line.text, index, 1)
             elif _normalise(search) and _normalise(search) in _normalise(line.text):
-                add([line.rect], "LINE", search, line.text)
+                add([line.rect], "LINE", search, line.text, index, 1)
 
     return matches
 
@@ -151,16 +181,34 @@ def _ambiguous(page: int, count: int) -> dict:
     }
 
 
-def _choose_value_matches(matches: list[dict], evidence: str) -> list[dict]:
-    """Prefer a value occurrence whose line carries the evidence context."""
-    if len(matches) <= 1 or not evidence:
+def _choose_value_matches(
+    matches: list[dict], evidence: str, field_name: str = ""
+) -> list[dict]:
+    """Prefer a value occurrence whose surrounding labels name this field."""
+    if len(matches) <= 1:
         return matches
-    evidence_norm = _normalise(evidence)
-    contextual = [
-        match for match in matches
-        if evidence_norm and evidence_norm in _normalise(match.get("line_text") or "")
-    ]
-    return contextual or matches
+
+    labels = CONTEXT_LABELS.get(field_name, ())
+    if labels:
+        labelled = [
+            match for match in matches
+            if any(
+                _normalise(label) in _normalise(match.get("context") or "")
+                for label in labels
+            )
+        ]
+        if labelled:
+            return labelled
+
+    if evidence:
+        evidence_norm = _normalise(evidence)
+        contextual = [
+            match for match in matches
+            if evidence_norm and evidence_norm in _normalise(match.get("line_text") or "")
+        ]
+        if contextual:
+            return contextual
+    return matches
 
 
 def attach_source_locations(result, geometry: list[dict]) -> None:
@@ -198,7 +246,9 @@ def locate_source(
     page_number = page
 
     if value_text and value_text != "—":
-        matches = _choose_value_matches(_line_matches(page_data, value_text), evidence)
+        matches = _choose_value_matches(
+            _line_matches(page_data, value_text), evidence, field_name
+        )
         if len(matches) == 1:
             return _available(page_data, page_number, matches[0])
         if len(matches) > 1:
@@ -215,7 +265,9 @@ def locate_source(
     if value_text and value_text != "—":
         found = []
         for index, candidate in enumerate(geometry, start=1):
-            matches = _choose_value_matches(_line_matches(candidate, value_text), evidence)
+            matches = _choose_value_matches(
+                _line_matches(candidate, value_text), evidence, field_name
+            )
             found.extend((index, candidate, match) for match in matches)
         if len(found) == 1:
             index, candidate, match = found[0]
