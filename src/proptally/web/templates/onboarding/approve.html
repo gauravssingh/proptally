@@ -94,7 +94,7 @@
             {{ csrf_field() }}
             {{ ui.checkbox_field("confirm",
                 "I have reviewed the accepted records and want PropTally to create them in this portfolio.",
-                value="yes", extra="required") }}
+                value="yes", extra="required", touch=true) }}
             <div class="pt-flex pt-gap-2 pt-flex-wrap">
                 {{ ui.btn("Create the portfolio", variant="primary", type="submit", icon_name="check_circle") }}
                 {{ ui.btn("Back to review", variant="ghost", href="/onboarding/import/" ~ session.id ~ "/review") }}

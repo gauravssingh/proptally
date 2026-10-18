@@ -27,13 +27,15 @@
     {{ ui.btn("Finish", variant="primary",
               href="/onboarding/import/" ~ session.id ~ "/approve", icon_name="check_circle",
               title="Review the final summary and create the portfolio") }}
+    {% else %}
+    <span class="pt-fs-caption pt-text-muted">Accept at least one record to continue.</span>
+    {{ ui.btn("Finish", variant="subtle", size="sm", type="button", disabled=true,
+              icon_name="check_circle",
+              title="Accept at least one record to continue") }}
     {% endif %}
 {% endset %}
 {% set review_secondary_actions %}
     {{ ui.btn("Back to status", variant="ghost", href="/onboarding/import/" ~ session.id) }}
-    {% if not can_approve %}
-    <span class="pt-fs-caption pt-text-muted">Accept at least one record to continue.</span>
-    {% endif %}
 {% endset %}
 {{ journey.card(
     steps=journey_steps,
@@ -140,22 +142,27 @@
 
 {% if attention_documents %}
 {{ ui.section_open("Documents requiring attention", "These files were retained; nothing was silently discarded.") }}
-<div class="pt-table-wrap">
-    <table class="pt-table pt-table--compact">
-        <thead><tr><th>File</th><th>Status</th><th>Reason</th><th></th></tr></thead>
-        <tbody>
-            {% for row in attention_documents %}
-            <tr>
-                <td class="pt-table__primary">{{ row.document.original_filename }}</td>
-                <td>{{ ui.badge(row.label, variant=row.variant, upper=true) }}</td>
-                <td class="pt-table__sub">{{ row.document.error or "Manual review needed." }}</td>
-                <td>{{ ui.btn("Inspect", variant="ghost", size="sm",
-                              href="/onboarding/import/" ~ session.id ~ "/documents/" ~ row.document.id) }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
+{{ ui.table_open(compact=true, label="Documents requiring attention") }}
+    <thead>
+        <tr>
+            {{ ui.th("File") }}
+            {{ ui.th("Status") }}
+            {{ ui.th("Reason") }}
+            {{ ui.th('<span class="pt-sr-only">Actions</span>') }}
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in attention_documents %}
+        <tr>
+            <td class="pt-table__primary">{{ row.document.original_filename }}</td>
+            <td>{{ ui.badge(row.label, variant=row.variant, upper=true) }}</td>
+            <td class="pt-table__sub">{{ row.document.error or "Manual review needed." }}</td>
+            <td>{{ ui.btn("Inspect", variant="ghost", size="sm",
+                          href="/onboarding/import/" ~ session.id ~ "/documents/" ~ row.document.id) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+{{ ui.table_close() }}
 {{ ui.section_close() }}
 {% endif %}
 

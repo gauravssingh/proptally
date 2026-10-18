@@ -190,10 +190,7 @@
 } %}
 
 {% macro progress(value, label="Progress") -%}
-<div class="pt-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100"
-     aria-valuenow="{{ value }}" aria-label="{{ label }}">
-    <div class="pt-progress__bar" style="width: {{ value }}%"></div>
-</div>
+<progress class="pt-progress" value="{{ value }}" max="100" aria-label="{{ label }}">{{ value }}%</progress>
 {%- endmacro %}
 
 

@@ -118,15 +118,14 @@
     </form>
 </div>
 {% if document_rows %}
-<div class="pt-table-wrap pt-table-wrap--scroll">
-    <table class="pt-table">
+{{ ui.table_open(label="Imported documents") }}
         <thead>
             <tr>
-                <th>File</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th class="pt-table__th-num">Pages</th>
-                <th></th>
+                {{ ui.th("File") }}
+                {{ ui.th("Type") }}
+                {{ ui.th("Status") }}
+                {{ ui.th("Pages", num=true) }}
+                {{ ui.th('<span class="pt-sr-only">Actions</span>') }}
             </tr>
         </thead>
         <tbody>
@@ -160,8 +159,7 @@
             </tr>
             {% endfor %}
         </tbody>
-    </table>
-</div>
+{{ ui.table_close() }}
 {% else %}
 {{ ui.empty_state(
     "No documents match this view",
@@ -203,7 +201,7 @@
         </div>
     </div>
     <form method="post" action="/onboarding/import/{{ session.id }}/cancel"
-          onsubmit="return confirm('Cancel this import and delete its uploaded documents? This cannot be undone.');">
+          data-confirm="Cancel this import and delete its uploaded documents? This cannot be undone.">
         {{ csrf_field() }}
         {{ ui.btn("Cancel and delete documents", variant="destructive", type="submit", icon_name="trash") }}
     </form>

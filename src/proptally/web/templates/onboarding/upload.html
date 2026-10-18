@@ -38,7 +38,7 @@
         <form action="/onboarding/import/upload" method="post" enctype="multipart/form-data"
               class="pt-stack" id="upload-form" data-onboarding-upload>
             {{ csrf_field() }}
-            <label class="pt-dropzone" data-dropzone for="archive">
+            <label class="pt-dropzone pt-dropzone--hero" data-dropzone for="archive">
                 <span class="pt-dropzone__icon">{{ ui.icon("upload", "lg") }}</span>
                 <strong class="pt-dropzone__title">Drop your ZIP archive here</strong>
                 <span class="pt-dropzone__hint">or</span>

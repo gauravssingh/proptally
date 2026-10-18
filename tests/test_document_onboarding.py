@@ -296,7 +296,8 @@ def test_review_cards_have_explicit_actions_and_quick_accept_returns_to_review(o
     assert "Review property" in page.text
     assert 'name="return_to"' in page.text
     assert "Accept at least one record to continue." in page.text
-    assert "Finish" not in page.text
+    assert "Finish" in page.text
+    assert "disabled" in page.text
 
     accepted = signed_in.client.post(
         decision_url,

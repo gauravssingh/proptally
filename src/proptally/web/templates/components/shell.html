@@ -436,6 +436,16 @@
             if (select.value) window.location.href = select.value;
         });
     });
+
+    /* --- Form confirm delegation ------------------------------------ */
+    document.addEventListener('submit', function (event) {
+        var form = event.target.closest('form[data-confirm]');
+        if (!form) return;
+        var msg = form.getAttribute('data-confirm');
+        if (msg && !window.confirm(msg)) {
+            event.preventDefault();
+        }
+    });
 })();
 </script>
 {%- endmacro %}

@@ -46,7 +46,7 @@
                 <li>
                     <span class="pt-fs-caption pt-text-muted">{{ item.field }} · page {{ item.page }}</span>
                     <strong>{{ item.display }}</strong>
-                    {% if item.text %}<span class="pt-field__evidence-text">{{ item.text }}</span>{% endif %}
+                    {% if item.text %}<span class="pt-extracted-field__evidence-text">{{ item.text }}</span>{% endif %}
                 </li>
                 {% endfor %}
             </ul>
@@ -78,7 +78,7 @@
             <dl class="pt-document-meta">
                 <dt>Original name</dt><dd>{{ document.original_filename }}</dd>
                 <dt>Stored as</dt><dd>{{ document.internal_filename }}</dd>
-                <dt>SHA-256</dt><dd class="pt-mono">{{ document.sha256 }}</dd>
+                <dt>SHA-256</dt><dd class="pt-num">{{ document.sha256 }}</dd>
                 <dt>MIME type</dt><dd>{{ document.mime_type }}</dd>
                 <dt>Extraction</dt><dd>{{ document.extraction_method or "Not read" }}</dd>
             </dl>

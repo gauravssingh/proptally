@@ -34,9 +34,7 @@
                 {{ ui.badge("Acquired " ~ (property.acquisition_date | format_date), variant="outline", mono=true, upper=false) }}
 
                 {% if photos %}
-                <a href="#gallery-section" class="pt-badge pt-badge--neutral">
-                    {{ photos | length }} Photo{% if photos | length > 1 %}s{% endif %}
-                </a>
+                {{ ui.btn((photos | length) ~ " Photo" ~ ("s" if photos | length > 1 else ""), href="#gallery-section", variant="secondary", size="sm", icon_name="camera") }}
                 {% endif %}
             </div>
 
@@ -829,8 +827,7 @@
 ) }}
 <div id="documents-vault">
 {% if property_documents %}
-<div class="pt-table-wrap">
-    <table class="pt-table">
+{{ ui.table_open(label="Property documents") }}
         <thead>
             <tr>
                 {{ ui.th("Document Name") }}
@@ -879,8 +876,7 @@
             </tr>
             {% endfor %}
         </tbody>
-    </table>
-</div>
+{{ ui.table_close() }}
 {% else %}
 <div class="pt-empty pt-empty--compact">
     <p class="pt-empty__title">No documents vaulted for this property yet.</p>

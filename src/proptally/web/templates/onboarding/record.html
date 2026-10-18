@@ -51,13 +51,13 @@
             </ul>
         </section>
         {% for field in fields %}
-        <section class="pt-field{% if field.conflict %} pt-field--conflict{% endif %}" id="field-{{ field.name }}">
-            <div class="pt-field__head">
-                <span class="pt-field__label">
+        <section class="pt-extracted-field{% if field.conflict %} pt-extracted-field--conflict{% endif %}" id="field-{{ field.name }}">
+            <div class="pt-extracted-field__head">
+                <span class="pt-extracted-field__label">
                     {{ field.label }}
-                    {% if field.required %}<span class="pt-field__required" title="Required">*</span>{% endif %}
+                    {% if field.required %}<span class="pt-extracted-field__required" title="Required">*</span>{% endif %}
                 </span>
-                <span class="pt-field__badges">
+                <span class="pt-extracted-field__badges">
                     {% if field.conflict %}{{ ui.badge("Conflict", variant="error", upper=true) }}{% endif %}
                     {% if field.edited %}{{ ui.badge("Edited", variant="info", upper=true) }}{% endif %}
                     {% if not field.editable %}{{ ui.badge("From document", variant="neutral", upper=true) }}{% endif %}
@@ -65,7 +65,7 @@
             </div>
 
             {% if field.conflict %}
-            <p class="pt-field__conflict-note">
+            <p class="pt-extracted-field__conflict-note">
                 The documents disagree. Choose the value that is correct, or edit it below.
             </p>
             <form method="post" action="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}/field" class="pt-stack-2">
@@ -93,19 +93,19 @@
                 {% endif %}
             </form>
             {% elif field.editable and can_review %}
-            <div class="pt-field__read">
-                <div class="pt-field__read-main">
-                    <span class="pt-field__value">{{ field.display }}</span>
+            <div class="pt-extracted-field__read">
+                <div class="pt-extracted-field__read-main">
+                    <span class="pt-extracted-field__value">{{ field.display }}</span>
                     {% if field.edited %}
-                    <span class="pt-field__extracted pt-fs-caption pt-text-muted">Extracted: {{ field.original_display }}</span>
+                    <span class="pt-extracted-field__extracted pt-fs-caption pt-text-muted">Extracted: {{ field.original_display }}</span>
                     {% endif %}
                 </div>
-                <details class="pt-field__edit">
+                <details class="pt-extracted-field__edit">
                     <summary class="pt-btn pt-btn--ghost pt-btn--sm">
                         {{ ui.icon("edit", "sm") }} Edit
                     </summary>
                     <form method="post" action="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}/field"
-                          class="pt-field__form" data-record-field-form>
+                          class="pt-extracted-field__form" data-record-field-form>
                         {{ csrf_field() }}
                         <input type="hidden" name="field" value="{{ field.name }}">
                         {% if field.type in ["money", "percentage_rate", "percentage", "int"] %}
@@ -127,7 +127,7 @@
                         {% else %}
                         {{ ui.text_field("value", field.label, value=field.input_value, id=field.name, hidden_label=true) }}
                         {% endif %}
-                        <div class="pt-field__form-actions">
+                        <div class="pt-extracted-field__form-actions">
                             {{ ui.icon_btn("Save this value", "check", variant="primary", size="sm",
                                            type="submit", title="Save this value",
                                            attrs='name="action" value="save"') }}
@@ -136,27 +136,27 @@
                                 Mark unknown
                             </button>
                         </div>
-                        <p class="pt-field__help">
+                        <p class="pt-extracted-field__help">
                             The check saves only this field. “Unknown” leaves it empty for later.
                         </p>
                     </form>
                 </details>
             </div>
             {% else %}
-            <div class="pt-field__value">{{ field.display }}</div>
+            <div class="pt-extracted-field__value">{{ field.display }}</div>
             {% if field.edited %}
             <span class="pt-fs-caption pt-text-muted">Extracted: {{ field.original_display }}</span>
             {% endif %}
             {% endif %}
 
             {% if field.evidence %}
-            <details class="pt-field__evidence" {% if field.conflict %}open{% endif %}>
+            <details class="pt-extracted-field__evidence" {% if field.conflict %}open{% endif %}>
                 <summary>{{ field.evidence|length }} source passage{{ "" if field.evidence|length == 1 else "s" }}</summary>
                 <ul>
                     {% for item in field.evidence %}
                     <li>
-                        <span class="pt-field__evidence-value">{{ item.value_display }}</span>
-                        {% if item.text %}<span class="pt-field__evidence-text">{{ item.text }}</span>{% endif %}
+                        <span class="pt-extracted-field__evidence-value">{{ item.value_display }}</span>
+                        {% if item.text %}<span class="pt-extracted-field__evidence-text">{{ item.text }}</span>{% endif %}
                         <a class="pt-fs-caption" href="/onboarding/import/{{ session.id }}/documents/{{ item.document_id }}?page={{ item.page }}&next={{ record_url | urlencode }}"
                            target="_blank" rel="noopener">
                             Page {{ item.page }} · {{ item.method }} · {{ "%.0f"|format(item.confidence * 100) }}%

@@ -2,7 +2,7 @@
 
 {% macro card(steps, icon_name, title, text, meta=None, progress_value=None,
               progress_label="", note=None, actions="", secondary_actions="") -%}
-<section class="pt-journey-card pt-journey-card--step" aria-labelledby="journey-title">
+<section class="pt-journey-card" aria-labelledby="journey-title">
     <span class="pt-journey-card__icon">{{ ui.icon(icon_name, "lg") }}</span>
     <div class="pt-journey-card__body">
         <ol class="pt-journey-steps" aria-label="Onboarding progress">

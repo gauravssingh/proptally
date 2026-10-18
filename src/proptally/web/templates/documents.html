@@ -126,19 +126,18 @@
             {% if kind != 'folders' %}
             <section class="pt-stack-2">
                 <h2 class="pt-section__title">Files</h2>
-                <div class="pt-table-wrap pt-overflow-x">
-                    <table class="pt-table pt-table--compact">
-                        <thead>
-                        <tr>
-                            <th scope="col" class="pt-table__pick"><span class="pt-sr-only">Details</span></th>
-                            <th scope="col">Name</th>
-                            <th scope="col">Type</th>
-                            <th scope="col" class="pt-table__th-num">Size</th>
-                            <th scope="col">Uploaded</th>
-                            <th scope="col">State</th>
-                            <th scope="col"><span class="pt-sr-only">Actions</span></th>
-                        </tr>
-                        </thead>
+                {{ ui.table_open(compact=true, label="Files") }}
+                    <thead>
+                    <tr>
+                        {{ ui.th('<span class="pt-sr-only">Details</span>', cls="pt-table__pick") }}
+                        {{ ui.th("Name") }}
+                        {{ ui.th("Type") }}
+                        {{ ui.th("Size", num=true) }}
+                        {{ ui.th("Uploaded") }}
+                        {{ ui.th("State") }}
+                        {{ ui.th('<span class="pt-sr-only">Actions</span>') }}
+                    </tr>
+                    </thead>
                         <tbody>
                         {% for row in rows %}
                         {% set chosen = selected and selected.id == row.id %}
@@ -195,8 +194,7 @@
                         </tr>
                         {% endfor %}
                         </tbody>
-                    </table>
-                </div>
+                {{ ui.table_close() }}
 
                 {% if total_pages > 1 %}
                 {{ ui.pagination(page, total_pages, start_item, end_item, total_items, prev_url, next_url) }}

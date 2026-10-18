@@ -377,7 +377,7 @@
 
                     <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-2">
                         {% set new_rule_attrs %}data-new-rule="{{ txn.raw_description }}"{% endset %}
-                        {{ ui.btn("Save as Rule", variant="ghost", size="xs", attrs=new_rule_attrs,
+                        {{ ui.btn("Save as Rule", variant="ghost", size="sm", attrs=new_rule_attrs,
                                   title="Open the vendor rule manager with a pattern derived from this description.") }}
                         {{ ui.btn("Assign & Post", variant="neutral", type="submit", icon_after="chevron_right") }}
                     </div>

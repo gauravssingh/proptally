@@ -52,12 +52,8 @@
             {% endfor %}
         </ol>
 
-        <a class="pt-btn pt-btn--ghost pt-btn--sm pt-btn--block" href="/onboarding">
-            Compare both setup paths
-        </a>
-        <a class="pt-btn pt-btn--ghost pt-btn--sm pt-btn--block" href="/settings">
-            Manage all portfolio data
-        </a>
+        {{ ui.btn("Compare both setup paths", href="/onboarding", variant="ghost", size="sm", block=true) }}
+        {{ ui.btn("Manage all portfolio data", href="/settings", variant="ghost", size="sm", block=true) }}
     </aside>
 
     <section class="pt-wizard__body" aria-labelledby="setup-step-title">
