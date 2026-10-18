@@ -1090,10 +1090,12 @@ def get_onboarding_router(templates, control_engine, tenant_manager, get_session
             ).all()
             evidence_rows = [
                 {
+                    "id": row.id,
                     "field": field_spec(row.field_name)["label"],
                     "display": display_value(row.field_name, loads(row.value_json)),
                     "page": row.page_number,
                     "text": row.evidence_text,
+                    "source_status": loads(row.source_location_json).get("status", "UNAVAILABLE"),
                 }
                 for row in evidence
             ]
@@ -1126,6 +1128,38 @@ def get_onboarding_router(templates, control_engine, tenant_manager, get_session
                 "back_label": back_label,
             },
         )
+
+    @router.get(
+        "/onboarding/import/{onboarding_id}/documents/{document_id}/evidence/{evidence_id}/location"
+    )
+    def evidence_location(
+        onboarding_id: str,
+        document_id: str,
+        evidence_id: str,
+        request: Request,
+        session: Session = Depends(get_session_dep),
+    ):
+        _owned_session(onboarding_id)
+        with Session(control_engine) as control:
+            document = control.get(OnboardingDocument, document_id)
+            evidence = control.get(OnboardingFieldEvidence, evidence_id)
+            if (
+                document is None
+                or evidence is None
+                or document.onboarding_id != onboarding_id
+                or evidence.onboarding_id != onboarding_id
+                or evidence.document_id != document_id
+            ):
+                raise HTTPException(status_code=404, detail="Evidence not found.")
+            location = loads(evidence.source_location_json)
+        if not location:
+            location = {
+                "version": 1,
+                "status": "UNAVAILABLE",
+                "reason": "NOT_LOCATED",
+                "rects": [],
+            }
+        return JSONResponse(location)
 
     @router.get("/onboarding/import/{onboarding_id}/documents/{document_id}/file")
     def document_file(

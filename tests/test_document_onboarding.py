@@ -7,6 +7,7 @@ take the archive down with it.
 """
 
 import io
+import json
 import re
 import zipfile
 from urllib.parse import unquote_plus
@@ -25,6 +26,7 @@ from proptally.db.models import (
 )
 from proptally.db.onboarding_models import (
     OnboardingDocument,
+    OnboardingFieldEvidence,
     OnboardingProposal,
     OnboardingReviewDecision,
     OnboardingSession,
@@ -182,6 +184,18 @@ def test_end_to_end_import_creates_the_portfolio_only_after_approval(owner):
     property_proposal = next(p for p in proposals if p.entity_type == "PROPERTY")
     mortgage_proposal = next(p for p in proposals if p.entity_type == "MORTGAGE")
     assert '"purchase_price_cents": 80000000' in property_proposal.payload_json
+    with Session(signed_in.app.state.control_engine) as control:
+        location_evidence = control.exec(
+            select(OnboardingFieldEvidence).where(
+                OnboardingFieldEvidence.proposal_id == property_proposal.id,
+                OnboardingFieldEvidence.field_name == "purchase_price_cents",
+            )
+        ).first()
+        assert location_evidence is not None
+        location = json.loads(location_evidence.source_location_json)
+        assert location["status"] == "AVAILABLE"
+        assert location["page"] == 1
+        assert location["rects"]
     assert '"property_group_key": "property:123 main st springfield 62704"' in mortgage_proposal.payload_json
     assert '"association_status": "MATCHED"' in mortgage_proposal.payload_json
 
@@ -647,6 +661,23 @@ def test_document_inspector_returns_to_the_record_it_was_opened_from(owner):
     record_page = signed_in.client.get(record_url).text
     assert "Open inspector" in record_page
     assert "next=" in record_page
+
+    with Session(signed_in.app.state.control_engine) as control:
+        evidence = control.exec(
+            select(OnboardingFieldEvidence).where(
+                OnboardingFieldEvidence.document_id == document.id
+            )
+        ).first()
+        assert evidence is not None
+        evidence_id = evidence.id
+    location = signed_in.client.get(
+        f"/onboarding/import/{onboarding_id}/documents/{document.id}/evidence/{evidence_id}/location"
+    )
+    assert location.status_code == 200
+    assert location.json()["status"] in {"AVAILABLE", "AMBIGUOUS", "UNAVAILABLE"}
+    assert signed_in.client.get(
+        f"/onboarding/import/{onboarding_id}/documents/{document.id}/evidence/ev_missing/location"
+    ).status_code == 404
 
     inspector = signed_in.client.get(
         f"/onboarding/import/{onboarding_id}/documents/{document.id}",

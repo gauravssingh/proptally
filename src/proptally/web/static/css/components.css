@@ -5972,6 +5972,114 @@ a.pt-journey-pill:hover {
     border: 0;
 }
 
+.pt-pdf-viewer {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.pt-pdf-viewer__toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--pt-space-2);
+    padding: var(--pt-space-2) var(--pt-space-3);
+    background: var(--pt-surface);
+    border-bottom: var(--pt-border-w) solid var(--pt-border);
+}
+
+.pt-pdf-viewer__group {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--pt-space-1);
+}
+
+.pt-pdf-viewer__page-label,
+.pt-pdf-viewer__zoom {
+    min-width: 4.5rem;
+    text-align: center;
+    color: var(--pt-text-secondary);
+    font-size: var(--pt-fs-caption);
+    font-variant-numeric: tabular-nums;
+}
+
+.pt-pdf-viewer__viewport {
+    overflow: auto;
+    max-height: 78vh;
+    padding: var(--pt-space-3);
+    background: var(--pt-surface-sunken);
+}
+
+.pt-pdf-viewer__page {
+    position: relative;
+    margin: 0 auto;
+    background: white;
+    box-shadow: var(--pt-shadow-md);
+}
+
+.pt-pdf-viewer__page canvas {
+    display: block;
+}
+
+.pt-pdf-viewer__highlights {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.pt-pdf-highlight {
+    position: absolute;
+    background: rgba(250, 204, 21, 0.38);
+    border: 1px solid rgba(202, 138, 4, 0.9);
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.25);
+}
+
+.pt-pdf-viewer__status {
+    padding: var(--pt-space-2) var(--pt-space-3);
+    border-top: var(--pt-border-w) solid var(--pt-border);
+    color: var(--pt-text-muted);
+    font-size: var(--pt-fs-caption);
+}
+
+.pt-evidence-list--selectable {
+    list-style: none;
+    padding-left: 0;
+}
+
+.pt-evidence-item {
+    margin-bottom: var(--pt-space-1);
+}
+
+.pt-evidence-item__button {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    padding: var(--pt-space-2) var(--pt-space-3);
+    border: var(--pt-border-w) solid transparent;
+    border-radius: var(--pt-radius-md);
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.pt-evidence-item__button:hover {
+    background: var(--pt-surface-hover);
+}
+
+.pt-evidence-item.is-selected .pt-evidence-item__button {
+    background: var(--pt-warning-bg);
+    border-color: var(--pt-warning-border);
+}
+
+.pt-evidence-item__status {
+    color: var(--pt-warning-text);
+    font-size: var(--pt-fs-caption);
+}
+
 .pt-document-preview img {
     display: block;
     max-width: 100%;

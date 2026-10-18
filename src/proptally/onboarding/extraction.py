@@ -49,6 +49,7 @@ class ExtractedField:
     evidence: str
     method: str = "RULE"
     confidence: float = 0.7
+    source_location: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -70,6 +71,7 @@ class ExtractionResult:
 class TextDocument:
     pages: list[str]
     method: str
+    geometry: list[dict] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -77,6 +79,31 @@ class TextDocument:
 
 
 # --- Text extraction -------------------------------------------------------
+
+
+def _page_geometry(page) -> dict:
+    """Words and page geometry, captured while the PDF is already open."""
+    words = []
+    for x0, y0, x1, y1, text, block, line, word_no in page.get_text("words"):
+        words.append({
+            "text": text,
+            "x0": float(x0), "y0": float(y0),
+            "x1": float(x1), "y1": float(y1),
+            "block": int(block), "line": int(line), "word": int(word_no),
+        })
+    grouped: dict[tuple[int, int], list[dict]] = {}
+    for word in words:
+        grouped.setdefault((word["block"], word["line"]), []).append(word)
+    lines = []
+    for key in sorted(grouped):
+        line_words = sorted(grouped[key], key=lambda item: item["word"])
+        lines.append({"text": " ".join(item["text"] for item in line_words), "words": line_words})
+    return {
+        "width": float(page.rect.width),
+        "height": float(page.rect.height),
+        "rotation": int(page.rotation),
+        "lines": lines,
+    }
 
 
 def _pdf_text(path: Path) -> TextDocument:
@@ -98,9 +125,13 @@ def _pdf_text(path: Path) -> TextDocument:
         raise DocumentUnreadable("The PDF is password-protected; remove the password and re-upload.")
 
     try:
-        pages = [page.get_text("text") or "" for page in document]
+        pages = []
+        geometry = []
+        for page in document:
+            pages.append(page.get_text("text") or "")
+            geometry.append(_page_geometry(page))
         if sum(len(page.strip()) for page in pages) >= SCANNED_TEXT_THRESHOLD:
-            return TextDocument(pages=pages, method="pdf-text")
+            return TextDocument(pages=pages, method="pdf-text", geometry=geometry)
 
         provider = ocr_provider()
         if provider is None:

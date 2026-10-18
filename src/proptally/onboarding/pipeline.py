@@ -71,6 +71,7 @@ from proptally.onboarding.extraction import (
     plausible_address,
 )
 from proptally.onboarding.providers import structured_extractor
+from proptally.onboarding.source_location import attach_source_locations
 from proptally.onboarding.store import OnboardingStore
 
 # --- Serialisation helpers -------------------------------------------------
@@ -224,6 +225,7 @@ def _save_extraction(session: Session, document: OnboardingDocument, result: Ext
                 "evidence": extracted.evidence,
                 "method": extracted.method,
                 "confidence": extracted.confidence,
+                "source_location": extracted.source_location,
             }
             for name, extracted in result.fields.items()
         },
@@ -288,6 +290,7 @@ def process_document(control_engine, store: OnboardingStore, document_id: str) -
             category=category, filename=filename, pages=pages
         ))
         result.category = category
+        attach_source_locations(result, text_document.geometry)
 
         with Session(control_engine) as session:
             document = session.get(OnboardingDocument, document_id)
@@ -380,6 +383,7 @@ class Draft:
         evidence: str,
         method: str,
         confidence: float,
+        source_location: dict | None = None,
     ) -> None:
         self.evidence.append({
             "field_name": name,
@@ -389,6 +393,7 @@ class Draft:
             "evidence": evidence,
             "method": method,
             "confidence": confidence,
+            "source_location": source_location or {},
         })
         self.document_ids.add(document_id)
 
@@ -403,10 +408,14 @@ class Draft:
         confidence: float,
         *,
         conflict: bool = True,
+        source_location: dict | None = None,
     ) -> None:
         if value in (None, "", []):
             return
-        self.add_evidence(name, value, document_id, page, evidence, method, confidence)
+        self.add_evidence(
+            name, value, document_id, page, evidence, method, confidence,
+            source_location=source_location,
+        )
         current = self.values.get(name)
         if current in (None, "", []):
             # A key pre-seeded with an empty default is unset, not a value that
@@ -434,6 +443,7 @@ class Draft:
             "page": (current_evidence or {}).get("page", page),
             "evidence": (current_evidence or {}).get("evidence", evidence),
             "confidence": (current_evidence or {}).get("confidence", confidence),
+            "source_location": (current_evidence or {}).get("source_location", {}),
         }])
         if not any(option["value"] == jsonable(value) for option in options):
             options.append({
@@ -442,6 +452,7 @@ class Draft:
                 "page": page,
                 "evidence": evidence,
                 "confidence": confidence,
+                "source_location": source_location or {},
             })
 
 
@@ -542,6 +553,7 @@ def _draft_from_document(
             item.get("method") or "RULE",
             float(item.get("confidence") or 0.7),
             conflict=conflict,
+            source_location=item.get("source_location") or {},
         )
 
     def current_property_key() -> str:
@@ -1025,6 +1037,7 @@ def build_proposals(control_engine, onboarding_id: str) -> tuple[int, int]:
                         document_id=item["document_id"],
                         page_number=item["page"],
                         evidence_text=item["evidence"],
+                        source_location_json=dumps(item.get("source_location") or {}),
                         method=item["method"],
                         confidence=item["confidence"],
                     )

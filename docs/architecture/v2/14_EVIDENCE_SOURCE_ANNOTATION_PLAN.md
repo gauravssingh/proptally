@@ -1,6 +1,19 @@
 # Evidence-to-Source Annotation — Implementation Plan
 
-Status: plan only. No PDF highlighting is implemented yet.
+Status: Phases 0–4 implemented. Phase 5 remains the hardening and acceptance gate.
+
+Implemented in this pass:
+
+- PDF.js 3.11.174 is vendored under `web/static/vendor/pdfjs/`; no CDN.
+- PyMuPDF captures word geometry while the PDF is already open.
+- `OnboardingFieldEvidence.source_location_json` stores canonical PDF-point boxes.
+- `onboarding/source_location.py` resolves exact/normalized/line matches and reports
+  `AMBIGUOUS` or `UNAVAILABLE` instead of guessing.
+- The Document Inspector renders PDF pages with PDF.js, exposes evidence selection,
+  and draws temporary highlight overlays.
+- `scripts/backfill_evidence_locations.py` resolves coordinates for evidence rows
+  created before the locator existed; unresolved rows remain valid and show the
+  unavailable state.
 
 ## 1. Goal
 
@@ -23,11 +36,13 @@ its source text.
 
 `src/proptally/onboarding/extraction.py` uses PyMuPDF (`pymupdf` / `fitz`):
 
-- `_pdf_text()` calls `page.get_text("text")`.
-- `TextDocument.pages` is a list of page strings.
-- `ExtractedField` stores `name`, `value`, `page`, `evidence`, `method` and
-  `confidence`.
-- No bounding boxes, page dimensions or rotation are retained.
+- `_pdf_text()` calls `page.get_text("text")` and captures `page.get_text("words")`
+  geometry in the same pass.
+- `TextDocument.pages` remains a list of page strings; `TextDocument.geometry` holds
+  page dimensions, rotation, lines and word boxes.
+- `ExtractedField` stores `name`, `value`, `page`, `evidence`, `method`,
+  `confidence` and `source_location`.
+- The locator runs immediately after field extraction, before the PDF is closed.
 - Image OCR returns text only; it has no word boxes to highlight.
 
 ### 2.2 Persistence
@@ -38,10 +53,9 @@ its source text.
 - `page_number`
 - `evidence_text`
 - `value_json`
+- `source_location_json` (canonical rectangles and matching metadata)
 - `method`
 - `confidence`
-
-There is no source rectangle and no locator version.
 
 ### 2.3 Viewer
 
@@ -96,16 +110,10 @@ Rules:
 - Keep `match_type` and `confidence`; never present fuzzy matching as exact.
 - Store `matched_text` separately from the normalized field value.
 
-Recommended schema change: add one JSON column to
-`OnboardingFieldEvidence` rather than a parallel table:
-
-```text
-source_location_json TEXT NOT NULL DEFAULT '{}'
-```
-
-A single evidence row remains the source of truth. A separate table would add a
-join without adding meaning. Add a small migration and a backfill script for old
-rows.
+Schema: `OnboardingFieldEvidence.source_location_json` is a single JSON column,
+migrated with control migration 7. A single evidence row remains the source of truth.
+Old rows default to `{}` and are reported as unavailable; a backfill can locate them
+later without invalidating the extraction.
 
 ### 3.2 Locator service
 
@@ -115,13 +123,16 @@ Add `src/proptally/onboarding/source_location.py`:
 locate_source(pdf_path, evidence_text, *, page_hint=None) -> SourceLocation
 ```
 
-Matching order:
+Matching order in the shipped locator:
 
 1. Exact text match.
 2. Normalized match (whitespace, currency symbols, commas, case).
-3. Token/line match around the value.
-4. Fuzzy match above a conservative threshold.
-5. No match; return a typed failure, never a guessed location.
+3. Line/context match around the value.
+4. Multiple residual candidates: `AMBIGUOUS`, with no highlight.
+5. No match: `UNAVAILABLE`, never a guessed location.
+
+Fuzzy matching is deliberately deferred. Incorrect highlighting is worse than an
+unavailable highlight.
 
 Requirements:
 
@@ -140,11 +151,11 @@ The native iframe must be replaced before overlays are possible. Two options:
 
 **Recommended: a local PDF.js viewer.**
 
-- Vendor `pdfjs-dist` locally; no CDN and no external egress.
-- Use the page viewport to transform stored PDF rectangles to viewport pixels.
-- Supports page navigation, zoom, rotation, multi-page documents and a future
-  text layer for manual source selection.
-- Keep the highlight layer separate from the canvas/text layer.
+- PDF.js 3.11.174 is vendored locally; no CDN and no external egress.
+- The viewport transforms stored PDF rectangles into viewport pixels.
+- Supports page navigation and zoom now; rotation and a text layer remain hardening.
+- The highlight layer is separate from the canvas and contains only temporary
+  rectangles.
 
 **Fallback: server-rendered page images.**
 
@@ -169,7 +180,7 @@ The evidence panel and viewer should share one small state:
 }
 ```
 
-Suggested API:
+Implemented API:
 
 ```text
 GET /onboarding/import/{onboarding_id}/documents/{document_id}/evidence/{evidence_id}/location

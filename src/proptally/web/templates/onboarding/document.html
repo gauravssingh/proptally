@@ -23,8 +23,35 @@
 <div class="pt-document-layout">
     <div class="pt-document-preview">
         {% if is_pdf %}
-        <iframe src="/onboarding/import/{{ session.id }}/documents/{{ document.id }}/file#page={{ page }}"
-                title="Preview of {{ document.original_filename }}" loading="lazy"></iframe>
+        <div class="pt-pdf-viewer" data-pdf-viewer
+             data-pdf-url="/onboarding/import/{{ session.id }}/documents/{{ document.id }}/file"
+             data-pdf-page="{{ page }}">
+            <div class="pt-pdf-viewer__toolbar">
+                <div class="pt-pdf-viewer__group">
+                    <button type="button" class="pt-btn pt-btn--ghost pt-btn--icon pt-btn--sm"
+                            data-pdf-prev aria-label="Previous page">{{ ui.icon("chevron_left", "sm") }}</button>
+                    <span class="pt-pdf-viewer__page-label" data-pdf-page-label>Page {{ page }}</span>
+                    <button type="button" class="pt-btn pt-btn--ghost pt-btn--icon pt-btn--sm"
+                            data-pdf-next aria-label="Next page">{{ ui.icon("chevron_right", "sm") }}</button>
+                </div>
+                <div class="pt-pdf-viewer__group">
+                    <button type="button" class="pt-btn pt-btn--ghost pt-btn--icon pt-btn--sm"
+                            data-pdf-zoom-out aria-label="Zoom out">−</button>
+                    <span class="pt-pdf-viewer__zoom" data-pdf-zoom>100%</span>
+                    <button type="button" class="pt-btn pt-btn--ghost pt-btn--icon pt-btn--sm"
+                            data-pdf-zoom-in aria-label="Zoom in">+</button>
+                </div>
+            </div>
+            <div class="pt-pdf-viewer__viewport" data-pdf-viewport>
+                <div class="pt-pdf-viewer__page" data-pdf-page-container>
+                    <canvas data-pdf-canvas></canvas>
+                    <div class="pt-pdf-viewer__highlights" data-pdf-highlights></div>
+                </div>
+            </div>
+            <div class="pt-pdf-viewer__status" data-pdf-status role="status">
+                Select an evidence value to highlight its source.
+            </div>
+        </div>
         {% elif is_image %}
         <img src="/onboarding/import/{{ session.id }}/documents/{{ document.id }}/file"
              alt="Preview of {{ document.original_filename }}">
@@ -41,12 +68,21 @@
         <section class="pt-document-section">
             <h2>Evidence from this document</h2>
             {% if evidence %}
-            <ul class="pt-evidence-list">
+            <ul class="pt-evidence-list pt-evidence-list--selectable">
                 {% for item in evidence %}
-                <li>
-                    <span class="pt-fs-caption pt-text-muted">{{ item.field }} · page {{ item.page }}</span>
-                    <strong>{{ item.display }}</strong>
-                    {% if item.text %}<span class="pt-extracted-field__evidence-text">{{ item.text }}</span>{% endif %}
+                <li class="pt-evidence-item" data-evidence-id="{{ item.id }}"
+                    data-evidence-page="{{ item.page }}"
+                    data-evidence-location="/onboarding/import/{{ session.id }}/documents/{{ document.id }}/evidence/{{ item.id }}/location">
+                    <button type="button" class="pt-evidence-item__button" data-evidence-select>
+                        <span class="pt-fs-caption pt-text-muted">{{ item.field }} · page {{ item.page }}</span>
+                        <strong>{{ item.display }}</strong>
+                        {% if item.text %}<span class="pt-extracted-field__evidence-text">{{ item.text }}</span>{% endif %}
+                        {% if item.source_status == "AMBIGUOUS" %}
+                        <span class="pt-evidence-item__status">Multiple source locations; choose in the document.</span>
+                        {% elif item.source_status != "AVAILABLE" %}
+                        <span class="pt-evidence-item__status">Source location unavailable.</span>
+                        {% endif %}
+                    </button>
                 </li>
                 {% endfor %}
             </ul>
@@ -85,4 +121,11 @@
         </section>
     </aside>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% if is_pdf %}
+<script src="/static/vendor/pdfjs/pdf.min.js"></script>
+<script src="/static/js/pdf-viewer.js?v={{ asset_version() }}"></script>
+{% endif %}
 {% endblock %}

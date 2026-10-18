@@ -196,6 +196,26 @@ def _add_deletion_owner_metadata(engine) -> int:
     return 1
 
 
+def _add_evidence_source_locations(engine) -> int:
+    """Adds the resolved PDF coordinates beside the evidence text."""
+    from sqlalchemy import inspect
+
+    with engine.begin() as conn:
+        if not _table_exists(conn, "onboarding_field_evidence"):
+            return 0
+        columns = {
+            column["name"] for column in inspect(conn).get_columns("onboarding_field_evidence")
+        }
+        if "source_location_json" not in columns:
+            conn.execute(text(
+                "ALTER TABLE onboarding_field_evidence ADD COLUMN "
+                "source_location_json TEXT NOT NULL DEFAULT '{}'"
+            ))
+            logger.info("Control plane: added onboarding evidence source locations")
+            return 1
+    return 1
+
+
 def _rename_instance_admin_to_super_admin(engine) -> int:
     """Renames ``users.is_instance_admin`` to ``is_super_admin``.
 
@@ -226,6 +246,7 @@ CONTROL_MIGRATIONS = (
     (4, "staged tenant database fingerprint", _add_staged_database_fingerprint),
     (5, "deletion owner process metadata", _add_deletion_owner_metadata),
     (6, "rename is_instance_admin to is_super_admin", _rename_instance_admin_to_super_admin),
+    (7, "onboarding evidence source locations", _add_evidence_source_locations),
 )
 
 

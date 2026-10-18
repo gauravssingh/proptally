@@ -320,6 +320,8 @@ class OnboardingFieldEvidence(SQLModel, table=True):
     document_id: str = Field(foreign_key="onboarding_documents.id", index=True)
     page_number: int = Field(default=1)
     evidence_text: str = Field(default="")
+    #: Canonical PDF-point rectangles and matching metadata; see source_location.py.
+    source_location_json: str = Field(default="{}")
     method: str = Field(default="RULE")
     confidence: float = Field(default=0.7)
     created_at: datetime = Field(default_factory=utc_now)
