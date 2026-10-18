@@ -136,3 +136,20 @@ def test_repeated_address_prefers_the_property_address_block():
     )
     assert location["status"] == "AVAILABLE"
     assert location["rects"][0]["y0"] == 220.0
+
+
+def test_short_state_is_not_matched_inside_unrelated_words():
+    page = _page(
+        (_word("MAIL", 72, 1, 0, 0), _word("TO", 120, 1, 0, 1), _word("THIS", 150, 1, 0, 2), _word("ADDRESS", 190, 1, 0, 3)),
+        (_word("Property", 330, 5, 0, 0), _word("Address:", 390, 5, 0, 1)),
+        (_word("ALGONQUIN,", 330, 6, 0, 0), _word("IL", 410, 6, 0, 1), _word("60102", 430, 6, 0, 2)),
+    )
+    location = locate_source(
+        field_name="state",
+        value="IL",
+        evidence="ALGONQUIN, IL 60102",
+        page=1,
+        geometry=[page],
+    )
+    assert location["status"] == "AVAILABLE"
+    assert location["rects"][0]["x0"] == 410

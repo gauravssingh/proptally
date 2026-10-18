@@ -137,8 +137,6 @@ def _line_matches(page: dict, search: str, *, whole_lines: bool = False) -> list
             found = _phrase_match(line, search, wanted)
             if found is not None:
                 add(found[0], found[1], search, line.text, index, 1)
-            elif _normalise(search) and _normalise(search) in _normalise(line.text):
-                add([line.rect], "LINE", search, line.text, index, 1)
 
     return matches
 
