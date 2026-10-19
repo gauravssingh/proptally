@@ -137,15 +137,26 @@ def _client_ip(request: Request) -> str:
 
 def _safe_next(next_url: str | None) -> str:
     """Only ever redirect to a path on this host."""
-    if next_url and next_url.startswith("/") and not next_url.startswith("//"):
-        return next_url
-    return "/"
+    from proptally.web.helpers import safe_local_path
+
+    return safe_local_path(next_url)
 
 
-def _render(templates, request: Request, name: str, context: dict, *, csrf_token: str, set_cookie: bool):
+def _render(
+    templates,
+    request: Request,
+    name: str,
+    context: dict,
+    *,
+    csrf_token: str,
+    set_cookie: bool,
+    status_code: int = 200,
+):
     """Renders an unauthenticated page, issuing the pre-session CSRF cookie once."""
     response = templates.TemplateResponse(
-        request=request, name=name, context={"csrf_token": csrf_token, **context}
+        request=request, name=name,
+        context={"csrf_token": csrf_token, **context},
+        status_code=status_code,
     )
     if set_cookie:
         set_pre_session_csrf_cookie(response, csrf_token, request)
@@ -176,6 +187,7 @@ def get_auth_router(
         pane: str | None = None,
         email: str = "",
         next_url: str = "/",
+        status_code: int = 200,
     ):
         """Render the sign-in box, optionally with a verdict on the last attempt.
 
@@ -194,7 +206,7 @@ def get_auth_router(
                 "registration_open": registration_is_open(control_engine),
                 "code_required": registration_requires_code(control_engine),
             },
-            csrf_token=csrf_token, set_cookie=set_cookie,
+            csrf_token=csrf_token, set_cookie=set_cookie, status_code=status_code,
         )
 
     @router.get("/auth/login", response_class=HTMLResponse)
@@ -217,10 +229,12 @@ def get_auth_router(
         csrf_token: str = Form(None),
         next: str = Form("/"),
     ):
+        presented_csrf = csrf_token
         csrf_token, set_cookie = issue_pre_session_csrf(request)
-        if not pre_session_csrf_valid(request, csrf_token):
+        if not pre_session_csrf_valid(request, presented_csrf):
             return _render_login(
-                request, error_kind="expired", email=email, next_url=_safe_next(next)
+                request, error_kind="expired", email=email,
+                next_url=_safe_next(next), status_code=403,
             )
 
         ip = _client_ip(request)
@@ -321,6 +335,7 @@ def get_auth_router(
         portfolio_code: str = Form(""),
         csrf_token: str = Form(None),
     ):
+        presented_csrf = csrf_token
         csrf_token, set_cookie = issue_pre_session_csrf(request)
 
         def failure(message: str):
@@ -331,7 +346,7 @@ def get_auth_router(
 
         if not _door_is_reachable():
             return RedirectResponse(url="/auth/login", status_code=303)
-        if not pre_session_csrf_valid(request, csrf_token):
+        if not pre_session_csrf_valid(request, presented_csrf):
             return failure("Your form expired. Please try again.")
 
         # A code is either a single-use one minted in the console or the older
@@ -518,11 +533,12 @@ def get_auth_router(
         display_name: str = Form(""),
         csrf_token: str = Form(None),
     ):
+        presented_csrf = csrf_token
         csrf_token, _ = issue_pre_session_csrf(request)
         invite = find_invite(control_engine, token)
         if invite is None:
             return _invite_is_gone(request)
-        if not pre_session_csrf_valid(request, csrf_token):
+        if not pre_session_csrf_valid(request, presented_csrf):
             return _render_invite(
                 request, token, invite,
                 error="Your form expired. Please try again.",
@@ -606,8 +622,9 @@ def get_auth_router(
         token: str, request: Request,
         password: str = Form(...), csrf_token: str = Form(None),
     ):
+        presented_csrf = csrf_token
         csrf_token, set_cookie = issue_pre_session_csrf(request)
-        if not pre_session_csrf_valid(request, csrf_token):
+        if not pre_session_csrf_valid(request, presented_csrf):
             return _render(
                 templates, request, "reset_password.html",
                 {"error": "Your form expired. Please try again.", "token": token,
@@ -763,7 +780,8 @@ def get_auth_router(
         context.require_admin()
         try:
             change_member_role(
-                control_engine, membership_id, role, tenant_id=context.tenant.id
+                control_engine, membership_id, role, tenant_id=context.tenant.id,
+                actor_user_id=context.user.id,
             )
         except MembershipError as exc:
             return RedirectResponse(
@@ -780,7 +798,7 @@ def get_auth_router(
         """Removes somebody's access to this portfolio. Their account survives."""
         context.require_admin()
         try:
-            remove_member(control_engine, membership_id, tenant_id=context.tenant.id)
+            remove_member(control_engine, membership_id, tenant_id=context.tenant.id, actor_user_id=context.user.id)
         except MembershipError as exc:
             return RedirectResponse(
                 url=f"/account?section={ACCOUNT_SECTION_PEOPLE}&error={urllib.parse.quote(str(exc))}",
@@ -796,7 +814,7 @@ def get_auth_router(
         """Withdraws an unaccepted invitation, so its link stops working."""
         context.require_admin()
         try:
-            revoke_invite(control_engine, invite_id, tenant_id=context.tenant.id)
+            revoke_invite(control_engine, invite_id, tenant_id=context.tenant.id, actor_user_id=context.user.id)
         except MembershipError as exc:
             return RedirectResponse(
                 url=f"/account?section={ACCOUNT_SECTION_PEOPLE}&error={urllib.parse.quote(str(exc))}",

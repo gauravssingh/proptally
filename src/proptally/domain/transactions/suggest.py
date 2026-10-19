@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from typing import List, Optional
+
 from sqlmodel import Session, select
 
 from proptally.db.models import VendorRule

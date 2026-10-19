@@ -26,8 +26,6 @@ from proptally.db.models import (
 )
 from proptally.domain.accounting import coa
 from proptally.domain.accounting.coa import (
-    MORTGAGE_CLEARING,
-    STANDARD_ACCOUNTS,
     ALLOCATION_RANGES,
     CARD_LIABILITY,
     DEPOSIT,
@@ -35,7 +33,6 @@ from proptally.domain.accounting.coa import (
     MORTGAGE_CLEARING,
     MORTGAGE_PRINCIPAL,
     PROPERTY_ASSET,
-    allocate_ledger_account,
     ensure_entity_ledger_accounts,
     seed_standard_accounts,
 )

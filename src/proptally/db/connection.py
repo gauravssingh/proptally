@@ -4,8 +4,8 @@ import os
 import sqlite3
 from pathlib import Path
 from typing import Any
+
 from sqlalchemy import create_engine, event
-from sqlmodel import Session
 
 DEFAULT_DB_PATH = os.environ.get(
     "PROPTALLY_DB_PATH", 

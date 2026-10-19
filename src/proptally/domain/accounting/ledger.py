@@ -1,18 +1,21 @@
 """Double-entry journal posting, balance verification, and reversal service."""
 
 from datetime import date, datetime, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional
 from uuid import uuid4
+
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
-from proptally.db.models import JournalEntry, JournalEntryLine, LedgerAccount, AuditLog
+
 from proptally.core.exceptions import (
-    UnbalancedJournalEntryError,
+    AccountNotFoundError,
+    DuplicatePostingError,
     EmptyJournalEntryError,
     ImmutableLedgerError,
-    DuplicatePostingError,
-    AccountNotFoundError,
     TransactionAlreadyReversedError,
+    UnbalancedJournalEntryError,
 )
+from proptally.db.models import AuditLog, JournalEntry, JournalEntryLine, LedgerAccount
 
 
 def create_journal_entry(
@@ -44,8 +47,16 @@ def create_journal_entry(
         source_transaction_id=source_transaction_id,
         description=description,
     )
-    session.add(entry)
-    session.flush()
+    try:
+        # The pre-check above is only a friendly fast path; the UNIQUE index is
+        # the real idempotency guard and can be won by a concurrent writer.
+        with session.begin_nested():
+            session.add(entry)
+            session.flush()
+    except IntegrityError as exc:
+        raise DuplicatePostingError(
+            f"Journal entry with idempotency_key '{idempotency_key}' already exists."
+        ) from exc
     return entry
 
 
@@ -225,8 +236,11 @@ def reverse_journal_entry(
         session.add(rev_line)
     session.flush()
 
-    # 3. Post the reversal entry
-    posted_reversal = post_journal_entry(session, reversal_header.id, commit=commit)
+    # 3. Post the reversal entry without committing: the reversal and its audit
+    # record must land together, or not at all.
+    posted_reversal = post_journal_entry(
+        session, reversal_header.id, commit=False, actor_id=actor_id
+    )
 
     # 4. Record audit log (original entry is NOT mutated; remains strictly immutable)
     audit = AuditLog(

@@ -424,6 +424,7 @@ button:disabled {
     .pt-lg-grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .pt-lg-grid-cols-12 { grid-template-columns: repeat(12, minmax(0, 1fr)); }
     .pt-lg-col-span-5 { grid-column: span 5 / span 5; }
+    .pt-lg-col-span-6 { grid-column: span 6 / span 6; }
     .pt-lg-col-span-7 { grid-column: span 7 / span 7; }
     .pt-lg-hidden { display: none !important; }
     .pt-lg-block { display: block; }

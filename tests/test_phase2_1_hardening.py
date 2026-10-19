@@ -2,21 +2,23 @@
 
 from datetime import date
 from uuid import uuid4
+
 import pytest
+from reference_portfolio import seed_reference_portfolio
 from sqlmodel import Session, select
+
 from proptally.db.models import (
-    Property,
-    FinancialInstitution,
-    FinancialAccount,
-    LoanAccount,
-    EscrowAccount,
-    Statement,
     Document,
-    Transaction,
-    TransactionSplit,
-    TransactionProcessingState,
+    FinancialAccount,
+    FinancialInstitution,
     JournalEntry,
     JournalEntryLine,
+    LoanAccount,
+    Property,
+    Statement,
+    Transaction,
+    TransactionProcessingState,
+    TransactionSplit,
 )
 from proptally.domain.accounting.coa import (
     MORTGAGE_INTEREST_CODE,
@@ -27,22 +29,21 @@ from proptally.domain.accounting.coa import (
     ensure_entity_ledger_accounts,
 )
 from proptally.domain.accounting.ledger import (
-    create_journal_entry,
     add_journal_line,
-    post_journal_entry,
+    create_journal_entry,
     is_entry_reversed,
+    post_journal_entry,
 )
 from proptally.domain.accounting.metrics import (
-    calculate_property_financials,
     calculate_portfolio_equity,
+    calculate_property_financials,
 )
 from proptally.domain.transactions.splits import (
+    SplitItem,
     apply_transaction_splits,
     post_transaction_to_ledger,
     reclassify_and_repost_transaction,
-    SplitItem,
 )
-from reference_portfolio import seed_reference_portfolio
 
 # Ledger codes owned by the entities this fixture declares. They are allocated
 # from the entity rows on every run (checking, the Visa liability, and each

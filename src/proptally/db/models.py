@@ -2,8 +2,9 @@
 
 from datetime import date, datetime, timezone
 from typing import Optional
-from sqlalchemy import CheckConstraint
-from sqlmodel import SQLModel, Field, Relationship
+
+from sqlalchemy import CheckConstraint, Index, UniqueConstraint
+from sqlmodel import Field, SQLModel
 
 
 def utc_now() -> datetime:
@@ -15,6 +16,12 @@ def utc_now() -> datetime:
 
 class Property(SQLModel, table=True):
     __tablename__ = "properties"
+    __table_args__ = (
+        CheckConstraint(
+            "property_type IN ('RENTAL_INVESTMENT', 'PRIMARY_RESIDENCE')",
+            name="check_property_type",
+        ),
+    )
 
     id: str = Field(primary_key=True)  # e.g. "prop_tinsley_huntley"
     name: str
@@ -112,7 +119,8 @@ class Lease(SQLModel, table=True):
     start_date: date
     end_date: Optional[date] = None
     monthly_rent_cents: int
-    security_deposit_cents: int
+    #: A deposit that was not stated is unknown, not equal to one month's rent.
+    security_deposit_cents: Optional[int] = None
     document_id: Optional[str] = Field(default=None, foreign_key="documents.id")
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=utc_now)
@@ -136,6 +144,10 @@ class FinancialAccount(SQLModel, table=True):
         CheckConstraint(
             "mixed_use_status IN ('DEDICATED_RENTAL', 'MIXED_USE', 'UNCLASSIFIED')",
             name="check_account_mixed_use_status",
+        ),
+        CheckConstraint(
+            "account_type IN ('CHECKING', 'SAVINGS', 'CREDIT_CARD', 'MORTGAGE')",
+            name="check_account_type",
         ),
     )
 
@@ -200,6 +212,14 @@ class EscrowAccount(SQLModel, table=True):
 
 class EscrowMovement(SQLModel, table=True):
     __tablename__ = "escrow_movements"
+    __table_args__ = (
+        CheckConstraint(
+            "movement_type IN ('CONTRIBUTION', 'TAX_DISBURSEMENT', "
+            "'INSURANCE_DISBURSEMENT', 'REFUND', 'INTEREST_EARNED', "
+            "'SHORTAGE_ADJUSTMENT')",
+            name="check_escrow_movement_type",
+        ),
+    )
 
     id: str = Field(primary_key=True)
     escrow_account_id: str = Field(foreign_key="escrow_accounts.id")
@@ -317,6 +337,7 @@ class Transaction(SQLModel, table=True):
     __tablename__ = "transactions"
     __table_args__ = (
         CheckConstraint("direction IN ('INFLOW', 'OUTFLOW')", name="check_transaction_direction"),
+        Index("ix_transactions_account_date", "financial_account_id", "transaction_date"),
     )
 
     id: str = Field(primary_key=True)
@@ -344,6 +365,17 @@ class TransactionSplit(SQLModel, table=True):
     __tablename__ = "transaction_splits"
     __table_args__ = (
         CheckConstraint("amount_cents > 0", name="check_split_amount_positive"),
+        CheckConstraint(
+            "category IN ('RENT_INCOME', 'RENT', 'LATE_FEE', 'FEE', 'FEE_INCOME', "
+            "'TAXES', 'INSURANCE', 'REPAIRS', 'SUPPLIES', 'SNOW_LANDSCAPING', "
+            "'UTILITIES', 'BANK_FEES', 'MANAGEMENT', 'COMMISSIONS', 'HOA', "
+            "'LEGAL', 'PERSONAL', 'MORTGAGE', 'SECURITY_DEPOSIT')",
+            name="check_split_category",
+        ),
+        UniqueConstraint(
+            "transaction_id", "property_id", "category",
+            name="uq_split_transaction_property_category",
+        ),
     )
 
     id: str = Field(primary_key=True)
@@ -448,8 +480,8 @@ class JournalEntryLine(SQLModel, table=True):
     )
 
     id: str = Field(primary_key=True)
-    journal_entry_id: str = Field(foreign_key="journal_entries.id")
-    ledger_account_code: int = Field(foreign_key="ledger_accounts.code")
+    journal_entry_id: str = Field(foreign_key="journal_entries.id", index=True)
+    ledger_account_code: int = Field(foreign_key="ledger_accounts.code", index=True)
     property_id: Optional[str] = Field(default=None, foreign_key="properties.id")
     debit_cents: int = Field(default=0)
     credit_cents: int = Field(default=0)

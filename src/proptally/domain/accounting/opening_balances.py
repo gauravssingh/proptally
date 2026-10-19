@@ -1,12 +1,15 @@
 """Controlled opening balance migration service for PropTally."""
 
 from datetime import date
-from typing import Dict, List, Optional
+from typing import List, Optional
+
 from pydantic import BaseModel
 from sqlmodel import Session, select
-from proptally.db.models import JournalEntry, LedgerAccount
-from proptally.domain.accounting.ledger import create_journal_entry, add_journal_line, post_journal_entry
+
 from proptally.core.exceptions import AccountNotFoundError, DuplicatePostingError
+from proptally.db.models import JournalEntry, LedgerAccount, LoanAccount
+from proptally.domain.accounting.coa import OWNER_EQUITY_CODE
+from proptally.domain.accounting.ledger import add_journal_line, create_journal_entry, post_journal_entry
 
 
 class OpeningAccountBalance(BaseModel):
@@ -92,3 +95,78 @@ def record_opening_balances(
 
     posted_entry = post_journal_entry(session, entry.id)
     return posted_entry
+
+
+def post_loan_opening_balances(
+    session: Session,
+    loan: LoanAccount,
+    principal_cents: Optional[int],
+    escrow_cents: Optional[int],
+    *,
+    commit: bool = True,
+) -> JournalEntry | None:
+    """Record a loan's opening principal and escrow reserve exactly once.
+
+    Both figures belong to the loan, not to a dated portfolio baseline: offering
+    the same balance in two places is how it gets counted twice. Idempotent on
+    ``MORTGAGE_OPENING:<loan id>``, so a retried onboarding or a resubmitted
+    wizard cannot double the debt.
+    """
+    principal_cents = int(principal_cents or 0)
+    escrow_cents = int(escrow_cents or 0)
+    if principal_cents <= 0 and escrow_cents <= 0:
+        return None
+    if loan.principal_ledger_code is None or loan.escrow_ledger_code is None:
+        # Allocation may not have run yet; run it explicitly rather than guess.
+        from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
+
+        ensure_entity_ledger_accounts(session, commit=False)
+        session.refresh(loan)
+    if loan.principal_ledger_code is None or loan.escrow_ledger_code is None:
+        raise AccountNotFoundError(
+            f"Loan {loan.id} has no principal/escrow ledger accounts."
+        )
+
+    key = f"MORTGAGE_OPENING:{loan.id}"
+    existing = session.exec(
+        select(JournalEntry).where(JournalEntry.idempotency_key == key)
+    ).first()
+    if existing is not None:
+        return existing
+
+    entry = create_journal_entry(
+        session,
+        entry_date=loan.origination_date or date.today(),
+        entry_type="OPENING_BALANCE",
+        description=f"Opening balances declared for loan {loan.loan_number}",
+        idempotency_key=key,
+    )
+    if principal_cents:
+        add_journal_line(
+            session,
+            entry.id,
+            loan.principal_ledger_code,
+            credit_cents=principal_cents,
+            property_id=loan.property_id,
+        )
+    if escrow_cents:
+        add_journal_line(
+            session,
+            entry.id,
+            loan.escrow_ledger_code,
+            debit_cents=escrow_cents,
+            property_id=loan.property_id,
+        )
+
+    difference = principal_cents - escrow_cents
+    if difference > 0:
+        add_journal_line(
+            session, entry.id, OWNER_EQUITY_CODE,
+            debit_cents=difference, description="Opening mortgage liability assumed",
+        )
+    elif difference < 0:
+        add_journal_line(
+            session, entry.id, OWNER_EQUITY_CODE,
+            credit_cents=-difference, description="Opening escrow reserve acquired",
+        )
+    return post_journal_entry(session, entry.id, commit=commit)

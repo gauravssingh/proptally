@@ -43,7 +43,7 @@ def test_reference_property_renders_the_three_overview_cards(owner):
     assert "Mortgage" in page.text
     assert "Value &amp; position" in page.text
     assert "Estimated" in page.text
-    assert "No servicer payments recorded yet" in page.text
+    assert "Principal paid down" in page.text
 
 
 def test_mortgage_periods_populate_the_repayment_widget(owner):
@@ -186,3 +186,55 @@ def test_a_property_without_a_valuation_states_what_is_missing(owner):
     assert page.status_code == 200
     assert "A current valuation is needed" in page.text
     assert "Valuation not recorded" in page.text
+
+
+def test_statement_balances_show_principal_paid_down(owner):
+    signed_in = owner(reference_portfolio=True)
+    with Session(signed_in.engine) as session:
+        loan = session.exec(
+            select(LoanAccount).where(LoanAccount.property_id == "prop_tinsley_huntley")
+        ).one()
+        document = Document(
+            id="doc_progress_stmt",
+            file_sha256="progress-statement-hash",
+            original_filename="progress.pdf",
+            storage_path="/tmp/progress.pdf",
+            file_size_bytes=1,
+            document_type="MORTGAGE_STATEMENT",
+            property_id="prop_tinsley_huntley",
+        )
+        statement = Statement(
+            id="stmt_progress",
+            document_id=document.id,
+            financial_account_id=loan.financial_account_id,
+            statement_type="MORTGAGE",
+            active_parser_name="test",
+            active_parser_version="1",
+            statement_date=date(2026, 1, 1),
+        )
+        session.add(document)
+        session.add(statement)
+        session.flush()
+        for index, (month, principal) in enumerate(((1, 30_000_000), (2, 29_000_000))):
+            session.add(MortgagePeriod(
+                id=f"mp_progress_{index}",
+                statement_id=statement.id,
+                loan_account_id=loan.id,
+                payment_due_date=date(2026, month, 1),
+                statement_date=date(2026, month, 1),
+                principal_billed_cents=100_000,
+                interest_billed_cents=50_000,
+                escrow_billed_cents=20_000,
+                total_amount_billed_cents=170_000,
+                outstanding_principal_cents=principal,
+                interest_rate_bps=3125,
+                status="BILLED",
+            ))
+        session.commit()
+
+    page = signed_in.client.get("/properties/prop_tinsley_huntley")
+    assert page.status_code == 200
+    assert "Based on servicer statement balances" in page.text
+    assert "Paid down" in page.text
+    assert "Current principal" in page.text
+    assert "3.3%" in page.text

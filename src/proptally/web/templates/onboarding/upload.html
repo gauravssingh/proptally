@@ -14,16 +14,21 @@
 {% include "onboarding/_resume.html" %}
 {% else %}
 {% import "onboarding/_journey.html" as journey with context %}
-{% set upload_actions %}
-    {{ ui.btn("Choose a ZIP", variant="primary", href="#upload-form", icon_name="upload") }}
-{% endset %}
-{{ journey.card(
-    steps=upload_steps,
-    icon_name="upload",
-    title="Upload documents",
-    text="One ZIP archive. Files may be in folders; processing continues in the background.",
-    actions=upload_actions
-) }}
+<section class="pt-upload-brief" aria-labelledby="upload-brief-title">
+    <div class="pt-upload-brief__steps">{{ journey.import_steps(upload_steps) }}</div>
+    <span class="pt-upload-brief__icon">{{ ui.icon("upload", "lg") }}</span>
+    <div class="pt-upload-brief__copy">
+        <h2 class="pt-upload-brief__title" id="upload-brief-title">Upload documents</h2>
+        <p class="pt-upload-brief__text">
+            Put your deeds, mortgage statements, bank statements, leases, tax bills, and insurance policies
+            in one ZIP. Subfolders are fine.
+        </p>
+    </div>
+    <div class="pt-upload-brief__assurances">
+        <span class="pt-upload-brief__assurance">{{ ui.icon("shield", "sm") }} Stays on this server</span>
+        <span class="pt-upload-brief__assurance">{{ ui.icon("eye", "sm") }} You review every record</span>
+    </div>
+</section>
 {% endif %}
 
 {% if not can_work %}
@@ -57,8 +62,8 @@
             </div>
 
             <div class="pt-onboarding-actions">
-                {{ ui.btn("Upload and process", variant="primary", type="submit", icon_name="upload") }}
                 {{ ui.btn("Choose the manual path instead", variant="ghost", href="/onboarding") }}
+                {{ ui.btn("Upload and process", variant="primary", type="submit", icon_name="upload") }}
             </div>
         </form>
 
@@ -82,14 +87,49 @@
     </div>
 </section>
 
-<section class="pt-onboarding-notes">
-    <h2>What happens next</h2>
-    <ol>
-        <li>The archive is checked for unsafe paths, oversized content and ZIP bombs.</li>
-        <li>Each document is classified and read in the background — one job per file.</li>
-        <li>Related documents are reconciled, and disagreements are shown as conflicts.</li>
-        <li>You review each record against the original document and page.</li>
-        <li>Only what you approve is used to create the portfolio through PropTally's normal setup.</li>
+<section class="pt-onboarding-flow" aria-labelledby="onboarding-flow-title">
+    <h2 class="pt-onboarding-flow__title" id="onboarding-flow-title">What happens next</h2>
+    <ol class="pt-flow" aria-label="Document import steps">
+        <li class="pt-flow__step">
+            <div class="pt-flow__head">
+                <span class="pt-flow__icon">{{ ui.icon("shield", "md") }}</span>
+                <span class="pt-flow__index" aria-hidden="true">01</span>
+            </div>
+            <h3 class="pt-flow__title">Archive checked</h3>
+            <p class="pt-flow__text">Unsafe paths, oversized content, and ZIP bombs are rejected before processing starts.</p>
+        </li>
+        <li class="pt-flow__step">
+            <div class="pt-flow__head">
+                <span class="pt-flow__icon">{{ ui.icon("file_text", "md") }}</span>
+                <span class="pt-flow__index" aria-hidden="true">02</span>
+            </div>
+            <h3 class="pt-flow__title">Documents read</h3>
+            <p class="pt-flow__text">Each file is classified and read in the background, one job per document.</p>
+        </li>
+        <li class="pt-flow__step">
+            <div class="pt-flow__head">
+                <span class="pt-flow__icon">{{ ui.icon("sliders", "md") }}</span>
+                <span class="pt-flow__index" aria-hidden="true">03</span>
+            </div>
+            <h3 class="pt-flow__title">Records reconciled</h3>
+            <p class="pt-flow__text">Related documents are grouped together. Disagreements become conflicts for you to resolve.</p>
+        </li>
+        <li class="pt-flow__step">
+            <div class="pt-flow__head">
+                <span class="pt-flow__icon">{{ ui.icon("eye", "md") }}</span>
+                <span class="pt-flow__index" aria-hidden="true">04</span>
+            </div>
+            <h3 class="pt-flow__title">You review</h3>
+            <p class="pt-flow__text">Check every proposed record against its original document and page.</p>
+        </li>
+        <li class="pt-flow__step">
+            <div class="pt-flow__head">
+                <span class="pt-flow__icon">{{ ui.icon("check_circle", "md") }}</span>
+                <span class="pt-flow__index" aria-hidden="true">05</span>
+            </div>
+            <h3 class="pt-flow__title">Portfolio created</h3>
+            <p class="pt-flow__text">Only the records you approve are written, through PropTally's normal portfolio setup.</p>
+        </li>
     </ol>
 </section>
 {% endif %}

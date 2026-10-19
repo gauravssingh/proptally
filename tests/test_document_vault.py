@@ -143,8 +143,8 @@ def test_opening_a_folder_shows_what_is_inside_it(vault):
     root = client.get("/documents").text
     assert "pt-tree__link is-active" in root                  # the vault itself is the open folder
     assert "4821 Larkspur Ave" in root and "Unfiled" in root  # the property level of the tree
-    assert "pt-folders" in root                               # folders are what you open
     assert "lease.pdf" in root and "receipt.png" in root      # and their files are listed beside them
+    assert "pt-table__parent-row" not in root                 # root is top-level: no .. parent row
 
     # Inside the property: its own type folders, then its documents.
     inside = client.get(f"/documents?property={vault['property_id']}").text
@@ -153,16 +153,18 @@ def test_opening_a_folder_shows_what_is_inside_it(vault):
     assert "receipt.png" not in inside        # that document lives in another folder
     assert "pt-breadcrumb__here" in inside and 'aria-current="page"' in inside
     assert "pt-tree__link is-active" in inside
+    assert "pt-table__parent-row" in inside and ".." in inside  # .. row to move up to root
 
-    # Inside the type folder: the documents, with no folders left to open.
+    # Inside the type folder: the documents, with .. row to move up to property.
     leaf = client.get(f"/documents?property={vault['property_id']}&type=LEASE_AGREEMENT").text
     assert "lease.pdf" in leaf
-    assert "pt-folders" not in leaf
+    assert "pt-table__parent-row" in leaf and ".." in leaf      # .. row to move up to property
     assert "1 document" in leaf                # the title bar counts what the folder holds
 
     # The other branch of the tree still holds the unfiled document.
     unfiled = client.get("/documents?property=unfiled").text
     assert "receipt.png" in unfiled and "lease.pdf" not in unfiled
+    assert "pt-table__parent-row" in unfiled and ".." in unfiled
 
 
 def test_the_uploader_opens_on_demand_rather_than_sitting_on_the_page(vault):

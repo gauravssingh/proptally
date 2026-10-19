@@ -153,17 +153,6 @@ def _date_after_label(text: str, labels: tuple[str, ...]) -> date | None:
     return None
 
 
-def _money_after_label(text: str, labels: tuple[str, ...]) -> int | None:
-    for label in labels:
-        match = re.search(rf"{label}[^\S\r\n]*[:]?[^\S\r\n]*(?:\n\s*)?\$?\s*(-?[\d,]+\.\d{{2}})", text, re.IGNORECASE)
-        if match:
-            try:
-                return int((Decimal(match.group(1).replace(",", "")) * 100).quantize(Decimal(1)))
-            except InvalidOperation:
-                continue
-    return None
-
-
 def _money_matches(text: str, labels: tuple[str, ...]) -> list[int]:
     label_pattern = "(?:" + "|".join(labels) + ")"
     pattern = re.compile(

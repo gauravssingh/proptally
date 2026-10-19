@@ -25,6 +25,7 @@ import json
 import re
 import shutil
 from datetime import date
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -32,6 +33,7 @@ from sqlmodel import Session, select
 
 from proptally.db.models import (
     Document,
+    DocumentExtraction,
     EscrowAccount,
     FinancialAccount,
     FinancialInstitution,
@@ -57,7 +59,11 @@ from proptally.db.onboarding_models import (
     OnboardingSession,
 )
 from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
+from proptally.domain.accounting.opening_balances import post_loan_opening_balances
 from proptally.domain.setup_state import ensure as ensure_setup
+from proptally.ingestion.parsers import PARSER_VERSION
+from proptally.ingestion.service import extract_and_resolve
+from proptally.onboarding.archive import BLOCKED_SUFFIXES
 from proptally.onboarding.pipeline import normalise_address
 from proptally.onboarding.store import OnboardingStore
 
@@ -111,9 +117,12 @@ def _institution_for(session: Session, name: str) -> FinancialInstitution:
 def _address_key_from(
     line1: Any, line2: Any, city: Any, state: Any, zip_code: Any
 ) -> tuple[str, str, str, str, str]:
+    # Creation stores a blank state as IL. Lookup must use the same default or a
+    # retry after a later failure inserts a duplicate door at the same address.
+    state_value = " ".join(str(state or "").split()).casefold() or "il"
     return tuple(
         " ".join((str(value) if value is not None else "").split()).casefold()
-        for value in (line1, line2, city, state, zip_code)
+        for value in (line1, line2, city, state_value, zip_code)
     )
 
 
@@ -168,7 +177,7 @@ def _create_property(session: Session, payload: dict) -> Property:
     )
     session.add(prop)
     session.flush()
-    ensure_entity_ledger_accounts(session)
+    ensure_entity_ledger_accounts(session, commit=False)
     return prop
 
 
@@ -195,7 +204,7 @@ def _create_account(session: Session, payload: dict) -> FinancialAccount:
     )
     session.add(account)
     session.flush()
-    ensure_entity_ledger_accounts(session)
+    ensure_entity_ledger_accounts(session, commit=False)
     return account
 
 
@@ -245,7 +254,16 @@ def _create_mortgage(session: Session, payload: dict, property_id: str) -> LoanA
                 opening_balance_cents=int(escrow_cents),
             )
         )
-    ensure_entity_ledger_accounts(session)
+    ensure_entity_ledger_accounts(session, commit=False)
+    # Onboarded loans must reach the ledger exactly like wizard-created ones,
+    # under the same idempotency key so a retry cannot double the debt.
+    post_loan_opening_balances(
+        session,
+        loan,
+        payload.get("outstanding_principal_cents") or payload.get("original_principal_cents"),
+        escrow_cents,
+        commit=False,
+    )
     return loan
 
 
@@ -303,11 +321,23 @@ def _staged_documents(control_engine, onboarding_id: str) -> list[dict]:
                 )
             ).all()
         }
+        # A property proposal is the authority on which documents belong to it.
+        # Recomputing from address fields would detach a document when the address
+        # was edited during review.
+        proposal_groups: dict[str, str] = {}
+        for proposal in control.exec(
+            select(OnboardingProposal).where(
+                OnboardingProposal.onboarding_id == onboarding_id,
+                OnboardingProposal.entity_type == ENTITY_PROPERTY,
+            )
+        ).all():
+            for document_id in _loads(proposal.source_document_ids_json or "[]"):
+                proposal_groups[str(document_id)] = proposal.group_key
         result = []
         for document in documents:
-            group = ""
+            group = proposal_groups.get(document.id, "")
             extraction = extractions.get(document.id)
-            if extraction is not None:
+            if not group and extraction is not None:
                 fields = (_loads(extraction.payload_json).get("fields") or {})
                 street = (fields.get("address_line1") or {}).get("value") or ""
                 city = (fields.get("city") or {}).get("value") or ""
@@ -342,23 +372,31 @@ def _copy_documents(
     what the customer uploaded, and the audit trail points at them.
     """
     copied: list[tuple[str, str]] = []
-    vault_root.mkdir(parents=True, exist_ok=True)
     for staged in documents:
         source = store.resolve(staged["storage_path"])
         if not source.is_file():
             continue
+        suffix = source.suffix.lower()
+        if suffix in BLOCKED_SUFFIXES:
+            # An archive's executable or script is never retained as a portfolio
+            # document, even if the customer uploaded it inside a ZIP.
+            continue
+        digest = staged["sha256"] or hashlib.sha256(source.read_bytes()).hexdigest()
         existing = tenant.exec(
-            select(Document).where(Document.file_sha256 == staged["sha256"])
+            select(Document).where(Document.file_sha256 == digest)
         ).first()
         if existing is not None:
             copied.append((staged["id"], existing.id))
             continue
 
-        destination = vault_root / f"{_id('doc')}{source.suffix.lower()}"
-        shutil.copyfile(source, destination)
+        # Content-addressable layout, matching ingestion / vault readers.
+        destination = vault_root / digest[:2] / f"{digest}{suffix}"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if not destination.exists():
+            shutil.copyfile(source, destination)
         document = Document(
             id=_id("doc"),
-            file_sha256=staged["sha256"] or hashlib.sha256(source.read_bytes()).hexdigest(),
+            file_sha256=digest,
             original_filename=staged["original_filename"],
             storage_path=str(destination),
             file_size_bytes=staged["size_bytes"],
@@ -371,6 +409,64 @@ def _copy_documents(
         tenant.flush()
         copied.append((staged["id"], document.id))
     return copied
+
+
+def _stage_statement_extractions(
+    tenant: Session,
+    documents: list[dict],
+    copied: list[tuple[str, str]],
+) -> None:
+    """Stage retained statement PDFs for the Statements & Ingestion screen.
+
+    Onboarding creates the properties, loans and accounts first; this turns both
+    mortgage and bank/card PDFs into the same extraction records an upload
+    through ``/statements`` would create. Using the shared extractor keeps the
+    bank/card-first parser order, so a credit-card statement is never read as a
+    mortgage merely because it prints an account number. A parsing failure is
+    local to that document: the portfolio is still complete, and the document
+    remains available to reprocess later.
+    """
+    tenant_document_ids = dict(copied)
+    for staged in documents:
+        if staged.get("category") not in {"MORTGAGE_STATEMENT", "BANK_STATEMENT"}:
+            continue
+        tenant_document_id = tenant_document_ids.get(staged["id"])
+        if not tenant_document_id:
+            continue
+        if tenant.exec(
+            select(DocumentExtraction.id).where(
+                DocumentExtraction.document_id == tenant_document_id
+            )
+        ).first() is not None:
+            continue
+        document = tenant.get(Document, tenant_document_id)
+        if document is None:
+            continue
+        path = Path(document.storage_path)
+        if not path.is_file():
+            continue
+        try:
+            extraction = extract_and_resolve(path, tenant)
+        except Exception:  # noqa: BLE001 - one unreadable PDF must not fail provisioning
+            continue
+        if extraction is None:
+            continue
+        document.document_type = {
+            "MORTGAGE": "MORTGAGE_STATEMENT",
+            "CHECKING": "CHECKING_STATEMENT",
+            "CREDIT_CARD": "CREDIT_CARD_STATEMENT",
+        }.get(extraction.statement_type, document.document_type)
+        tenant.add(document)
+        tenant.add(DocumentExtraction(
+            id=_id("ext"),
+            document_id=document.id,
+            parser_name=extraction.parser_name,
+            parser_version=PARSER_VERSION,
+            validation_status=extraction.status,
+            approval_status="PENDING",
+            extracted_data_json=json.dumps(extraction.to_dict(), sort_keys=True),
+        ))
+    tenant.flush()
 
 
 def _mark_entry(
@@ -435,10 +531,14 @@ def run_provisioning(control_engine, tenant_manager, store: OnboardingStore, onb
             ).all()
         }
         rows = [
-            (proposal.id, proposal.entity_type, proposal.payload_json)
+            (proposal.id, proposal.entity_type, proposal.group_key, proposal.payload_json)
             for proposal in proposals
             if proposal.id not in completed
         ]
+        # Properties must exist before the mortgages and leases that reference
+        # them; created_at order can put a later-sorted document's mortgage first.
+        _order = {"PROPERTY": 0, "ACCOUNT": 1, "MORTGAGE": 2, "LEASE": 3}
+        rows.sort(key=lambda row: _order.get(row[1], 99))
         if not rows and not any(p.status == PROPOSAL_ACCEPTED for p in proposals):
             # Everything accepted has already been imported; finish the session.
             onboarding.status = ONBOARDING_COMPLETED
@@ -460,16 +560,15 @@ def run_provisioning(control_engine, tenant_manager, store: OnboardingStore, onb
     property_by_group: dict[str, str] = {}
 
     with Session(engine) as tenant:
-        for proposal_id, entity_type, payload_json in rows:
+        for proposal_id, entity_type, group_key, payload_json in rows:
             payload = _loads(payload_json)
             try:
                 if entity_type == ENTITY_PROPERTY:
                     entity = _create_property(tenant, payload)
                     entity_id = entity.id
-                    key = normalise_address(
-                        payload.get("address_line1"), payload.get("city"), payload.get("zip_code")
-                    )
-                    property_by_group[f"property:{key}"] = entity_id
+                    # The proposal's own durable key, not a recalculation from
+                    # possibly edited payload fields: approval validated this key.
+                    property_by_group[group_key] = entity_id
                 elif entity_type == ENTITY_ACCOUNT:
                     entity_id = _create_account(tenant, payload).id
                 elif entity_type == ENTITY_MORTGAGE:
@@ -533,6 +632,12 @@ def run_provisioning(control_engine, tenant_manager, store: OnboardingStore, onb
                         staged.tenant_document_id = tenant_document_id
                         control.add(staged)
                 control.commit()
+            try:
+                _stage_statement_extractions(tenant, staged_documents, copied)
+                tenant.commit()
+            except Exception as exc:  # noqa: BLE001 - the portfolio is already written
+                tenant.rollback()
+                errors.append(f"Statement staging: {exc}")
 
     with Session(control_engine) as control:
         onboarding = control.get(OnboardingSession, onboarding_id)
@@ -547,6 +652,11 @@ def run_provisioning(control_engine, tenant_manager, store: OnboardingStore, onb
             onboarding.updated_at = utc_now()
             control.add(onboarding)
             control.commit()
+
+    if not errors:
+        # Every accepted document now lives in the portfolio's CAS vault, so the
+        # staged bytes (and the staging directory) are retained no longer.
+        store.remove_session(onboarding_id)
     return errors
 
 

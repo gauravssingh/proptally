@@ -6,9 +6,10 @@ This keeps a whole-portfolio check that the hand-computed figures in
 tests/test_custom_portfolio.py complement.
 """
 
-from sqlmodel import Session, select
-from proptally.db.models import Property, LoanAccount, Transaction, TransactionProcessingState
 from reference_portfolio import seed_reference_portfolio
+from sqlmodel import Session, select
+
+from proptally.db.models import Property, TransactionProcessingState
 from proptally.domain.accounting.metrics import calculate_portfolio_equity, calculate_property_financials
 
 

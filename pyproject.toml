@@ -42,3 +42,21 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# A real gate: pyflakes (undefined names, unused imports) plus import order and
+# the syntax-error rules. Style-only rules that the pre-existing code does not
+# satisfy are deliberately not selected.
+select = ["E4", "E7", "E9", "F", "I"]
+# E741 (single-letter names) and E712 (SQLAlchemy `== True` comparisons) are
+# pervasive in the query code and have no behavioural effect.
+ignore = ["E741", "E712"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]
+"tools/*" = ["E402"]
+"scripts/*" = ["E402"]

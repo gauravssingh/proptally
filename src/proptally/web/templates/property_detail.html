@@ -56,32 +56,119 @@
 </section>
 
 {# ===========================================================================
-   2. Property Financial Overview
-   Three cards: the property and its equity, the mortgage and repayment
-   progress, and value / LTV / appreciation. Every figure comes from the route's
-   persisted data or the existing metrics service; missing data is stated, never
-   invented.
+   2. Executive Headline KPI Strip (4 balanced tiles)
+   =========================================================================== #}
+<div class="pt-grid pt-sm-grid-cols-2 pt-lg-grid-cols-4 pt-gap-4 pt-property-kpis" aria-label="Key property metrics">
+    {# KPI 1: Estimated Equity / Asset Value #}
+    {% if is_mortgage_free %}
+        {{ ui.kpi(
+            "Estimated Value",
+            ui.amount(valuation.estimated_value_cents, mode="plain") if valuation else '<span class="pt-amount pt-amount--unavailable">—</span>',
+            sub="Owned free and clear · no debt lien",
+            evidence_kind=("estimated" if valuation else "needs_review"),
+            evidence_label=("APPRAISED" if valuation else "NEEDS VALUATION")
+        ) }}
+    {% elif net_equity_cents is not none %}
+        {{ ui.kpi(
+            "Estimated Equity",
+            ui.amount(net_equity_cents, mode="plain"),
+            sub="Valuation " ~ (valuation.estimated_value_cents | format_cents) ~ (" · " ~ equity_percent ~ "% equity" if equity_percent is not none else ""),
+            evidence_kind="estimated",
+            evidence_label="ESTIMATED"
+        ) }}
+    {% else %}
+        {{ ui.kpi(
+            "Estimated Equity",
+            '<span class="pt-amount pt-amount--unavailable">—</span>',
+            sub="A current valuation is needed to compute equity",
+            evidence_kind="needs_review",
+            evidence_label="NEEDS VALUATION"
+        ) }}
+    {% endif %}
+
+    {# KPI 2: Total Debt / Mortgage #}
+    {% if is_mortgage_free %}
+        {{ ui.kpi(
+            "Mortgage Debt",
+            ui.amount(0, mode="plain"),
+            sub="Owned free and clear · 0% LTV",
+            evidence_kind="verified",
+            evidence_label="MORTGAGE-FREE"
+        ) }}
+    {% elif loan %}
+        {{ ui.kpi(
+            "Mortgage Debt",
+            ui.amount(authoritative_principal_cents, mode="plain") if authoritative_principal_cents is not none else '<span class="pt-amount pt-amount--unavailable">—</span>',
+            sub=institution_name ~ (" · " ~ (loan.current_interest_rate_bps | format_bps) if loan.current_interest_rate_bps else ""),
+            evidence_kind=("verified" if servicer_reported_principal_cents else "calculated"),
+            evidence_label=("FROM STATEMENT" if servicer_reported_principal_cents else "POSTED LEDGER")
+        ) }}
+    {% else %}
+        {{ ui.kpi(
+            "Mortgage Debt",
+            '<span class="pt-amount pt-amount--unavailable">—</span>',
+            sub="No mortgage account linked",
+            evidence_kind="needs_review",
+            evidence_label="UNLINKED"
+        ) }}
+    {% endif %}
+
+    {# KPI 3: Operating Performance / CADS / Primary #}
+    {% if financials.rental_metrics_applicable %}
+        {{ ui.kpi(
+            "Net Cash Flow (CADS)",
+            ui.amount(financials.cads_cents, mode="signed"),
+            sub=("NOI " ~ (financials.noi_cents | format_cents) if financials.noi_cents is not none else "Operating cash flow after debt service"),
+            evidence_kind="calculated",
+            evidence_label="DOUBLE-ENTRY"
+        ) }}
+    {% else %}
+        {{ ui.kpi(
+            "Occupancy Status",
+            '<span class="pt-fs-body pt-fw-bold pt-text">Primary Residence</span>',
+            sub="Owner-occupied · Schedule E exempt",
+            evidence_kind="rule_match",
+            evidence_label="IRS EXEMPT"
+        ) }}
+    {% endif %}
+
+    {# KPI 4: Acquisition Basis & Capital Invested #}
+    {% if property.purchase_price_cents %}
+        {{ ui.kpi(
+            "Purchase Price",
+            ui.amount(property.purchase_price_cents, mode="plain"),
+            sub=("Appreciation " ~ (appreciation_cents | format_cents) ~ (" (+" ~ appreciation_percent ~ "%)" if appreciation_percent and appreciation_percent > 0 else "") if appreciation_cents is not none else ("Acquired " ~ (property.acquisition_date | format_date if property.acquisition_date else "—"))),
+            evidence_kind="statement",
+            evidence_label="PURCHASE NOTE"
+        ) }}
+    {% elif acquisition_cash_cents %}
+        {{ ui.kpi(
+            "Cash Invested",
+            ui.amount(acquisition_cash_cents, mode="plain"),
+            sub="Recorded down payment and closing costs",
+            evidence_kind="calculated",
+            evidence_label="ACQUISITION"
+        ) }}
+    {% else %}
+        {{ ui.kpi(
+            "Purchase Basis",
+            '<span class="pt-amount pt-amount--unavailable">—</span>',
+            sub="Purchase price & costs not recorded",
+            evidence_kind="needs_review",
+            evidence_label="UNRECORDED"
+        ) }}
+    {% endif %}
+</div>
+
+{# ===========================================================================
+   3. Property Financial Overview (3 balanced equal-width cards)
    =========================================================================== #}
 <section class="pt-overview" aria-label="Property financial overview">
 
-    {# --- Card 1: property and equity ---------------------------------- #}
+    {# --- Card 1: Asset & Equity -------------------------------------- #}
     <article class="pt-overview-card pt-overview-card--primary">
-        <div class="pt-overview-card__media">
-            {% if cover_photo %}
-            <img class="pt-overview-card__image"
-                 src="{{ cover_photo.storage_path }}"
-                 alt="{{ cover_photo.caption or property.name }}">
-            {% else %}
-            <div class="pt-overview-card__image pt-overview-card__image--empty" aria-hidden="true">
-                {{ ui.icon("home", "lg") }}
-            </div>
-            {% endif %}
-        </div>
-
-        <div class="pt-overview-card__identity">
-            <span class="pt-overview-card__eyebrow">{{ property_type_label }}</span>
-            <h2 class="pt-overview-card__title">{{ property.name }}</h2>
-            <p class="pt-overview-card__address" title="{{ address_full }}">{{ address_short }}</p>
+        <div class="pt-overview-card__head">
+            <h2 class="pt-overview-card__heading">Asset &amp; Equity</h2>
             <div class="pt-overview-card__badges">
                 {{ ui.badge("MORTGAGE-FREE" if is_mortgage_free else "FINANCED",
                             variant=("success" if is_mortgage_free else "neutral"), upper=true) }}
@@ -110,34 +197,49 @@
         </div>
 
         {% if net_equity_cents is not none %}
-        <dl class="pt-overview-breakdown">
-            <div>
-                <dt>Current value</dt>
-                <dd>{{ ui.amount(valuation.estimated_value_cents, mode="plain") }}</dd>
+        <div class="pt-overview-card__section">
+            <span class="pt-overview-card__section-title">Equity breakdown</span>
+            <dl class="pt-overview-breakdown">
+                <div>
+                    <dt>Current value</dt>
+                    <dd>{{ ui.amount(valuation.estimated_value_cents, mode="plain") }}</dd>
+                </div>
+                <div>
+                    <dt>Outstanding mortgage</dt>
+                    <dd>
+                        {{ ui.amount(authoritative_principal_cents, mode="plain")
+                           if authoritative_principal_cents is not none else "Mortgage-free" }}
+                    </dd>
+                </div>
+                {% if property.purchase_price_cents %}
+                <div>
+                    <dt>Purchase price</dt>
+                    <dd>{{ ui.amount(property.purchase_price_cents, mode="plain") }}</dd>
+                </div>
+                {% endif %}
+                <div>
+                    <dt>Equity share</dt>
+                    <dd>{{ equity_percent }}%</dd>
+                </div>
+            </dl>
+        </div>
+        {% if equity_percent is not none %}
+        <div class="pt-overview-progress">
+            <div class="pt-overview-progress__head">
+                <span>Equity share</span>
+                <strong>{{ equity_percent }}%</strong>
             </div>
-            <div>
-                <dt>Outstanding mortgage</dt>
-                <dd>
-                    {{ ui.amount(authoritative_principal_cents, mode="plain")
-                       if authoritative_principal_cents is not none else "Mortgage-free" }}
-                </dd>
-            </div>
-            {% if property.purchase_price_cents %}
-            <div>
-                <dt>Purchase price</dt>
-                <dd>{{ ui.amount(property.purchase_price_cents, mode="plain") }}</dd>
-            </div>
-            {% endif %}
-            <div>
-                <dt>Equity share</dt>
-                <dd>{{ equity_percent }}%</dd>
-            </div>
-        </dl>
+            {{ ui.progress(equity_percent, "Equity share") }}
+        </div>
+        {% endif %}
         {% else %}
-        <p class="pt-overview-card__empty-text">
-            Add a current valuation to calculate equity. The purchase price and
-            mortgage data are already recorded.
-        </p>
+        <div class="pt-overview-card__empty">
+            <span class="pt-overview-card__empty-icon" aria-hidden="true">{{ ui.icon("scale", "lg") }}</span>
+            <p class="pt-overview-card__empty-text">
+                Add a current valuation to calculate equity. The purchase price and
+                mortgage data are already recorded.
+            </p>
+        </div>
         {% endif %}
 
         <div class="pt-overview-card__actions">
@@ -156,6 +258,29 @@
             <h2 class="pt-overview-card__heading">Mortgage</h2>
             {% if is_mortgage_free %}
             {{ ui.badge("MORTGAGE-FREE", variant="success", upper=true) }}
+            {% elif loan %}
+            {{ ui.badge(institution_name, variant="neutral", mono=true) }}
+            {% endif %}
+        </div>
+
+        <div class="pt-overview-card__primary">
+            {% if is_mortgage_free %}
+            <span class="pt-overview-card__primary-label">Mortgage status</span>
+            <span class="pt-overview-card__primary-value">Mortgage-free</span>
+            <span class="pt-overview-card__meta">Owned free and clear</span>
+            {% elif loan %}
+            <span class="pt-overview-card__primary-label">Outstanding Principal</span>
+            <span class="pt-overview-card__primary-value">
+                {{ ui.amount(authoritative_principal_cents, mode="plain", cls="pt-overview-card__amount")
+                   if authoritative_principal_cents is not none else "—" }}
+            </span>
+            <span class="pt-overview-card__meta">
+                {{ "Servicer reported balance" if servicer_reported_principal_cents else "Ledger derived balance" }}
+            </span>
+            {% else %}
+            <span class="pt-overview-card__primary-label">Mortgage status</span>
+            <span class="pt-overview-card__primary-value pt-overview-card__primary-value--empty">—</span>
+            <span class="pt-overview-card__meta">No mortgage recorded</span>
             {% endif %}
         </div>
 
@@ -163,9 +288,11 @@
         <div class="pt-overview-card__empty">
             <span class="pt-overview-card__empty-icon" aria-hidden="true">{{ ui.icon("bank", "lg") }}</span>
             <p><strong>No mortgage recorded.</strong> This property is owned free and clear.</p>
+        </div>
+        <div class="pt-overview-card__actions">
             {{ ui.btn("Add a mortgage", variant="secondary", size="sm", href="/setup/mortgage") }}
         </div>
-        {% else %}
+        {% elif loan %}
         <div class="pt-overview-card__section">
             <span class="pt-overview-card__section-title">Loan terms</span>
             <dl class="pt-overview-breakdown">
@@ -211,8 +338,12 @@
                            if authoritative_principal_cents is not none else "—" }}</dd>
                 </div>
                 <div>
-                    <dt>Principal repaid</dt>
-                    <dd>{{ principal_repaid_percent ~ "%" if principal_repaid_percent is not none else "—" }}</dd>
+                    <dt>Principal paid down</dt>
+                    <dd>
+                        {% if principal_progress_percent is not none %}{{ principal_progress_percent }}%
+                        {% elif principal_repaid_percent is not none %}{{ principal_repaid_percent }}%
+                        {% else %}—{% endif %}
+                    </dd>
                 </div>
                 <div>
                     <dt>Monthly payment</dt>
@@ -242,15 +373,32 @@
             last_payment_date,
             instalments_over_term
         ) }}
+        {% elif principal_progress_percent is not none %}
+        {{ mortgage_progress.principal_widget(
+            principal_progress_percent,
+            principal_paid_down_cents,
+            authoritative_principal_cents,
+            principal_start_cents,
+            principal_statement_count,
+            principal_start_date,
+            principal_latest_date
+        ) }}
         {% else %}
         <p class="pt-overview-card__empty-text">
-            No servicer payments recorded yet. Import a mortgage statement to populate
-            this progress.
+            No mortgage statements recorded yet. Import one to populate this progress.
         </p>
         {% endif %}
 
         <div class="pt-overview-card__actions">
             {{ ui.btn("View mortgage", variant="secondary", size="sm", href="/mortgages") }}
+        </div>
+        {% else %}
+        <div class="pt-overview-card__empty">
+            <span class="pt-overview-card__empty-icon" aria-hidden="true">{{ ui.icon("bank", "lg") }}</span>
+            <p><strong>No active mortgage loan on this property.</strong></p>
+        </div>
+        <div class="pt-overview-card__actions">
+            {{ ui.btn("Add a mortgage", variant="secondary", size="sm", href="/setup/mortgage") }}
         </div>
         {% endif %}
     </article>
@@ -262,20 +410,29 @@
             {% if valuation_is_stale %}
             {{ ui.badge("VALUATION STALE", variant="warning", upper=true,
                         title="The latest valuation is more than 12 months old.") }}
+            {% elif valuation %}
+            {{ ui.badge("APPRAISED", variant="success", upper=true) }}
+            {% else %}
+            {{ ui.badge("UNRECORDED", variant="neutral", upper=true) }}
             {% endif %}
         </div>
 
-        {% if valuation %}
-        <div class="pt-overview-card__primary pt-overview-card__primary--small">
+        <div class="pt-overview-card__primary">
+            {% if valuation %}
             <span class="pt-overview-card__primary-label">Current estimated value</span>
             <span class="pt-overview-card__primary-value">
                 {{ ui.amount(valuation.estimated_value_cents, mode="plain",
-                             cls="pt-overview-card__amount pt-overview-card__amount--small") }}
+                             cls="pt-overview-card__amount") }}
             </span>
             <span class="pt-overview-card__meta">
                 As of {{ valuation.valuation_date | format_date }}
                 {%- if valuation_age_months and valuation_age_months > 0 %} · {{ valuation_age_months }} mo old{% endif %}
             </span>
+            {% else %}
+            <span class="pt-overview-card__primary-label">Current estimated value</span>
+            <span class="pt-overview-card__primary-value pt-overview-card__primary-value--empty">—</span>
+            <span class="pt-overview-card__meta">Valuation not recorded</span>
+            {% endif %}
         </div>
 
         <div class="pt-overview-card__section">
@@ -307,10 +464,12 @@
             <p class="pt-overview-card__empty-text">
                 Down payment, closing costs and furnishing costs are not recorded.
             </p>
-            <button type="button" class="pt-btn pt-btn--ghost pt-btn--sm"
-                    data-modal-open="edit-details-modal">
-                Add acquisition costs
-            </button>
+            <div>
+                <button type="button" class="pt-btn pt-btn--ghost pt-btn--sm"
+                        data-modal-open="edit-details-modal">
+                    Add acquisition costs
+                </button>
+            </div>
             {% endif %}
         </div>
 
@@ -350,334 +509,34 @@
             </dl>
         </div>
 
-        {% if equity_percent is not none %}
-        <div class="pt-overview-progress">
-            <div class="pt-overview-progress__head">
-                <span>Equity share</span>
-                <strong>{{ equity_percent }}%</strong>
+        {% if valuation %}
+            {% if equity_percent is not none %}
+            <div class="pt-overview-progress">
+                <div class="pt-overview-progress__head">
+                    <span>Equity share</span>
+                    <strong>{{ equity_percent }}%</strong>
+                </div>
+                {{ ui.progress(equity_percent, "Equity share") }}
             </div>
-            {{ ui.progress(equity_percent, "Equity share") }}
-        </div>
-        {% endif %}
-
-        <div class="pt-overview-card__actions">
-            {{ ui.btn("Manage valuation", variant="secondary", size="sm", href="/settings") }}
-        </div>
+            {% endif %}
+            <div class="pt-overview-card__actions">
+                {{ ui.btn("Manage valuation", variant="secondary", size="sm", href="/settings") }}
+            </div>
         {% else %}
-        <div class="pt-overview-card__empty">
-            <span class="pt-overview-card__empty-icon" aria-hidden="true">{{ ui.icon("scale", "lg") }}</span>
-            <p><strong>Valuation not recorded.</strong> Add a current value to see equity, LTV and appreciation.</p>
-            {{ ui.btn("Add a valuation", variant="secondary", size="sm", href="/settings") }}
-        </div>
+            <div class="pt-overview-card__empty">
+                <span class="pt-overview-card__empty-icon" aria-hidden="true">{{ ui.icon("scale", "lg") }}</span>
+                <p><strong>Valuation not recorded.</strong> Add a current value to see equity, LTV and appreciation.</p>
+            </div>
+            <div class="pt-overview-card__actions">
+                {{ ui.btn("Add a valuation", variant="secondary", size="sm", href="/settings") }}
+            </div>
         {% endif %}
     </article>
 </section>
 
 {# ===========================================================================
-   3. Property Notes (7 cols) & Property Photos (5 cols)
+   4. Tenant & Lease Information (Moved up directly under Financial Overview)
    =========================================================================== #}
-<div class="pt-grid pt-lg-grid-cols-12 pt-gap-5">
-    <!-- Property Notes (7 cols) -->
-    <div class="pt-lg-col-span-7">
-        {% set notes_actions %}
-            <button type="button" class="pt-btn pt-btn--ghost pt-btn--sm" data-modal-open="edit-details-modal">
-                {{ ui.icon("edit", "sm") }}
-                <span>Edit</span>
-            </button>
-        {% endset %}
-
-        {{ ui.section_open(
-            "Property Notes",
-            "Acquisition details, renovations, property history and other relevant notes.",
-            actions=notes_actions
-        ) }}
-        <div class="pt-stack">
-            {% if property.description %}
-            <p class="pt-fs-body pt-text-secondary">{{ property.description }}</p>
-            {% else %}
-            <div class="pt-empty pt-empty--compact">
-                <p class="pt-empty__title">No property notes have been added.</p>
-                <button type="button" class="pt-btn pt-btn--secondary pt-btn--sm" data-modal-open="edit-details-modal">
-                    <span>+ Add Property Note</span>
-                </button>
-            </div>
-            {% endif %}
-
-            <div class="pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-2 pt-fs-caption pt-text-muted">
-                <span class="pt-flex pt-items-center pt-gap-1">
-                    <span class="pt-dot pt-dot--accent"></span>
-                    <span>{{ "Pinned location" if property.google_place_id else "Manual address" }}</span>
-                </span>
-                <a href="{{ google_maps_url }}" target="_blank" rel="noopener noreferrer" class="pt-btn pt-btn--ghost pt-btn--xs">
-                    <span>View on Google Maps</span>
-                    <span>↗</span>
-                </a>
-            </div>
-        </div>
-        {{ ui.section_close() }}
-    </div>
-
-    <!-- Property Photos (5 cols) -->
-    <div class="pt-lg-col-span-5 pt-stack-3" id="gallery-section">
-        <div class="pt-location-card">
-            {{ location.preview(property, google_maps_url) }}
-        </div>
-        {% set photos_actions %}
-            <button type="button" class="pt-btn pt-btn--secondary pt-btn--sm" data-modal-open="upload-photo-modal">
-                {{ ui.icon("plus", "sm") }}
-                <span>+ Add Photo</span>
-            </button>
-        {% endset %}
-
-        {{ ui.section_open(
-            "Property Photos (" ~ (photos | length) ~ ")",
-            "Local offline gallery images.",
-            actions=photos_actions
-        ) }}
-        {% if photos %}
-        <div class="pt-gallery">
-            {% for photo in photos %}
-            {% call ui.gallery_item(photo.storage_path, caption=photo.caption, is_cover=photo.is_cover, alt=(photo.caption or property.name ~ " photo")) %}
-                <div class="pt-flex pt-items-center pt-gap-1">
-                    <button type="button" class="pt-btn pt-btn--ghost pt-btn--xs pt-btn--icon"
-                            data-lightbox-trigger
-                            data-img-src="{{ photo.storage_path }}"
-                            data-img-caption="{{ photo.caption or '' }}"
-                            title="View enlarged" aria-label="View photo enlarged">
-                        {{ ui.icon("eye", "sm") }}
-                    </button>
-                    {% if not photo.is_cover %}
-                    <form method="POST" action="/properties/{{ property.id }}/photos/{{ photo.id }}/cover" class="pt-inline-flex">
-        {{ csrf_field() }}
-                        <button type="submit" class="pt-btn pt-btn--ghost pt-btn--xs pt-btn--icon" title="Make cover photo" aria-label="Set as cover photo">
-                            {{ ui.icon("star", "sm") }}
-                        </button>
-                    </form>
-                    {% endif %}
-                    <form method="POST" action="/properties/{{ property.id }}/photos/{{ photo.id }}/delete"
-                          data-confirm="Delete this property photo?" class="pt-inline-flex">
-        {{ csrf_field() }}
-                        <button type="submit" class="pt-btn pt-btn--ghost pt-btn--xs pt-btn--icon" title="Delete photo" aria-label="Delete photo">
-                            {{ ui.icon("trash", "sm") }}
-                        </button>
-                    </form>
-                </div>
-            {% endcall %}
-            {% endfor %}
-        </div>
-        {% else %}
-        <div class="pt-empty pt-empty--compact">
-            <p class="pt-empty__title">No property photos uploaded yet.</p>
-            <button type="button" class="pt-btn pt-btn--secondary pt-btn--sm" data-modal-open="upload-photo-modal">
-                {{ ui.icon("plus", "sm") }}
-                <span>+ Add Photo</span>
-            </button>
-        </div>
-        {% endif %}
-        {{ ui.section_close() }}
-    </div>
-</div>
-
-{# ===========================================================================
-   4. Three Detail Sections: Operating P&L, Mortgage Debt, Tenant Lease
-   =========================================================================== #}
-<!-- Tab 1: Operating Statement (P&L) -->
-{% set pl_actions %}
-    <span class="pt-badge pt-badge--neutral pt-badge--mono">{{ period_label }}</span>
-{% endset %}
-
-{{ ui.section_open(
-    "Operating Statement (P&L)",
-    "Double-entry verified operating cash flow and Schedule E allocations (Line items).",
-    actions=pl_actions,
-    flush=true
-) }}
-{% if not financials.rental_metrics_applicable %}
-<div class="pt-alert pt-alert--info">
-    <span class="pt-alert__icon">{{ ui.icon("info", "md") }}</span>
-    <div class="pt-alert__body">
-        <strong class="pt-alert__title">Owner-Occupied Primary Residence Policy</strong>
-        <span class="pt-alert__text">
-            Under IRS rules, a primary residence cannot generate Schedule E rental income or deduct standard operating expenses. Operating metrics (GOI, NOI, OCF, CADS) are strictly rental-only and return $0.00 for this door.
-            <br>
-            While operating cash flows are segregated from rental performance, mortgage principal ({% if servicer_reported_principal_cents %}<strong>{{ servicer_reported_principal_cents | format_cents }}</strong>{% else %}debt{% endif %}) and property equity ({% if net_equity_cents %}<strong>{{ net_equity_cents | format_cents }}</strong>{% else %}equity{% endif %}) are fully integrated into consolidated portfolio net worth.
-        </span>
-    </div>
-</div>
-{% else %}
-    {% if not financials.gross_rental_income_cents and not financials.repairs_cents and not financials.total_debt_service_cents %}
-    <div class="pt-alert pt-alert--warning">
-        <span class="pt-alert__icon">{{ ui.icon("alert_triangle", "md") }}</span>
-        <div class="pt-alert__body">
-            <strong class="pt-alert__title">Awaiting Bank Checking Ingestion & Cash Reconciliation (Phase 3)</strong>
-            <span class="pt-alert__text">
-                Schedule E operating income and expenses are strictly recognized from verified double-entry journal entries. While the active lease documents the contracted rent rate, revenue is only recognized when tenant rent deposits are posted from bank checking statements.
-            </span>
-        </div>
-    </div>
-    {% endif %}
-
-    {{ ui.table_open(label="Operating statement P&L ledger") }}
-        <thead>
-            <tr>
-                {{ ui.th("Line Item & Accounting Allocation") }}
-                {{ ui.th("Classification") }}
-                {{ ui.th("Amount", num=true) }}
-            </tr>
-        </thead>
-        <tbody>
-            <tr class="pt-table__row--income">
-                <td>
-                    <div class="pt-cell-stack pt-cell-stack--start">
-                        <span class="pt-table__primary">Rental Income</span>
-                        <span class="pt-table__sub">Schedule E Line 3 · Tenant Lease Receipts</span>
-                    </div>
-                </td>
-                <td><span class="pt-badge pt-badge--success">Operating Revenue</span></td>
-                <td class="pt-table__num">{{ ui.amount(financials.gross_rental_income_cents, mode="income", strong=true) }}</td>
-            </tr>
-            <tr>
-                <td>
-                    <div class="pt-cell-stack pt-cell-stack--start">
-                        <span class="pt-table__primary">Repairs & Maintenance</span>
-                        <span class="pt-table__sub">Schedule E Line 14</span>
-                    </div>
-                </td>
-                <td><span class="pt-badge pt-badge--neutral">Operating Expense</span></td>
-                <td class="pt-table__num">{{ ui.amount(financials.repairs_cents, mode="expense") }}</td>
-            </tr>
-            <tr>
-                <td>
-                    <div class="pt-cell-stack pt-cell-stack--start">
-                        <span class="pt-table__primary">Supplies & Operating Materials</span>
-                        <span class="pt-table__sub">Schedule E Line 17</span>
-                    </div>
-                </td>
-                <td><span class="pt-badge pt-badge--neutral">Operating Expense</span></td>
-                <td class="pt-table__num">{{ ui.amount(financials.supplies_cents, mode="expense") }}</td>
-            </tr>
-            <tr class="pt-table__row--subtotal">
-                <td><strong>Net Operating Income (NOI)</strong></td>
-                <td><span class="pt-badge pt-badge--neutral">Subtotal</span></td>
-                <td class="pt-table__num">{{ ui.amount(financials.noi_cents, mode="plain", strong=true) }}</td>
-            </tr>
-            <tr>
-                <td>
-                    <div class="pt-cell-stack pt-cell-stack--start">
-                        <span class="pt-table__primary">Mortgage Interest</span>
-                        <span class="pt-table__sub">Schedule E Line 12 · Servicer Billed Interest</span>
-                    </div>
-                </td>
-                <td><span class="pt-badge pt-badge--neutral">Debt Service</span></td>
-                <td class="pt-table__num">{{ ui.amount(financials.mortgage_interest_cents, mode="expense") }}</td>
-            </tr>
-            <tr>
-                <td>
-                    <div class="pt-cell-stack pt-cell-stack--start">
-                        <span class="pt-table__primary">Principal Amortization</span>
-                        <span class="pt-table__sub">Balance Sheet · Equity Build</span>
-                    </div>
-                </td>
-                <td><span class="pt-badge pt-badge--neutral">Balance Sheet</span></td>
-                <td class="pt-table__num">{{ ui.amount(financials.principal_paid_cents, mode="movement") }}</td>
-            </tr>
-            <tr>
-                <td>
-                    <div class="pt-cell-stack pt-cell-stack--start">
-                        <span class="pt-table__primary">Escrow Reserve Funding</span>
-                        <span class="pt-table__sub">Taxes & Insurance Clearing</span>
-                    </div>
-                </td>
-                <td><span class="pt-badge pt-badge--neutral">Reserve Clearing</span></td>
-                <td class="pt-table__num">{{ ui.amount(financials.escrow_funded_cents, mode="movement") }}</td>
-            </tr>
-            <tr class="pt-table__row--total">
-                <td><strong>Cash Flow After Debt Service (CADS)</strong></td>
-                <td>{{ ui.badge("NET RETAINED", variant="outline", mono=true) }}</td>
-                <td class="pt-table__num">{{ ui.amount(financials.cads_cents, mode="signed", strong=true) }}</td>
-            </tr>
-        </tbody>
-    {{ ui.table_close() }}
-{% endif %}
-{{ ui.section_close() }}
-
-<!-- Tab 2: Mortgage Debt & Clearing Ledger -->
-{% set loan_actions %}
-    {% if loan %}
-    {{ ui.badge(institution_name, variant="neutral", mono=true) }}
-    {% endif %}
-{% endset %}
-
-{{ ui.section_open(
-    "Mortgage Debt & Clearing Ledger",
-    "Contract loan terms, debt service amortization, and clearing accounts.",
-    actions=loan_actions
-) }}
-{% if loan %}
-<div class="pt-stack">
-    <div class="pt-summary-grid pt-summary-grid--4 pt-gap-4">
-        {{ ui.stat("Loan Account", "Account " ~ loan.loan_number, sub="Active Servicing") }}
-        {{ ui.stat("Interest Rate", (loan.current_interest_rate_bps | format_bps) if loan.current_interest_rate_bps else "—", sub="Fixed Note Rate") }}
-        {{ ui.stat("Remaining Debt", ui.amount(authoritative_principal_cents, mode="plain") if authoritative_principal_cents else "—", sub="Servicer Reported" if servicer_reported_principal_cents else "Ledger Derived") }}
-        {{ ui.stat("Escrow Reserve", ui.amount(reported_escrow_balance_cents or calculated_escrow_balance_cents, mode="plain"), sub="Servicer Reported" if reported_escrow_balance_cents else "Calculated Reserve") }}
-    </div>
-
-    {% if latest_period %}
-    <div class="pt-alert pt-alert--neutral">
-        <span class="pt-alert__icon">{{ ui.icon("calendar", "md") }}</span>
-        <div class="pt-alert__body">
-            <strong class="pt-alert__title">Latest Statement Cycle: {{ latest_period.statement_date | format_date }}</strong>
-            <span class="pt-alert__text">
-                Payment due: <strong>{{ latest_period.payment_due_date | format_date }}</strong> ·
-                Principal: <strong>{{ latest_period.principal_billed_cents | format_cents }}</strong> ·
-                Interest: <strong>{{ latest_period.interest_billed_cents | format_cents }}</strong> ·
-                Escrow: <strong>{{ latest_period.escrow_billed_cents | format_cents }}</strong> ·
-                Total billed: <strong>{{ latest_period.total_amount_billed_cents | format_cents }}</strong>
-            </span>
-        </div>
-    </div>
-    {% endif %}
-
-    {% if mortgage_periods %}
-    <div class="pt-stack-2">
-        <h4 class="pt-fs-caption pt-fw-bold pt-text-muted">Servicer Statement History ({{ mortgage_periods | length }} Cycles Extracted)</h4>
-        {{ ui.table_open(label="Servicer statement cycles") }}
-            <thead>
-                <tr>
-                    {{ ui.th("Statement Date") }}
-                    {{ ui.th("Payment Due") }}
-                    {{ ui.th("Principal Billed", num=true) }}
-                    {{ ui.th("Interest Billed", num=true) }}
-                    {{ ui.th("Escrow Billed", num=true) }}
-                    {{ ui.th("Total Billed", num=true) }}
-                    {{ ui.th("Outstanding Principal", num=true) }}
-                    {{ ui.th("Escrow Balance", num=true) }}
-                </tr>
-            </thead>
-            <tbody>
-                {% for p in mortgage_periods %}
-                <tr>
-                    <td>{{ p.statement_date | format_date }}</td>
-                    <td>{{ p.payment_due_date | format_date }}</td>
-                    <td class="pt-table__num">{{ ui.amount(p.principal_billed_cents, mode="plain") }}</td>
-                    <td class="pt-table__num">{{ ui.amount(p.interest_billed_cents, mode="plain") }}</td>
-                    <td class="pt-table__num">{{ ui.amount(p.escrow_billed_cents, mode="plain") }}</td>
-                    <td class="pt-table__num pt-fw-bold">{{ ui.amount(p.total_amount_billed_cents, mode="plain", strong=true) }}</td>
-                    <td class="pt-table__num pt-fw-semibold">{{ ui.amount(p.outstanding_principal_cents, mode="plain") }}</td>
-                    <td class="pt-table__num">{{ ui.amount(p.reported_escrow_balance_cents, mode="plain") }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        {{ ui.table_close() }}
-    </div>
-    {% endif %}
-</div>
-{% else %}
-<p class="pt-fs-supporting pt-text-muted">No active mortgage loan on this property.</p>
-{% endif %}
-{{ ui.section_close() }}
-
-<!-- Tab 3: Tenant & Lease Information -->
 {% set lease_header_actions %}
     {% if lease %}
         {{ ui.btn("Edit Lease Terms", variant="secondary", size="sm", icon_name="edit", attrs='data-modal-open="edit-lease-modal"') }}
@@ -815,8 +674,213 @@
 </div>
 {{ ui.section_close() }}
 
-<!-- Tab 4: Property Document Vault -->
+{# ===========================================================================
+   4. Three Detail Sections: Operating P&L, Mortgage Debt, Tenant Lease
+   =========================================================================== #}
+<!-- Tab 1: Operating Statement (P&L) -->
+{% set pl_actions %}
+    <span class="pt-badge pt-badge--neutral pt-badge--mono">{{ period_label }}</span>
+{% endset %}
+
+{{ ui.section_open(
+    "Operating Statement (P&L)",
+    "Double-entry verified operating cash flow and Schedule E allocations (Line items).",
+    actions=pl_actions,
+    flush=true
+) }}
+{% if not financials.rental_metrics_applicable %}
+<div class="pt-alert pt-alert--info">
+    <span class="pt-alert__icon">{{ ui.icon("info", "md") }}</span>
+    <div class="pt-alert__body">
+        <strong class="pt-alert__title">Owner-Occupied Primary Residence Policy</strong>
+        <span class="pt-alert__text">
+            Under IRS rules, a primary residence cannot generate Schedule E rental income or deduct standard operating expenses. Operating metrics (GOI, NOI, OCF, CADS) are strictly rental-only and return $0.00 for this door.
+            <br>
+            While operating cash flows are segregated from rental performance, mortgage principal ({% if servicer_reported_principal_cents %}<strong>{{ servicer_reported_principal_cents | format_cents }}</strong>{% else %}debt{% endif %}) and property equity ({% if net_equity_cents %}<strong>{{ net_equity_cents | format_cents }}</strong>{% else %}equity{% endif %}) are fully integrated into consolidated portfolio net worth.
+        </span>
+    </div>
+</div>
+{% else %}
+    {% if not financials.gross_rental_income_cents and not financials.repairs_cents and not financials.total_debt_service_cents %}
+    <div class="pt-alert pt-alert--warning">
+        <span class="pt-alert__icon">{{ ui.icon("alert_triangle", "md") }}</span>
+        <div class="pt-alert__body">
+            <strong class="pt-alert__title">Awaiting Bank Checking Ingestion & Cash Reconciliation (Phase 3)</strong>
+            <span class="pt-alert__text">
+                Schedule E operating income and expenses are strictly recognized from verified double-entry journal entries. While the active lease documents the contracted rent rate, revenue is only recognized when tenant rent deposits are posted from bank checking statements.
+            </span>
+        </div>
+    </div>
+    {% endif %}
+
+    {{ ui.table_open(label="Operating statement P&L ledger") }}
+        <thead>
+            <tr>
+                {{ ui.th("Line Item & Accounting Allocation") }}
+                {{ ui.th("Classification") }}
+                {{ ui.th("Amount", num=true) }}
+            </tr>
+        </thead>
+        <tbody>
+            <tr class="pt-table__row--income">
+                <td>
+                    <div class="pt-cell-stack pt-cell-stack--start">
+                        <span class="pt-table__primary">Rental Income</span>
+                        <span class="pt-table__sub">Schedule E Line 3 · Tenant Lease Receipts</span>
+                    </div>
+                </td>
+                <td><span class="pt-badge pt-badge--success">Operating Revenue</span></td>
+                <td class="pt-table__num">{{ ui.amount(financials.gross_rental_income_cents, mode="income", strong=true) }}</td>
+            </tr>
+            <tr>
+                <td>
+                    <div class="pt-cell-stack pt-cell-stack--start">
+                        <span class="pt-table__primary">Repairs & Maintenance</span>
+                        <span class="pt-table__sub">Schedule E Line 14</span>
+                    </div>
+                </td>
+                <td><span class="pt-badge pt-badge--neutral">Operating Expense</span></td>
+                <td class="pt-table__num">{{ ui.amount(financials.repairs_cents, mode="expense") }}</td>
+            </tr>
+            <tr>
+                <td>
+                    <div class="pt-cell-stack pt-cell-stack--start">
+                        <span class="pt-table__primary">Supplies & Operating Materials</span>
+                        <span class="pt-table__sub">Schedule E Line 15</span>
+                    </div>
+                </td>
+                <td><span class="pt-badge pt-badge--neutral">Operating Expense</span></td>
+                <td class="pt-table__num">{{ ui.amount(financials.supplies_cents, mode="expense") }}</td>
+            </tr>
+            <tr class="pt-table__row--subtotal">
+                <td><strong>Net Operating Income (NOI)</strong></td>
+                <td><span class="pt-badge pt-badge--neutral">Subtotal</span></td>
+                <td class="pt-table__num">{{ ui.amount(financials.noi_cents, mode="plain", strong=true) }}</td>
+            </tr>
+            <tr>
+                <td>
+                    <div class="pt-cell-stack pt-cell-stack--start">
+                        <span class="pt-table__primary">Mortgage Interest</span>
+                        <span class="pt-table__sub">Schedule E Line 12 · Servicer Billed Interest</span>
+                    </div>
+                </td>
+                <td><span class="pt-badge pt-badge--neutral">Debt Service</span></td>
+                <td class="pt-table__num">{{ ui.amount(financials.mortgage_interest_cents, mode="expense") }}</td>
+            </tr>
+            <tr>
+                <td>
+                    <div class="pt-cell-stack pt-cell-stack--start">
+                        <span class="pt-table__primary">Principal Amortization</span>
+                        <span class="pt-table__sub">Balance Sheet · Equity Build</span>
+                    </div>
+                </td>
+                <td><span class="pt-badge pt-badge--neutral">Balance Sheet</span></td>
+                <td class="pt-table__num">{{ ui.amount(financials.principal_paid_cents, mode="movement") }}</td>
+            </tr>
+            <tr>
+                <td>
+                    <div class="pt-cell-stack pt-cell-stack--start">
+                        <span class="pt-table__primary">Escrow Reserve Funding</span>
+                        <span class="pt-table__sub">Taxes & Insurance Clearing</span>
+                    </div>
+                </td>
+                <td><span class="pt-badge pt-badge--neutral">Reserve Clearing</span></td>
+                <td class="pt-table__num">{{ ui.amount(financials.escrow_funded_cents, mode="movement") }}</td>
+            </tr>
+            <tr class="pt-table__row--total">
+                <td><strong>Cash Flow After Debt Service (CADS)</strong></td>
+                <td>{{ ui.badge("NET RETAINED", variant="outline", mono=true) }}</td>
+                <td class="pt-table__num">{{ ui.amount(financials.cads_cents, mode="signed", strong=true) }}</td>
+            </tr>
+        </tbody>
+    {{ ui.table_close() }}
+{% endif %}
+{{ ui.section_close() }}
+
+<!-- Tab 2: Mortgage Debt & Clearing Ledger -->
+{% set loan_actions %}
+    {% if loan %}
+    {{ ui.badge(institution_name, variant="neutral", mono=true) }}
+    {% endif %}
+{% endset %}
+
+{{ ui.section_open(
+    "Mortgage Debt & Clearing Ledger",
+    "Contract loan terms, debt service amortization, and clearing accounts.",
+    actions=loan_actions
+) }}
+{% if loan %}
+<div class="pt-stack">
+    <div class="pt-summary-grid pt-summary-grid--4 pt-gap-4">
+        {{ ui.stat("Loan Account", "Account " ~ loan.loan_number, sub="Active Servicing") }}
+        {{ ui.stat("Interest Rate", (loan.current_interest_rate_bps | format_bps) if loan.current_interest_rate_bps else "—", sub="Fixed Note Rate") }}
+        {{ ui.stat("Remaining Debt", ui.amount(authoritative_principal_cents, mode="plain") if authoritative_principal_cents else "—", sub="Servicer Reported" if servicer_reported_principal_cents else "Ledger Derived") }}
+        {{ ui.stat("Escrow Reserve", ui.amount(reported_escrow_balance_cents or calculated_escrow_balance_cents, mode="plain"), sub="Servicer Reported" if reported_escrow_balance_cents else "Calculated Reserve") }}
+    </div>
+
+    {% if latest_period %}
+    <div class="pt-alert pt-alert--neutral">
+        <span class="pt-alert__icon">{{ ui.icon("calendar", "md") }}</span>
+        <div class="pt-alert__body">
+            <strong class="pt-alert__title">Latest Statement Cycle: {{ latest_period.statement_date | format_date }}</strong>
+            <span class="pt-alert__text">
+                Payment due: <strong>{{ latest_period.payment_due_date | format_date }}</strong> ·
+                Principal: <strong>{{ latest_period.principal_billed_cents | format_cents }}</strong> ·
+                Interest: <strong>{{ latest_period.interest_billed_cents | format_cents }}</strong> ·
+                Escrow: <strong>{{ latest_period.escrow_billed_cents | format_cents }}</strong> ·
+                Total billed: <strong>{{ latest_period.total_amount_billed_cents | format_cents }}</strong>
+            </span>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if mortgage_periods %}
+    <div class="pt-stack-2">
+        <h4 class="pt-fs-caption pt-fw-bold pt-text-muted">Servicer Statement History ({{ mortgage_periods | length }} Cycles Extracted)</h4>
+        {{ ui.table_open(label="Servicer statement cycles") }}
+            <thead>
+                <tr>
+                    {{ ui.th("Statement Date") }}
+                    {{ ui.th("Payment Due") }}
+                    {{ ui.th("Principal Billed", num=true) }}
+                    {{ ui.th("Interest Billed", num=true) }}
+                    {{ ui.th("Escrow Billed", num=true) }}
+                    {{ ui.th("Total Billed", num=true) }}
+                    {{ ui.th("Outstanding Principal", num=true) }}
+                    {{ ui.th("Escrow Balance", num=true) }}
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in mortgage_periods %}
+                <tr>
+                    <td>{{ p.statement_date | format_date }}</td>
+                    <td>{{ p.payment_due_date | format_date }}</td>
+                    <td class="pt-table__num">{{ ui.amount(p.principal_billed_cents, mode="plain") }}</td>
+                    <td class="pt-table__num">{{ ui.amount(p.interest_billed_cents, mode="plain") }}</td>
+                    <td class="pt-table__num">{{ ui.amount(p.escrow_billed_cents, mode="plain") }}</td>
+                    <td class="pt-table__num pt-fw-bold">{{ ui.amount(p.total_amount_billed_cents, mode="plain", strong=true) }}</td>
+                    <td class="pt-table__num pt-fw-semibold">{{ ui.amount(p.outstanding_principal_cents, mode="plain") }}</td>
+                    <td class="pt-table__num">{{ ui.amount(p.reported_escrow_balance_cents, mode="plain") }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        {{ ui.table_close() }}
+    </div>
+    {% endif %}
+</div>
+{% else %}
+<p class="pt-fs-supporting pt-text-muted">No active mortgage loan on this property.</p>
+{% endif %}
+{{ ui.section_close() }}
+
+{# ===========================================================================
+   5. Property Document Vault (Summary & Filtered Link)
+   =========================================================================== #}
 {% set doc_header_actions %}
+    <a href="/documents?property={{ property.id }}" class="pt-btn pt-btn--secondary pt-btn--sm">
+        {{ ui.icon("external_link", "sm") }}
+        <span>Open Vault ({{ property_documents | length }})</span>
+    </a>
     {{ ui.btn("Upload Document", variant="secondary", size="sm", icon_name="upload", attrs='data-modal-open="upload-document-modal"') }}
 {% endset %}
 
@@ -827,67 +891,171 @@
 ) }}
 <div id="documents-vault">
 {% if property_documents %}
-{{ ui.table_open(label="Property documents") }}
-        <thead>
-            <tr>
-                {{ ui.th("Document Name") }}
-                {{ ui.th("Category") }}
-                {{ ui.th("File Size", num=true) }}
-                {{ ui.th("Vaulted Date") }}
-                {{ ui.th("SHA-256 Digest") }}
-                {{ ui.th("Actions") }}
-            </tr>
-        </thead>
-        <tbody>
-            {% for doc in property_documents %}
-            <tr>
-                <td>
-                    <div class="pt-cell-stack pt-cell-stack--start">
-                        <span class="pt-table__primary">{{ doc.original_filename }}</span>
-                        <span class="pt-table__sub">{{ doc.mime_type }}</span>
-                    </div>
-                </td>
-                <td>
-                    {% if doc.document_type == 'LEASE_AGREEMENT' %}
-                        {{ ui.badge("Lease Agreement", variant="success", pill=true) }}
-                    {% elif doc.document_type == 'MORTGAGE_STATEMENT' %}
-                        {{ ui.badge("Mortgage Statement", variant="neutral", pill=true) }}
-                    {% elif doc.document_type == 'INSURANCE_POLICY' %}
-                        {{ ui.badge("Insurance Policy", variant="info", pill=true) }}
-                    {% elif doc.document_type == 'PROPERTY_TAX' %}
-                        {{ ui.badge("Property Tax", variant="warning", pill=true) }}
-                    {% elif doc.document_type == 'HOA_STATEMENT' %}
-                        {{ ui.badge("HOA Statement", variant="rule", pill=true) }}
-                    {% else %}
-                        {{ ui.badge("Document", variant="neutral", pill=true) }}
-                    {% endif %}
-                </td>
-                <td class="pt-table__num"><span class="pt-provenance">{{ (doc.file_size_bytes / 1024) | round(1) }} KB</span></td>
-                <td><span class="pt-table__sub">{{ doc.uploaded_at.strftime('%Y-%m-%d') if doc.uploaded_at else '—' }}</span></td>
-                <td><span class="pt-provenance pt-fs-caption">{{ doc.file_sha256[:10] }}...{{ doc.file_sha256[-6:] }}</span></td>
-                <td class="pt-table__actions">
-                    <a href="/documents/{{ doc.id }}/view" target="_blank" rel="noopener noreferrer" class="pt-btn pt-btn--ghost pt-btn--icon pt-btn--sm" title="View Document">
-                        {{ ui.icon("external_link", "sm") }}
-                    </a>
-                    <a href="/documents/{{ doc.id }}/download" class="pt-btn pt-btn--ghost pt-btn--icon pt-btn--sm" title="Download Document">
-                        {{ ui.icon("download", "sm") }}
-                    </a>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-{{ ui.table_close() }}
+    <div class="pt-vault-summary-card">
+        <div class="pt-vault-summary-card__info">
+            <div class="pt-flex pt-items-center pt-gap-2 pt-flex-wrap">
+                <span class="pt-badge pt-badge--success pt-badge--pill">
+                    {{ ui.icon("check_circle", "sm") }}
+                    <span>{{ property_documents | length }} Vaulted Document{% if property_documents | length > 1 %}s{% endif %}</span>
+                </span>
+                <span class="pt-badge pt-badge--neutral pt-badge--pill">Tamper-evident SHA-256</span>
+                <span class="pt-badge pt-badge--neutral pt-badge--pill">100% Offline Storage</span>
+            </div>
+
+            <p class="pt-fs-body pt-text-secondary pt-mt-2 pt-mb-2">
+                {% if property.property_type == 'RENTAL_INVESTMENT' %}
+                All executed lease agreements, mortgage statements, tax assessments, and insurance policies for
+                {% else %}
+                All mortgage statements, tax assessments, insurance policies, and property records for
+                {% endif %}
+                <strong>{{ property.name }}</strong> are stored and cryptographically verified in your local document vault.
+            </p>
+
+            <nav class="pt-vault-filters" aria-label="Filter {{ property.name }} documents">
+                {% for filter in vault_filters %}
+                <a class="pt-vault-filter" href="{{ filter.href }}">
+                    <span class="pt-vault-filter__icon">{{ ui.icon(filter.icon, "sm") }}</span>
+                    <span class="pt-vault-filter__body">
+                        <span class="pt-vault-filter__label">{{ filter.label }}</span>
+                        <span class="pt-vault-filter__count">{{ filter.count }} document{{ '' if filter.count == 1 else 's' }}</span>
+                    </span>
+                </a>
+                {% endfor %}
+            </nav>
+        </div>
+
+        <div class="pt-vault-summary-card__actions pt-flex pt-items-center pt-gap-3 pt-flex-wrap pt-mt-4">
+            <a href="/documents?property={{ property.id }}" class="pt-btn pt-btn--primary">
+                {{ ui.icon("folder", "sm") }}
+                <span>View Filtered Vault ({{ property_documents | length }} files) &rarr;</span>
+            </a>
+            <button type="button" class="pt-btn pt-btn--secondary" data-modal-open="upload-document-modal">
+                {{ ui.icon("upload", "sm") }}
+                <span>Upload New Document</span>
+            </button>
+        </div>
+    </div>
 {% else %}
-<div class="pt-empty pt-empty--compact">
-    <p class="pt-empty__title">No documents vaulted for this property yet.</p>
-    <button type="button" class="pt-btn pt-btn--secondary pt-btn--sm" data-modal-open="upload-document-modal">
-        {{ ui.icon("upload", "sm") }}
-        <span>+ Upload Property Document</span>
-    </button>
-</div>
+    <div class="pt-empty pt-empty--compact">
+        <p class="pt-empty__title">No documents vaulted for this property yet.</p>
+        <button type="button" class="pt-btn pt-btn--secondary pt-btn--sm" data-modal-open="upload-document-modal">
+            {{ ui.icon("upload", "sm") }}
+            <span>+ Upload Property Document</span>
+        </button>
+    </div>
 {% endif %}
 </div>
 {{ ui.section_close() }}
+
+{# ===========================================================================
+   6. Location & Property Notes (Side-by-side balanced 6 / 6 cols)
+   =========================================================================== #}
+<div class="pt-grid pt-lg-grid-cols-2 pt-gap-5">
+    <!-- Location & Coordinates Preview (1 of 2 cols) -->
+    <div class="pt-location-card">
+        {{ location.preview(property, google_maps_url) }}
+    </div>
+
+    <!-- Property Notes (2 of 2 cols) -->
+    <div class="pt-notes-card-wrap">
+        {% set notes_actions %}
+            <button type="button" class="pt-btn pt-btn--ghost pt-btn--sm" data-modal-open="edit-details-modal">
+                {{ ui.icon("edit", "sm") }}
+                <span>Edit</span>
+            </button>
+        {% endset %}
+
+        {{ ui.section_open(
+            "Property Notes",
+            "Acquisition details, renovations, property history and operating notes.",
+            actions=notes_actions,
+            cls="pt-notes-card"
+        ) }}
+        <div class="pt-stack">
+            {% if property.description %}
+            <p class="pt-fs-body pt-text-secondary" style="white-space: pre-wrap;">{{ property.description }}</p>
+            {% else %}
+            <div class="pt-empty pt-empty--compact">
+                <p class="pt-empty__title">No property notes have been added.</p>
+                <button type="button" class="pt-btn pt-btn--secondary pt-btn--sm" data-modal-open="edit-details-modal">
+                    <span>+ Add Property Note</span>
+                </button>
+            </div>
+            {% endif %}
+
+            <div class="pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-2 pt-fs-caption pt-text-muted" style="margin-top: auto; padding-top: var(--pt-space-3); border-top: 1px solid var(--pt-border-subtle);">
+                <span class="pt-flex pt-items-center pt-gap-1">
+                    <span class="pt-dot pt-dot--accent"></span>
+                    <span>{{ "Pinned location" if property.google_place_id else "Manual address" }}</span>
+                </span>
+                <a href="{{ google_maps_url }}" target="_blank" rel="noopener noreferrer" class="pt-btn pt-btn--ghost pt-btn--xs">
+                    <span>View on Google Maps</span>
+                    <span>↗</span>
+                </a>
+            </div>
+        </div>
+        {{ ui.section_close() }}
+    </div>
+</div>
+
+{# ===========================================================================
+   7. Property Photos (Full width gallery at page end)
+   =========================================================================== #}
+<div id="gallery-section">
+    {% set photos_actions %}
+        <button type="button" class="pt-btn pt-btn--secondary pt-btn--sm" data-modal-open="upload-photo-modal">
+            {{ ui.icon("plus", "sm") }}
+            <span>+ Add Photo</span>
+        </button>
+    {% endset %}
+
+    {{ ui.section_open(
+        "Property Photos (" ~ (photos | length) ~ ")",
+        "Local offline gallery images.",
+        actions=photos_actions
+    ) }}
+    {% if photos %}
+    <div class="pt-gallery">
+        {% for photo in photos %}
+        {% call ui.gallery_item(photo.storage_path, caption=photo.caption, is_cover=photo.is_cover, alt=(photo.caption or property.name ~ " photo")) %}
+            <div class="pt-flex pt-items-center pt-gap-1">
+                <button type="button" class="pt-btn pt-btn--ghost pt-btn--xs pt-btn--icon"
+                        data-lightbox-trigger
+                        data-img-src="{{ photo.storage_path }}"
+                        data-img-caption="{{ photo.caption or '' }}"
+                        title="View enlarged" aria-label="View photo enlarged">
+                    {{ ui.icon("eye", "sm") }}
+                </button>
+                {% if not photo.is_cover %}
+                <form method="POST" action="/properties/{{ property.id }}/photos/{{ photo.id }}/cover" class="pt-inline-flex">
+                    {{ csrf_field() }}
+                    <button type="submit" class="pt-btn pt-btn--ghost pt-btn--xs pt-btn--icon" title="Make cover photo" aria-label="Set as cover photo">
+                        {{ ui.icon("star", "sm") }}
+                    </button>
+                </form>
+                {% endif %}
+                <form method="POST" action="/properties/{{ property.id }}/photos/{{ photo.id }}/delete"
+                      data-confirm="Delete this property photo?" class="pt-inline-flex">
+                    {{ csrf_field() }}
+                    <button type="submit" class="pt-btn pt-btn--ghost pt-btn--xs pt-btn--icon" title="Delete photo" aria-label="Delete photo">
+                        {{ ui.icon("trash", "sm") }}
+                    </button>
+                </form>
+            </div>
+        {% endcall %}
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="pt-empty pt-empty--compact">
+        <p class="pt-empty__title">No property photos uploaded yet.</p>
+        <button type="button" class="pt-btn pt-btn--secondary pt-btn--sm" data-modal-open="upload-photo-modal">
+            {{ ui.icon("plus", "sm") }}
+            <span>+ Add Photo</span>
+        </button>
+    </div>
+    {% endif %}
+    {{ ui.section_close() }}
+</div>
 
 {# ===========================================================================
    5. Modals: Edit Property, Upload Photo, Lightbox
@@ -937,13 +1105,23 @@
 
 <!-- Modal 2: Upload Property Photo -->
 {{ ui.modal_open("upload-photo-modal", "Upload Property Photo", subtitle=property.name, size="md") }}
-<form action="/properties/{{ property.id }}/photos/upload" method="POST" enctype="multipart/form-data" class="pt-modal__form">
+<form action="/properties/{{ property.id }}/photos/upload" method="POST" enctype="multipart/form-data" class="pt-modal__form" data-upload-form>
         {{ csrf_field() }}
     <div class="pt-modal__body pt-stack">
         <div class="pt-field">
             <label class="pt-field__label" for="photo-file">Select Image File</label>
             <input type="file" id="photo-file" name="photo" accept="image/jpeg,image/png,image/webp,image/heic,image/avif" required>
             <span class="pt-field__help">JPEG, PNG, WebP, HEIC up to 15MB. Stored locally in your offline vault.</span>
+        </div>
+
+        <div class="pt-upload-indicator" data-upload-indicator hidden>
+            <div class="pt-upload-progress">
+                <div class="pt-flex pt-items-center pt-justify-between">
+                    <span class="pt-fs-caption pt-text-muted" data-upload-status>Uploading…</span>
+                    <strong class="pt-num" data-upload-percent>0%</strong>
+                </div>
+                {{ ui.progress(0, "Upload progress") }}
+            </div>
         </div>
 
         {{ ui.text_field(
@@ -961,7 +1139,7 @@
     </div>
     <div class="pt-modal__footer">
         <button type="button" class="pt-btn pt-btn--secondary" data-modal-close>Cancel</button>
-        <button type="submit" class="pt-btn pt-btn--primary">Upload & Save</button>
+        <button type="submit" class="pt-btn pt-btn--primary" data-upload-submit>Upload & Save</button>
     </div>
 </form>
 {{ ui.modal_close() }}
@@ -979,13 +1157,23 @@
 
 <!-- Modal 4: Upload Property Document -->
 {{ ui.modal_open("upload-document-modal", "Upload Property Document", subtitle=property.name, size="md") }}
-<form action="/properties/{{ property.id }}/documents/upload" method="POST" enctype="multipart/form-data" class="pt-modal__form">
+<form action="/properties/{{ property.id }}/documents/upload" method="POST" enctype="multipart/form-data" class="pt-modal__form" data-upload-form>
         {{ csrf_field() }}
     <div class="pt-modal__body pt-stack">
         <div class="pt-field">
             <label class="pt-field__label" for="doc-file">Select Document File</label>
             <input type="file" id="doc-file" name="file" accept=".pdf,.png,.jpg,.jpeg" required>
             <span class="pt-field__help">PDF, PNG, JPG up to 50MB. Stored locally in SHA-256 tamper-evident vault.</span>
+        </div>
+
+        <div class="pt-upload-indicator" data-upload-indicator hidden>
+            <div class="pt-upload-progress">
+                <div class="pt-flex pt-items-center pt-justify-between">
+                    <span class="pt-fs-caption pt-text-muted" data-upload-status>Uploading…</span>
+                    <strong class="pt-num" data-upload-percent>0%</strong>
+                </div>
+                {{ ui.progress(0, "Upload progress") }}
+            </div>
         </div>
 
         <div class="pt-field">
@@ -1018,7 +1206,7 @@
     </div>
     <div class="pt-modal__footer">
         <button type="button" class="pt-btn pt-btn--secondary" data-modal-close>Cancel</button>
-        <button type="submit" class="pt-btn pt-btn--primary">Upload & Vault</button>
+        <button type="submit" class="pt-btn pt-btn--primary" data-upload-submit>Upload & Vault</button>
     </div>
 </form>
 {{ ui.modal_close() }}
@@ -1049,7 +1237,7 @@
             {{ ui.text_field(
                 "security_deposit_dollars",
                 "Security Deposit ($)",
-                value=((lease.security_deposit_cents / 100) if lease else (detected_tenant.security_deposit_dollars if detected_tenant else "")),
+                value=((lease.security_deposit_cents / 100) if lease and lease.security_deposit_cents is not none else (detected_tenant.security_deposit_dollars if detected_tenant else "")),
                 placeholder="2000.00",
                 help="Held in escrow"
             ) }}

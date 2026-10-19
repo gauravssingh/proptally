@@ -133,7 +133,7 @@ DISPLAY_ONLY = {
 }
 
 #: Fields the customer may edit on the review screen.
-READONLY_TYPES = {"text_readonly", "money_readonly", "date_readonly", "property"}
+READONLY_TYPES = {"text_readonly", "money_readonly", "date_readonly"}
 
 
 def field_spec(name: str) -> dict[str, Any]:

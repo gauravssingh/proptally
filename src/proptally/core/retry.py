@@ -3,7 +3,7 @@
 import sqlite3
 import time
 from functools import wraps
-from typing import Callable, Any
+from typing import Any, Callable
 
 
 def with_sqlite_retry(max_retries: int = 5, backoff_base: float = 0.05) -> Callable:

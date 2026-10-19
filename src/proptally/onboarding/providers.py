@@ -14,9 +14,11 @@ financial documents do not leave the host.
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 import os
 import shutil
+import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -143,7 +145,12 @@ class HttpJsonExtractor:
                     ],
                 },
                 timeout=120,
+                # A local endpoint must not be able to bounce the document
+                # payload to an external host with a 3xx response.
+                follow_redirects=False,
             )
+            if response.is_redirect:
+                raise ProviderError("Extraction provider attempted a redirect; refusing it.")
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
             payload = json.loads(content)
@@ -186,10 +193,42 @@ def structured_extractor() -> StructuredExtractor:
     url = os.environ.get("PROPTALLY_EXTRACTION_URL", "").strip()
     if not url:
         return RuleBasedExtractor()
-    host = urlparse(url).hostname or ""
-    if host not in {"localhost", "127.0.0.1", "::1"} and not host.startswith(
-        ("10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.", "172.2", "172.30.", "172.31.")
-    ):
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return RuleBasedExtractor()
+    host = parsed.hostname or ""
+
+    def _local_endpoint(value: str) -> bool:
+        """Every resolved address must be loopback or RFC 1918/4193 private.
+
+        Resolving the hostname closes the old string-prefix hole (``172.2``
+        admitted all of 172.200.0.0/15) and checks every A/AAAA answer, not just
+        the first.
+        """
+        if not value:
+            return False
+        try:
+            infos = socket.getaddrinfo(value, None)
+        except OSError:
+            return False
+        if not infos:
+            return False
+        for info in infos:
+            try:
+                address = ipaddress.ip_address(info[4][0])
+            except ValueError:
+                return False
+            if address.is_loopback:
+                continue
+            if not (
+                address.is_private
+                and not address.is_unspecified
+                and not address.is_multicast
+            ):
+                return False
+        return True
+
+    if not _local_endpoint(host):
         # A public endpoint needs an explicit, separate opt-in. Refusing here keeps
         # the default data flow local even if the variable is set by mistake.
         if os.environ.get("PROPTALLY_ALLOW_REMOTE_EXTRACTION", "").lower() not in {"1", "true", "yes"}:

@@ -30,8 +30,8 @@ Accounting invariants:
    property classification. Primary residence debt remains in portfolio debt.
 """
 
-from datetime import date
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Dict, Optional
 
 from sqlmodel import Session, select
@@ -458,6 +458,7 @@ def calculate_property_financials(
     debt_service_entry_ids = _confirmed_debt_service_entry_ids(session)
 
     included_dates = []
+    total_operating_expenses_cents = 0
     for entry in entries:
         entry_lines = lines_by_entry.get(entry.id, [])
         if not entry_lines:
@@ -505,7 +506,10 @@ def calculate_property_financials(
                 result["supplies_cents"] += net
             elif code == 5060:
                 result["snow_landscaping_cents"] += net
-            elif code in (5070, 5080):
+            elif code in code_map.opex:
+                # Every operating code not named above (bank fees, management,
+                # commissions, HOA, utilities, legal) is still operating expense.
+                # Hardcoding a subset here silently omitted real deductions.
                 result["other_operating_expense_cents"] += net
             elif code in code_map.personal_draw:
                 result["personal_draws_cents"] += net
@@ -513,6 +517,7 @@ def calculate_property_financials(
         opex_net = sum(
             l.debit_cents - l.credit_cents for l in scoped if l.ledger_account_code in code_map.opex
         )
+        total_operating_expenses_cents += opex_net
         # Direct checking OpEx: the same entry pays it from checking.
         if opex_net != 0 and checking_net != 0 and (checking_net < 0) == (opex_net > 0):
             result["direct_checking_opex_cents"] += opex_net
@@ -559,14 +564,9 @@ def calculate_property_financials(
 
     result["goi_cents"] = result["gross_rental_income_cents"] + result["fee_income_cents"]
     result["total_revenue_cents"] = result["goi_cents"]
-    result["total_operating_expenses_cents"] = (
-        result["property_tax_cents"]
-        + result["hazard_insurance_cents"]
-        + result["repairs_cents"]
-        + result["supplies_cents"]
-        + result["snow_landscaping_cents"]
-        + result["other_operating_expense_cents"]
-    )
+    # Authoritative total: every code in code_map.opex, not a hand-maintained
+    # subset of buckets. A newly seeded operating account must change NOI.
+    result["total_operating_expenses_cents"] = total_operating_expenses_cents
     result["noi_cents"] = result["goi_cents"] - result["total_operating_expenses_cents"]
 
     # Actual bank debt service: principal and interest only.
@@ -719,36 +719,86 @@ def calculate_portfolio_equity(
         val_cents = valuation.estimated_value_cents if valuation else (prop.purchase_price_cents or 0)
         total_valuation_cents += val_cents
 
-        loan = session.exec(
+        loans = session.exec(
             select(LoanAccount)
             .where(
                 LoanAccount.property_id == prop.id, LoanAccount.is_active == True  # noqa: E712
             )
             .order_by(LoanAccount.created_at, LoanAccount.id)
-        ).first()
+        ).all()
+        loan = loans[0] if loans else None
 
-        ledger_principal_cents = _ledger_principal_cents(
-            prop.id, loan, debt_by_code, debt_by_property
-        )
-        servicer_principal_cents = _servicer_principal_cents(session, loan, as_of_date)
+        # A door may carry more than one active loan (e.g. a refinance tranche
+        # kept alongside the original). Every loan's evidence contributes to the
+        # property's debt; reporting only the first silently understates equity.
+        loan_evidence = []
+        for one_loan in loans:
+            ledger_cents = _ledger_principal_cents(prop.id, one_loan, debt_by_code, debt_by_property)
+            servicer_cents = _servicer_principal_cents(session, one_loan, as_of_date)
+            if servicer_cents is not None:
+                amount, source = servicer_cents, SOURCE_SERVICER
+            elif ledger_cents is not None:
+                amount, source = ledger_cents, SOURCE_LEDGER
+            else:
+                amount, source = None, SOURCE_UNAVAILABLE
+            loan_evidence.append({
+                "loan": one_loan,
+                "principal_cents": amount,
+                "principal_source": source,
+                "ledger_principal_cents": ledger_cents,
+                "servicer_reported_principal_cents": servicer_cents,
+            })
+            if ledger_cents is not None:
+                attributed_ledger_cents += ledger_cents
 
-        if servicer_principal_cents is not None:
-            principal_cents, principal_source = servicer_principal_cents, SOURCE_SERVICER
-        elif ledger_principal_cents is not None:
-            principal_cents, principal_source = ledger_principal_cents, SOURCE_LEDGER
+        if loans:
+            principal_cents = (
+                None if any(e["principal_cents"] is None for e in loan_evidence)
+                else sum(e["principal_cents"] for e in loan_evidence)
+            )
+            sources = {e["principal_source"] for e in loan_evidence}
+            if principal_cents is None:
+                principal_source = SOURCE_UNAVAILABLE
+            elif sources == {SOURCE_SERVICER}:
+                principal_source = SOURCE_SERVICER
+            elif sources == {SOURCE_LEDGER}:
+                principal_source = SOURCE_LEDGER
+            else:
+                # A mix of evidence; the weaker label keeps the basis honest.
+                principal_source = SOURCE_LEDGER
+            ledger_principal_cents = (
+                None
+                if any(e["ledger_principal_cents"] is None for e in loan_evidence)
+                else sum(e["ledger_principal_cents"] for e in loan_evidence)
+            )
+            servicer_principal_cents = (
+                None
+                if any(e["servicer_reported_principal_cents"] is None for e in loan_evidence)
+                else sum(e["servicer_reported_principal_cents"] for e in loan_evidence)
+            )
         else:
-            principal_cents, principal_source = None, SOURCE_UNAVAILABLE
-            unavailable_property_ids.append(prop.id)
+            # No LoanAccount row: the posted ledger may still carry the debt.
+            ledger_principal_cents = _ledger_principal_cents(
+                prop.id, None, debt_by_code, debt_by_property
+            )
+            servicer_principal_cents = None
+            if ledger_principal_cents is not None:
+                principal_cents, principal_source = ledger_principal_cents, SOURCE_LEDGER
+                attributed_ledger_cents += ledger_principal_cents
+            else:
+                principal_cents, principal_source = None, SOURCE_UNAVAILABLE
 
-        if ledger_principal_cents is not None:
-            attributed_ledger_cents += ledger_principal_cents
-        if principal_cents is not None:
+        if principal_cents is None:
+            unavailable_property_ids.append(prop.id)
+        else:
             total_debt_cents += principal_cents
 
         property_metrics.append({
             "property": prop,
             "valuation_cents": val_cents,
             "loan": loan,
+            "loans": loans,
+            "loan_evidence": loan_evidence,
             "principal_cents": principal_cents,
             "principal_source": principal_source,
             "ledger_principal_cents": ledger_principal_cents,

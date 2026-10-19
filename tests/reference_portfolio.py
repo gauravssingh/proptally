@@ -11,17 +11,19 @@ expected to be built up by its owner, so nothing in ``src/`` imports this module
 
 from datetime import date
 from uuid import uuid4
-from sqlmodel import Session, select
+
+from sqlmodel import Session
+
 from proptally.db.models import (
-    Property,
-    PropertyValuation,
-    Lease,
-    FinancialInstitution,
-    FinancialAccount,
-    LoanAccount,
+    Document,
     EscrowAccount,
     EscrowMovement,
-    Document,
+    FinancialAccount,
+    FinancialInstitution,
+    Lease,
+    LoanAccount,
+    Property,
+    PropertyValuation,
     Statement,
     Transaction,
     TransactionProcessingState,
@@ -34,11 +36,10 @@ from proptally.domain.accounting.coa import (
     SUPPLIES_CODE,
     ensure_entity_ledger_accounts,
 )
-from proptally.domain.accounting.opening_balances import record_opening_balances, OpeningAccountBalance
-from proptally.domain.accounting.ledger import create_journal_entry, add_journal_line, post_journal_entry
-from proptally.domain.transactions.splits import apply_transaction_splits, SplitItem
+from proptally.domain.accounting.ledger import add_journal_line, create_journal_entry, post_journal_entry
+from proptally.domain.accounting.opening_balances import OpeningAccountBalance, record_opening_balances
+from proptally.domain.transactions.splits import SplitItem, apply_transaction_splits
 from proptally.domain.transactions.suggest import seed_vendor_rules
-
 
 #: Vendor rules that belong to this reference portfolio rather than to the platform:
 #: they name one owner's tenant and attribute a municipal utility or county tax bill to

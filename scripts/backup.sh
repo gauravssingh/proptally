@@ -163,14 +163,22 @@ stage_database() {
 }
 
 # stage_vault SOURCE_DIR STAGE_DIR
-# Copies a directory tree, counting the files that landed.
+# Copies a directory tree, then proves every source file landed. A failed copy
+# must fail the backup instead of producing a manifest that says success.
 stage_vault() {
     local source="$1"
     local destination="$2"
 
     mkdir -p "$destination"
+    local source_count=0 destination_count
     if [ -d "$source" ]; then
-        cp -R "$source/." "$destination/" 2>/dev/null || true
+        cp -R "$source/." "$destination/"
+        source_count="$(find "$source" -type f | wc -l | tr -d ' ')"
+    fi
+    destination_count="$(find "$destination" -type f | wc -l | tr -d ' ')"
+    if [ "$source_count" -ne "$destination_count" ]; then
+        echo "ERROR: $source copied $destination_count of $source_count files." >&2
+        exit 6
     fi
 }
 
@@ -220,9 +228,12 @@ if [ "$MODE" = "multi" ]; then
         fi
         stage_database "$tenant_db" "$TEMP_STAGE/tenants/$tenant_id/proptally.db"
         stage_vault "$tenant_dir/vault" "$TEMP_STAGE/tenants/$tenant_id/vault"
+        # Photos are portfolio data too, not derived cache.
+        stage_vault "$tenant_dir/photos" "$TEMP_STAGE/tenants/$tenant_id/photos"
         tenant_vault_files="$(find "$TEMP_STAGE/tenants/$tenant_id/vault" -type f | wc -l | tr -d ' ')"
-        VAULT_COUNT=$((VAULT_COUNT + tenant_vault_files))
-        echo "✓ Portfolio '$tenant_id' staged ($tenant_vault_files vault files)"
+        tenant_photo_files="$(find "$TEMP_STAGE/tenants/$tenant_id/photos" -type f | wc -l | tr -d ' ')"
+        VAULT_COUNT=$((VAULT_COUNT + tenant_vault_files + tenant_photo_files))
+        echo "✓ Portfolio '$tenant_id' staged ($tenant_vault_files vault, $tenant_photo_files photo files)"
         TENANT_ENTRIES="${TENANT_ENTRIES}${TENANT_ENTRIES:+, }\"$tenant_id\""
     done <<< "$TENANT_LIST"
     TENANTS_JSON="[$TENANT_ENTRIES]"
@@ -232,7 +243,12 @@ else
     stage_database "$DB_PATH" "$TEMP_STAGE/database.sqlite"
     stage_vault "$VAULT_DIR" "$TEMP_STAGE/vault"
     VAULT_COUNT="$(find "$TEMP_STAGE/vault" -type f | wc -l | tr -d ' ')"
-    echo "✓ Document vault staged ($VAULT_COUNT files)"
+    if [ -d "${STORAGE_ROOT}/photos" ]; then
+        stage_vault "${STORAGE_ROOT}/photos" "$TEMP_STAGE/photos"
+        PHOTO_COUNT="$(find "$TEMP_STAGE/photos" -type f | wc -l | tr -d ' ')"
+        VAULT_COUNT=$((VAULT_COUNT + PHOTO_COUNT))
+    fi
+    echo "✓ Document vault and photos staged ($VAULT_COUNT files)"
 fi
 
 # Generate manifest

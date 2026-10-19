@@ -24,8 +24,8 @@ from proptally.db.models import (
 )
 from proptally.domain.accounting.coa import (
     MORTGAGE_INTEREST_CODE,
-    RENTAL_INCOME_CODE,
     RENT_RECEIVABLE_CODE,
+    RENTAL_INCOME_CODE,
     REPAIRS_CODE,
     ensure_entity_ledger_accounts,
 )

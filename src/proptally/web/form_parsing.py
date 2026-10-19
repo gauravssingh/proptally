@@ -6,6 +6,7 @@ submission is rejected identically wherever it came from, and a caller can
 reuse a parser without importing a route module.
 """
 
+import re
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional
@@ -20,16 +21,26 @@ def clean(value) -> str:
     return (value or "").strip()
 
 
+#: One optional minus, up to 15 significant digits, optional 3-digit grouping,
+#: and at most two decimal places. A comma may group thousands; it is never a
+#: decimal separator, so "1,23" is rejected rather than guessed.
+_MONEY = re.compile(r"^-?(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{1,2})?$")
+
+
 def cents(value, label: str) -> Optional[int]:
     """Form money ("1,234.56", "$1234.56") as integer cents; blank means "not set"."""
-    text = clean(value).replace("$", "").replace(",", "")
+    text = clean(value).replace("$", "").replace(" ", "")
     if not text:
         return None
-    try:
-        amount = Decimal(text)
-    except InvalidOperation:
+    if not _MONEY.fullmatch(text):
         raise FormError(f"{label}: {value!r} is not a money amount.")
-    return int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    try:
+        amount = Decimal(text.replace(",", ""))
+        if not amount.is_finite():
+            raise InvalidOperation
+        return int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except (InvalidOperation, ValueError):
+        raise FormError(f"{label}: {value!r} is not a money amount.") from None
 
 
 def day(value, label: str) -> Optional[date]:

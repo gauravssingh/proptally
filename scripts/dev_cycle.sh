@@ -43,8 +43,9 @@ fi
 
 launchctl kickstart -k "gui/$(id -u)/com.proptally.mt"
 for _ in $(seq 1 20); do
-    if curl -fsS -o /dev/null "http://100.116.68.37:8141/auth/login"; then
-        echo "restarted: http://100.116.68.37:8141"
+    HEALTH_URL="${PROPTALLY_HEALTH_URL:-http://127.0.0.1:8141}"
+    if curl -fsS -o /dev/null "$HEALTH_URL/auth/login"; then
+        echo "restarted: $HEALTH_URL"
         exit 0
     fi
     sleep 0.5

@@ -56,6 +56,7 @@ from proptally.db.system_models import (
     TENANT_PENDING,
     TENANT_PROVISIONING,
     WORK_ROLES,
+    AccessEvent,
     PasswordResetToken,
     Tenant,
     TenantMembership,
@@ -333,19 +334,32 @@ class LoginRateLimiter:
             self._failures.pop(key, None)
         return recent
 
+    @staticmethod
+    def _key(ip_address: str, email: str) -> tuple[str, str]:
+        # Match authenticate()'s normalisation exactly: a leading/trailing space
+        # must not mint a fresh throttle bucket for the same account.
+        return (ip_address, normalise_email(email))
+
+    def _sweep(self, now: float) -> None:
+        """Drop keys whose failures have all aged out, bounding process memory."""
+        for key in list(self._failures):
+            self._prune(key, now)
+
     def is_blocked(self, ip_address: str, email: str) -> bool:
         now = time.monotonic()
-        return len(self._prune((ip_address, email.lower()), now)) >= self.limit
+        return len(self._prune(self._key(ip_address, email), now)) >= self.limit
 
     def record_failure(self, ip_address: str, email: str) -> None:
         now = time.monotonic()
-        key = (ip_address, email.lower())
+        key = self._key(ip_address, email)
         recent = self._prune(key, now)
         recent.append(now)
         self._failures[key] = recent
+        if len(self._failures) > 1024:
+            self._sweep(now)
 
     def clear(self, ip_address: str, email: str) -> None:
-        self._failures.pop((ip_address, email.lower()), None)
+        self._failures.pop(self._key(ip_address, email), None)
 
 
 # --- Accounts, portfolios and memberships ----------------------------------
@@ -478,8 +492,33 @@ def _owner_count(session: Session, tenant_id: str, excluding: str | None = None)
     return len([m for m in owners if m.id != excluding])
 
 
+def _record_access_event(
+    session: Session,
+    *,
+    tenant_id: str,
+    event: str,
+    actor_user_id: str | None = None,
+    subject_email: str | None = None,
+    detail: str | None = None,
+) -> None:
+    """Append one durable access-list change to the control plane."""
+    session.add(AccessEvent(
+        id=f"acc_{uuid4().hex[:16]}",
+        tenant_id=tenant_id,
+        actor_user_id=actor_user_id,
+        event=event,
+        subject_email=normalise_email(subject_email) if subject_email else None,
+        detail=detail,
+    ))
+
+
 def change_member_role(
-    control_engine: Engine, membership_id: str, new_role: str, *, tenant_id: str
+    control_engine: Engine,
+    membership_id: str,
+    new_role: str,
+    *,
+    tenant_id: str,
+    actor_user_id: str | None = None,
 ) -> None:
     """Changes what a member may do. The portfolio must keep at least one owner.
 
@@ -504,12 +543,28 @@ def change_member_role(
                     "This is the portfolio's only owner, so it cannot be demoted. "
                     "Make somebody else an owner first."
                 )
+        old_role = membership.role
         membership.role = new_role
         session.add(membership)
+        subject = session.get(User, membership.user_id)
+        _record_access_event(
+            session,
+            tenant_id=tenant_id,
+            event="ROLE_CHANGED",
+            actor_user_id=actor_user_id,
+            subject_email=subject.email if subject else None,
+            detail=f"{old_role} -> {new_role}",
+        )
         session.commit()
 
 
-def remove_member(control_engine: Engine, membership_id: str, *, tenant_id: str) -> None:
+def remove_member(
+    control_engine: Engine,
+    membership_id: str,
+    *,
+    tenant_id: str,
+    actor_user_id: str | None = None,
+) -> None:
     """Removes somebody's access to a portfolio.
 
     Their account survives: they may still belong to other portfolios. The portfolio
@@ -524,6 +579,16 @@ def remove_member(control_engine: Engine, membership_id: str, *, tenant_id: str)
                 "This is the portfolio's only owner. Transfer ownership before removing "
                 "it, or remove the portfolio itself."
             )
+        subject = session.get(User, membership.user_id)
+        subject_email = subject.email if subject else None
+        _record_access_event(
+            session,
+            tenant_id=tenant_id,
+            event="REMOVED",
+            actor_user_id=actor_user_id,
+            subject_email=subject_email,
+            detail=f"role={membership.role}",
+        )
         session.delete(membership)
         session.commit()
 
@@ -533,7 +598,13 @@ def remove_member(control_engine: Engine, membership_id: str, *, tenant_id: str)
     )
 
 
-def revoke_invite(control_engine: Engine, invite_id: str, *, tenant_id: str) -> None:
+def revoke_invite(
+    control_engine: Engine,
+    invite_id: str,
+    *,
+    tenant_id: str,
+    actor_user_id: str | None = None,
+) -> None:
     """Withdraws an invitation that has not been accepted, so its link stops working."""
     with Session(control_engine) as session:
         invite = session.get(UserInvite, invite_id)
@@ -541,6 +612,14 @@ def revoke_invite(control_engine: Engine, invite_id: str, *, tenant_id: str) -> 
             raise MembershipError("That invitation is not for this portfolio.")
         if invite.accepted_at is not None:
             raise MembershipError("That invitation has already been accepted.")
+        _record_access_event(
+            session,
+            tenant_id=tenant_id,
+            event="INVITATION_WITHDRAWN",
+            actor_user_id=actor_user_id,
+            subject_email=invite.email,
+            detail=f"role={invite.role}",
+        )
         session.delete(invite)
         session.commit()
 
@@ -712,6 +791,13 @@ def authenticate(control_engine: Engine, email: str, password: str) -> User | No
             return None
         if not verify_password(user.password_hash, password):
             return None
+        if _HASHER.check_needs_rehash(user.password_hash):
+            # Upgrade the stored hash in place as parameters strengthen; the
+            # plaintext never leaves this call.
+            user.password_hash = hash_password(password)
+            session.add(user)
+            session.commit()
+            session.refresh(user)
         return user
 
 
@@ -755,6 +841,12 @@ def create_invite(
 
     token = new_token()
     with Session(control_engine) as session:
+        invited_user = session.exec(select(User).where(User.email == normalise_email(email))).first()
+        if invited_user is not None and invited_user.is_super_admin:
+            raise ValueError(
+                "The platform operator cannot be invited into a portfolio; "
+                "use a separate account."
+            )
         invite = UserInvite(
             id=f"inv_{uuid4().hex[:16]}",
             tenant_id=tenant_id,
@@ -765,6 +857,14 @@ def create_invite(
             expires_at=utc_now() + INVITE_LIFETIME,
         )
         session.add(invite)
+        _record_access_event(
+            session,
+            tenant_id=tenant_id,
+            event="INVITED",
+            actor_user_id=invited_by_user_id,
+            subject_email=email,
+            detail=f"role={role}",
+        )
         session.commit()
         session.refresh(invite)
     return invite, token
@@ -849,6 +949,14 @@ def accept_invite(
                 role=invite.role,
             )
             session.add(membership)
+            _record_access_event(
+                session,
+                tenant_id=invite.tenant_id,
+                event="JOINED",
+                actor_user_id=user.id,
+                subject_email=invite.email,
+                detail=f"role={invite.role}",
+            )
             session.commit()
             session.refresh(user)
             session.refresh(membership)
@@ -1072,20 +1180,34 @@ def consume_password_reset(control_engine: Engine, token: str, new_password: str
     if not ok:
         raise ValueError(reason)
 
+    now = utc_now()
+    digest = token_digest(token)
     with Session(control_engine) as session:
-        row = session.exec(
-            select(PasswordResetToken).where(PasswordResetToken.token_hash == token_digest(token))
-        ).first()
-        if row is None or row.used_at is not None or row.expires_at <= utc_now():
+        # Consume the token in the same statement that proves it is still live.
+        # A check-then-update lets two concurrent requests both spend the link.
+        claimed = session.execute(
+            text(
+                "UPDATE password_reset_tokens SET used_at = :now "
+                "WHERE token_hash = :hash AND used_at IS NULL "
+                "AND julianday(expires_at) > julianday(:now)"
+            ),
+            {"now": now.isoformat(), "hash": digest},
+        )
+        if claimed.rowcount != 1:
+            session.rollback()
             raise ValueError("This reset link is invalid, already used, or has expired.")
-        user = session.get(User, row.user_id)
+
+        row = session.exec(
+            select(PasswordResetToken).where(PasswordResetToken.token_hash == digest)
+        ).first()
+        user = session.get(User, row.user_id) if row else None
         if user is None:
+            # The token was consumed but its account vanished; do not leave the
+            # row marked used for an account nobody can log into.
+            session.rollback()
             raise ValueError("This reset link is invalid, already used, or has expired.")
         user.password_hash = hash_password(new_password)
-        user.password_changed_at = utc_now()
-        session.add(user)
-        row.used_at = utc_now()
-        session.add(row)
+        user.password_changed_at = now
         for existing in session.exec(select(UserSession).where(UserSession.user_id == user.id)).all():
             if existing.revoked_at is None:
                 existing.revoked_at = utc_now()
@@ -1133,13 +1255,28 @@ def revoke_session(control_engine: Engine, token: str) -> None:
 
 
 def switch_active_tenant(control_engine: Engine, token: str, tenant_id: str) -> None:
-    """Points a session at another portfolio the user is a member of."""
+    """Points a session at another portfolio the user is a member of.
+
+    Membership is re-checked here rather than trusted from the caller: the
+    session cookie must never be able to name a database its user cannot open.
+    """
+    if not token:
+        raise MembershipError("No session.")
     with Session(control_engine) as session:
         row = session.get(UserSession, token_digest(token))
-        if row is not None:
-            row.active_tenant_id = tenant_id
-            session.add(row)
-            session.commit()
+        if row is None or row.revoked_at is not None or row.expires_at <= utc_now():
+            raise MembershipError("No active session.")
+        membership = session.exec(
+            select(TenantMembership).where(
+                TenantMembership.user_id == row.user_id,
+                TenantMembership.tenant_id == tenant_id,
+            )
+        ).first()
+        if membership is None:
+            raise MembershipError("Not a member of that portfolio.")
+        row.active_tenant_id = tenant_id
+        session.add(row)
+        session.commit()
 
 
 def resolve_context(
@@ -1424,7 +1561,7 @@ class AuthenticationDependency:
         self.require_mutating_role = require_mutating_role
 
     async def __call__(self, request: Request) -> AsyncIterator[TenantContext]:
-        token = request.cookies.get(cookie_name())
+        token = request.cookies.get(cookie_name()) or request.query_params.get("pt_session")
         context = resolve_context(self.control_engine, self.tenant_manager, token)
         if context is None:
             raise AuthenticationRequired()
@@ -1566,6 +1703,14 @@ def create_super_admin(
             )
             session.add(user)
         else:
+            memberships = session.exec(
+                select(TenantMembership).where(TenantMembership.user_id == user.id)
+            ).first()
+            if memberships is not None:
+                raise ValueError(
+                    "That account belongs to at least one portfolio. A super admin "
+                    "is a principal outside the tenant model; use a separate address."
+                )
             user.password_hash = hash_password(password)
             user.password_changed_at = utc_now()
             user.is_super_admin = True

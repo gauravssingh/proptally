@@ -41,6 +41,9 @@ created — through the same domain services the setup wizard uses.
 - No accounting or tax behaviour was changed.
 - No transaction is posted automatically. Bank statement transactions are not
   imported in this release; the document is retained and linked.
+- Mortgage statements copied during provisioning are parsed and staged for the
+  Statements & Ingestion screen after the loans exist. They are not approved or
+  imported automatically; the customer still reviews and imports each period.
 - No ownership model was invented. Owner names are preserved as field evidence
   until the domain has an ownership entity.
 
@@ -239,6 +242,8 @@ backup taken first.
 
 - Transaction extraction and posting are not implemented; bank statements are
   retained and linked, never posted to the ledger.
+- Mortgage statements are staged as pending extractions once their loans exist,
+  but approval and import remain explicit customer actions.
 - Rental, tax, insurance, valuation and maintenance documents are classified and
   retained; only leases become a domain record. The others cite property evidence.
 - Ownership names have no domain entity to write to; they remain field evidence.

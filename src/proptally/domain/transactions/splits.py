@@ -1,10 +1,13 @@
 """Transaction splitting and ledger posting service enforcing exact reconciliation and governance."""
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import uuid4
+
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
+
+from proptally.core.exceptions import AccountNotFoundError, InvalidSplitSumError
 from proptally.db.models import (
     AuditLog,
     FinancialAccount,
@@ -15,11 +18,11 @@ from proptally.db.models import (
     TransactionProcessingState,
     TransactionSplit,
 )
-from proptally.core.exceptions import InvalidSplitSumError
 from proptally.db.system_models import ROLE_CPA_REVIEWER
 from proptally.domain.accounting.coa import (
-    CARD_ACCOUNT_TYPE,
+    BANK_FEES_CODE,
     COMMISSIONS_CODE,
+    FEE_INCOME_CODE,
     HAZARD_INSURANCE_CODE,
     HOA_CODE,
     LEGAL_AND_LATE_FEE_CODE,
@@ -31,21 +34,21 @@ from proptally.domain.accounting.coa import (
     REPAIRS_CODE,
     SNOW_LANDSCAPING_CODE,
     SUPPLIES_CODE,
-    BANK_FEES_CODE,
-    FEE_INCOME_CODE,
+    TENANT_DEPOSITS_HELD_CODE,
+    UTILITIES_CODE,
     allocate_account_ledger_account,
+)
+from proptally.domain.accounting.ledger import (
+    add_journal_line,
+    create_journal_entry,
+    post_journal_entry,
+    reverse_journal_entry,
 )
 from proptally.domain.transactions.policy import (
     PostingPolicy,
     assert_posting_authorized,
     evaluate_posting_policy,
     is_card_settlement,
-)
-from proptally.domain.accounting.ledger import (
-    create_journal_entry,
-    add_journal_line,
-    post_journal_entry,
-    reverse_journal_entry,
 )
 
 #: Split category -> operating-expense ledger account. Categories are
@@ -57,6 +60,7 @@ CATEGORY_TO_OPEX_CODE = {
     "REPAIRS": REPAIRS_CODE,
     "SUPPLIES": SUPPLIES_CODE,
     "SNOW_LANDSCAPING": SNOW_LANDSCAPING_CODE,
+    "UTILITIES": UTILITIES_CODE,
     "BANK_FEES": BANK_FEES_CODE,
     "MANAGEMENT": MANAGEMENT_CODE,
     "COMMISSIONS": COMMISSIONS_CODE,
@@ -97,6 +101,13 @@ def apply_transaction_splits(
     txn = session.get(Transaction, transaction_id)
     if not txn:
         raise ValueError(f"Transaction {transaction_id} not found.")
+
+    existing_state = session.get(TransactionProcessingState, transaction_id)
+    if existing_state is not None and existing_state.posting_status == "POSTED":
+        raise ValueError(
+            f"Transaction {transaction_id} is already POSTED and cannot be re-split. "
+            "Use reclassify_and_repost_transaction to preserve the posted history."
+        )
 
     target_total = abs(txn.amount_cents)
     sum_splits = sum(s.amount_cents for s in splits)
@@ -273,11 +284,19 @@ def _resolve_split_account_code(session: Session, category: str, property_id: Op
         return RENTAL_INCOME_CODE
     if cat_upper in ("LATE_FEE", "FEE"):
         return FEE_INCOME_CODE
+    if cat_upper == "SECURITY_DEPOSIT":
+        return TENANT_DEPOSITS_HELD_CODE
     if cat_upper in CATEGORY_TO_OPEX_CODE:
         return CATEGORY_TO_OPEX_CODE[cat_upper]
     if cat_upper == "MORTGAGE":
         return _mortgage_clearing_code(session, property_id)
-    return PERSONAL_DRAW_CODE  # Default to personal draw for unmapped
+    if cat_upper == "PERSONAL":
+        return PERSONAL_DRAW_CODE
+    # An unknown category must never be booked as owner drawings: that would
+    # silently make a real expense non-deductible. Fail loudly instead.
+    raise AccountNotFoundError(
+        f"Split category {category!r} has no ledger account mapping."
+    )
 
 
 def _mortgage_clearing_code(session: Session, property_id: Optional[str]) -> int:
@@ -366,6 +385,13 @@ def post_transaction_to_ledger(
     ).all()
     if not splits:
         raise ValueError(f"No splits found for transaction {transaction_id}.")
+
+    split_total = sum(s.amount_cents for s in splits)
+    if split_total != abs(txn.amount_cents):
+        raise InvalidSplitSumError(
+            f"Split total ({split_total} cents) does not equal transaction total "
+            f"({abs(txn.amount_cents)} cents); refusing to post."
+        )
 
     # Reject unclassified splits
     if any(s.tax_review_status == "UNCLASSIFIED" for s in splits):
@@ -523,7 +549,7 @@ def reclassify_and_repost_transaction(
         reverse_journal_entry(
             session=session,
             entry_id=reversal_target_id,
-            reversal_date=date.today(),
+            reversal_date=datetime.now(timezone.utc).date(),
             reason=reversal_reason,
             commit=False,
             actor_id=actor_id,

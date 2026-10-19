@@ -1,20 +1,25 @@
 {% import "components/ui.html" as ui with context %}
 
+{% macro import_steps(steps) -%}
+<ol class="pt-import-steps" aria-label="Import progress">
+    {% for step in steps %}
+    <li class="pt-import-steps__item is-{{ step.state }}">
+        <span class="pt-import-steps__marker" aria-hidden="true">
+            {%- if step.state == "done" -%}{{ ui.icon("check", "sm") }}{%- else -%}{{ loop.index }}{%- endif -%}
+        </span>
+        <span class="pt-import-steps__label">{{ step.label }}</span>
+    </li>
+    {% endfor %}
+</ol>
+{%- endmacro %}
+
+
 {% macro card(steps, icon_name, title, text, meta=None, progress_value=None,
               progress_label="", note=None, actions="", secondary_actions="") -%}
 <section class="pt-journey-card" aria-labelledby="journey-title">
     <span class="pt-journey-card__icon">{{ ui.icon(icon_name, "lg") }}</span>
     <div class="pt-journey-card__body">
-        <ol class="pt-journey-steps" aria-label="Onboarding progress">
-            {% for step in steps %}
-            <li class="pt-journey-steps__item is-{{ step.state }}">
-                <span class="pt-journey-steps__marker" aria-hidden="true">
-                    {%- if step.state == "done" -%}✓{%- else -%}{{ loop.index }}{%- endif -%}
-                </span>
-                <span class="pt-journey-steps__label">{{ step.label }}</span>
-            </li>
-            {% endfor %}
-        </ol>
+        {{ import_steps(steps) }}
 
         <div class="pt-journey-card__intro">
             <div class="pt-journey-card__copy">

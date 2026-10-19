@@ -29,13 +29,16 @@ from proptally.domain.accounting.metrics import calculate_property_financials
 from proptally.domain.transactions.suggest import suggest_split_for_transaction
 from proptally.ingestion.service import MAX_UPLOAD_BYTES, store_document
 from proptally.web.auth import current_context
-from proptally.web.helpers import format_cents, period_label
 from proptally.web.form_parsing import cents as _cents
+from proptally.web.helpers import format_cents, period_label
 from proptally.web.property_forms import (
     FormError,
     address_tuple,
     apply_address,
     apply_property_location,
+    safe_http_url,
+)
+from proptally.web.property_forms import (
     google_maps_url as get_google_maps_url,
 )
 
@@ -273,6 +276,31 @@ def get_properties_router(templates, get_session_dep):
                 principal_repaid_cents / loan.original_principal_cents * 100, 1
             )
 
+        # Without an original principal, statement balances still show how much
+        # principal has been retired since the first recorded statement.
+        balance_periods = [
+            period for period in mortgage_periods
+            if period.outstanding_principal_cents is not None
+        ]
+        principal_progress_percent = None
+        principal_paid_down_cents = None
+        principal_start_cents = None
+        principal_start_date = None
+        principal_latest_date = None
+        if balance_periods:
+            first_period = min(balance_periods, key=lambda period: period.statement_date)
+            last_period = max(balance_periods, key=lambda period: period.statement_date)
+            principal_start_cents = first_period.outstanding_principal_cents
+            principal_latest_date = last_period.statement_date
+            principal_start_date = first_period.statement_date
+            if principal_start_cents and principal_start_cents > 0:
+                principal_paid_down_cents = max(
+                    0, principal_start_cents - last_period.outstanding_principal_cents
+                )
+                principal_progress_percent = round(
+                    principal_paid_down_cents / principal_start_cents * 100, 1
+                )
+
         monthly_payment_cents = (
             latest_period.total_amount_billed_cents if latest_period else None
         )
@@ -423,6 +451,33 @@ def get_properties_router(templates, get_session_dep):
             .order_by(Document.uploaded_at.desc())
         ).all()
 
+        document_type_counts: dict[str, int] = {}
+        for document in property_documents:
+            key = document.document_type or "OTHER"
+            document_type_counts[key] = document_type_counts.get(key, 0) + 1
+        vault_filters = []
+        for doc_type, label, icon in (
+            ("", "All documents", "folder"),
+            ("LEASE_AGREEMENT", "Lease agreements", "file_text"),
+            ("MORTGAGE_STATEMENT", "Mortgage statements", "bank"),
+            ("INSURANCE_POLICY", "Insurance policies", "shield"),
+            ("PROPERTY_TAX", "Property tax", "file_text"),
+            ("HOA_STATEMENT", "HOA documents", "file_text"),
+        ):
+            count = len(property_documents) if not doc_type else document_type_counts.get(doc_type, 0)
+            if doc_type and not count:
+                continue
+            href = f"/documents?property={property_id}"
+            if doc_type:
+                href += f"&type={doc_type}"
+            vault_filters.append({
+                "type": doc_type,
+                "label": label,
+                "icon": icon,
+                "count": count,
+                "href": href,
+            })
+
         lease_document = None
         if lease and lease.document_id:
             lease_document = session.get(Document, lease.document_id)
@@ -460,6 +515,12 @@ def get_properties_router(templates, get_session_dep):
                 "appreciation_percent": appreciation_percent,
                 "principal_repaid_cents": principal_repaid_cents,
                 "principal_repaid_percent": principal_repaid_percent,
+                "principal_progress_percent": principal_progress_percent,
+                "principal_paid_down_cents": principal_paid_down_cents,
+                "principal_start_cents": principal_start_cents,
+                "principal_start_date": principal_start_date,
+                "principal_latest_date": principal_latest_date,
+                "principal_statement_count": len(balance_periods),
                 "monthly_payment_cents": monthly_payment_cents,
                 "last_payment_cents": last_payment_cents,
                 "last_payment_date": last_payment_date,
@@ -491,6 +552,7 @@ def get_properties_router(templates, get_session_dep):
                 "lease": lease,
                 "lease_document": lease_document,
                 "property_documents": property_documents,
+                "vault_filters": vault_filters,
                 "detected_tenant": detected_tenant,
                 "financials": financials,
                 "review_count": review_count,
@@ -542,6 +604,8 @@ def get_properties_router(templates, get_session_dep):
                 )
             description = (form.get("description") or "").strip()
             custom_maps_url = (form.get("google_maps_url") or "").strip()
+            if custom_maps_url and safe_http_url(custom_maps_url) is None:
+                raise FormError("Google Maps link must start with http:// or https://.")
         except FormError as exc:
             session.rollback()
             return RedirectResponse(
@@ -752,15 +816,13 @@ def get_properties_router(templates, get_session_dep):
                 if tenant_name and tenant_name.strip():
                     existing_lease.tenant_name = tenant_name.strip()
                 if monthly_rent_dollars and monthly_rent_dollars.strip():
-                    try:
-                        existing_lease.monthly_rent_cents = int(round(float(monthly_rent_dollars.strip().replace("$", "").replace(",", "")) * 100))
-                    except ValueError:
-                        pass
+                    parsed = _cents(monthly_rent_dollars, "Monthly rent")
+                    if parsed is not None:
+                        existing_lease.monthly_rent_cents = parsed
                 if security_deposit_dollars and security_deposit_dollars.strip():
-                    try:
-                        existing_lease.security_deposit_cents = int(round(float(security_deposit_dollars.strip().replace("$", "").replace(",", "")) * 100))
-                    except ValueError:
-                        pass
+                    existing_lease.security_deposit_cents = _cents(
+                        security_deposit_dollars, "Security deposit"
+                    )
                 if start_date and start_date.strip():
                     try:
                         existing_lease.start_date = date.fromisoformat(start_date.strip())
@@ -773,25 +835,22 @@ def get_properties_router(templates, get_session_dep):
                         pass
                 session.add(existing_lease)
             elif tenant_name and tenant_name.strip():
-                try:
-                    rent_cents = int(round(float(monthly_rent_dollars.strip().replace("$", "").replace(",", "")) * 100)) if monthly_rent_dollars else 0
-                    dep_cents = int(round(float(security_deposit_dollars.strip().replace("$", "").replace(",", "")) * 100)) if security_deposit_dollars else rent_cents
-                    s_date = date.fromisoformat(start_date.strip()) if start_date and start_date.strip() else date(2026, 1, 1)
-                    e_date = date.fromisoformat(end_date.strip()) if end_date and end_date.strip() else None
-                    new_lease = Lease(
-                        id=str(uuid4()),
-                        property_id=property_id,
-                        tenant_name=tenant_name.strip(),
-                        start_date=s_date,
-                        end_date=e_date,
-                        monthly_rent_cents=rent_cents,
-                        security_deposit_cents=dep_cents,
-                        document_id=doc.id,
-                        is_active=True,
-                    )
-                    session.add(new_lease)
-                except Exception:
-                    pass
+                rent_cents = _cents(monthly_rent_dollars, "Monthly rent") or 0
+                dep_cents = _cents(security_deposit_dollars, "Security deposit")
+                s_date = date.fromisoformat(start_date.strip()) if start_date and start_date.strip() else date(2026, 1, 1)
+                e_date = date.fromisoformat(end_date.strip()) if end_date and end_date.strip() else None
+                new_lease = Lease(
+                    id=str(uuid4()),
+                    property_id=property_id,
+                    tenant_name=tenant_name.strip(),
+                    start_date=s_date,
+                    end_date=e_date,
+                    monthly_rent_cents=rent_cents,
+                    security_deposit_cents=dep_cents,
+                    document_id=doc.id,
+                    is_active=True,
+                )
+                session.add(new_lease)
 
         session.commit()
         return RedirectResponse(url=f"/properties/{property_id}#documents-vault", status_code=303)
@@ -812,15 +871,13 @@ def get_properties_router(templates, get_session_dep):
             raise HTTPException(status_code=404, detail="Property not found")
 
         try:
-            rent_cents = int(round(float(monthly_rent_dollars.strip().replace("$", "").replace(",", "")) * 100))
-            dep_cents = (
-                int(round(float(security_deposit_dollars.strip().replace("$", "").replace(",", "")) * 100))
-                if security_deposit_dollars and security_deposit_dollars.strip()
-                else rent_cents
-            )
+            rent_cents = _cents(monthly_rent_dollars, "Monthly rent")
+            if rent_cents is None:
+                raise FormError("Monthly rent is required.")
+            dep_cents = _cents(security_deposit_dollars, "Security deposit")
             s_date = date.fromisoformat(start_date.strip())
             e_date = date.fromisoformat(end_date.strip()) if end_date and end_date.strip() else None
-        except ValueError as err:
+        except (ValueError, FormError) as err:
             raise HTTPException(status_code=400, detail=f"Invalid lease values: {err}")
 
         existing_lease = session.exec(

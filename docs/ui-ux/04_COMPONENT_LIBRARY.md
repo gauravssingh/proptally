@@ -93,10 +93,11 @@ built with this library. Minimum 32px target at `md`.
 A flex row with `--pt-space-2` gap. Use for a primary plus one secondary; three or more
 actions belong in a `ui.section_open(actions=…)` header or a modal footer.
 
-### B8. Segmented navigation — `.pt-segmented`
+### B8. Segmented navigation — `.pt-segmented`, `ui.segmented(items, label)`
 
-For mutually exclusive short options (tax year, period granularity). Items are links with
-`is-active`; the active item carries `aria-current="page"`. Height 28px, radius `md`.
+For mutually exclusive short options (tax year, period granularity, sort order, kind filter).
+Items are links with `is-active`; the active item carries `aria-current="page"`. Optional
+`.pt-segmented__count` badge displays record totals. Height 28px, radius `md`.
 
 ---
 
@@ -389,7 +390,7 @@ here is JS-free: the tree is `<details>`, selection and tabs are links, the menu
 `<details>`, and every piece of view state is in the URL, so a refresh or a shared link
 lands where it was.
 
-### H1. Explorer — `.pt-explorer`, `.pt-explorer--inspecting`
+### H1. Explorer — `.pt-explorer`, `.pt-explorer--inspecting`, `.pt-explorer__toolbar`
 
 One grid, one surface: `.pt-explorer` carries the card's border and radius and its children
 carry the hairlines — `.pt-explorer__rail` (right border), `.pt-explorer__main`, and
@@ -397,6 +398,8 @@ carry the hairlines — `.pt-explorer__rail` (right border), `.pt-explorer__main
 columns from `1024px`, three from `1440px` when `--inspecting` is present; one column below,
 where the rail stacks above the pane it navigates. Hairlines rather than three floating
 cards: three cards read as three unrelated things.
+`.pt-explorer__toolbar` provides a standardized filter and sort bar using `.pt-toolbar-group`
+and `.pt-toolbar-label` (with `ui.icon("filter", "sm")` and `ui.icon("sort", "sm")`).
 
 ### H2. Rail — `.pt-rail__heading`, `.pt-rail__storage`
 
@@ -434,9 +437,10 @@ URL (`?tab=details`) that survives a refresh and can be shared. The active tab c
 The one record you chose: its identity, its tabs, then — `.pt-preview` (a framed
 `.pt-preview__frame` iframe of the document's own inline-serving endpoint, or
 `.pt-preview__fallback` when the type cannot preview), `.pt-action-tiles` /
-`.pt-action-tile` for the actions that exist, and facts via
-`ui.statement_open/statement_row`. Nothing in it is a menu, and nothing is offered that the
-app cannot do.
+`.pt-action-tile` (via `ui.action_tile`, supporting `--primary`, `--warning`, and `--success`
+modifiers for review/import actions) for the actions that exist, and facts via
+`ui.statement_open/statement_row`. Awaiting-review states in the inspector use
+`ui.alert(variant="warning")` for high-contrast accessibility.
 
 ### H7. Selection — `.pt-pick`, `.pt-table__pick`, `.pt-table__name`
 

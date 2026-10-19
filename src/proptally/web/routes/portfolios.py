@@ -13,29 +13,29 @@ request asks for.
 from __future__ import annotations
 
 import urllib.parse
-
 from contextlib import contextmanager
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
 from starlette.background import BackgroundTask
 
 from proptally.db.models import Property
+from proptally.db.portfolio_archive import build_portfolio_archive, discard_archive
 from proptally.db.portfolio_lifecycle import (
     PortfolioDeletionError,
     delete_portfolio,
     portfolio_summary,
 )
-from proptally.db.portfolio_archive import build_portfolio_archive, discard_archive
-from proptally.db.system_models import ROLE_CPA_REVIEWER, ROLE_OWNER, ROLE_READ_ONLY, TENANT_DELETING, Tenant
+from proptally.db.system_models import ROLE_OWNER, TENANT_DELETING, Tenant
 from proptally.db.tenant_manager import TenantManager
 from proptally.domain.accounting.metrics import calculate_portfolio_equity
 from proptally.web.auth import (
     ROLE_DESCRIPTIONS,
+    AuthenticationRequired,
     cookie_name,
     memberships_for,
     switch_active_tenant,
-    AuthenticationRequired,
     tenant_operation_scope,
 )
 
@@ -104,9 +104,9 @@ def _portfolio_lease(request: Request, context, tenant_id: str, role: str):
 
 def _safe_return_to(path: str) -> str:
     """Only redirect back to a path on this host after a workspace switch."""
-    if path.startswith("/") and not path.startswith("//"):
-        return path
-    return "/"
+    from proptally.web.helpers import safe_local_path
+
+    return safe_local_path(path)
 
 
 def _portfolio_rows(request, control_engine, tenant_manager: TenantManager, context) -> list[dict]:

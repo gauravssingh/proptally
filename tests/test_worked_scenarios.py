@@ -2,21 +2,19 @@
 
 from datetime import date
 from uuid import uuid4
+
 import pytest
 from sqlmodel import Session, select
+
 from proptally.db.models import (
-    Document,
-    FinancialInstitution,
-    FinancialAccount,
-    Statement,
-    Property,
-    LoanAccount,
     EscrowAccount,
     EscrowMovement,
-    MortgagePeriod,
-    Transaction,
+    FinancialAccount,
+    FinancialInstitution,
     JournalEntry,
     JournalEntryLine,
+    LoanAccount,
+    Property,
 )
 from proptally.domain.accounting.coa import (
     MORTGAGE_INTEREST_CODE,
@@ -27,12 +25,11 @@ from proptally.domain.accounting.coa import (
     ensure_entity_ledger_accounts,
 )
 from proptally.domain.accounting.ledger import (
-    create_journal_entry,
     add_journal_line,
+    create_journal_entry,
     post_journal_entry,
     reverse_journal_entry,
 )
-from proptally.domain.transactions.splits import apply_transaction_splits, SplitItem
 
 # Ledger codes owned by this portfolio's entities. The fixture allocates them
 # from the entity rows themselves (checking, the Visa liability, and the PNC

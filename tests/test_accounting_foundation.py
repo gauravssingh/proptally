@@ -1,22 +1,23 @@
 """Tests for double-entry ledger posting, balancing, and database immutability triggers."""
 
 from datetime import date
+
 import pytest
 from sqlalchemy import text
 from sqlmodel import Session
+
+from proptally.core.exceptions import (
+    AccountNotFoundError,
+    DuplicatePostingError,
+    EmptyJournalEntryError,
+    UnbalancedJournalEntryError,
+)
 from proptally.db.models import FinancialAccount, FinancialInstitution, LoanAccount, Property
 from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
 from proptally.domain.accounting.ledger import (
-    create_journal_entry,
     add_journal_line,
+    create_journal_entry,
     post_journal_entry,
-)
-from proptally.core.exceptions import (
-    UnbalancedJournalEntryError,
-    EmptyJournalEntryError,
-    ImmutableLedgerError,
-    DuplicatePostingError,
-    AccountNotFoundError,
 )
 
 # Ledger codes allocated to the entities declared by ``ledger_entities``. The codes

@@ -129,7 +129,10 @@ def test_a_tenant_account_cannot_sign_in_at_the_console_door(console):
     assert "did not match" in response.text
     assert client.get("/admin").status_code == 404
 
-    # ...and the tenant door still works for that account.
+    # ...and the tenant door still works for that account. Clear the already
+    # signed-in session first: /auth/login redirects a signed-in visitor, so the
+    # form token must come from a real pre-session page.
+    console.tenant.client.cookies.clear()
     tenant_token = _cookie(console.tenant.client, "/auth/login")
     signed_in = console.tenant.client.post(
         "/auth/login",

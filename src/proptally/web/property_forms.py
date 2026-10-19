@@ -289,14 +289,29 @@ def expire_stale_coordinates(session: Session, *, now: datetime | None = None) -
     return len(stale)
 
 
+def safe_http_url(value: str | None) -> str | None:
+    """An absolute http(s) URL, or None. A stored link is never rendered as a
+    ``javascript:``/``data:`` href."""
+    if not value:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    parts = urllib.parse.urlsplit(candidate)
+    if parts.scheme.lower() in {"http", "https"} and parts.netloc:
+        return candidate
+    return None
+
+
 def google_maps_url(prop: Property) -> str:
     """The property's Google Maps link, using a pinned place ID when one exists.
 
     A custom URL set by the owner still wins, because it is the owner's explicit
     choice rather than a derived address lookup.
     """
-    if prop.google_maps_url and prop.google_maps_url.strip():
-        return prop.google_maps_url.strip()
+    custom = safe_http_url(prop.google_maps_url)
+    if custom:
+        return custom
 
     parts = [prop.address_line1]
     if prop.address_line2:

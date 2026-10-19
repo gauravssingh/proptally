@@ -396,6 +396,35 @@ def delete_portfolio(
                 raise PortfolioDeletionError(
                     "Portfolio storage was removed, but its lifecycle state changed unexpectedly."
                 )
+            # Onboarding staging is tenant data too: its rows and uploaded bytes
+            # must not outlive the portfolio they were imported into.
+            from proptally.db.onboarding_models import OnboardingSession
+            from proptally.onboarding.store import OnboardingStore
+
+            onboarding_store = OnboardingStore(tenant_manager.root)
+            onboarding_ids = session.exec(
+                select(OnboardingSession.id).where(OnboardingSession.tenant_id == tenant_id)
+            ).all()
+            for onboarding_id in onboarding_ids:
+                onboarding_store.remove_session(onboarding_id)
+            for table in (
+                "onboarding_field_evidence",
+                "onboarding_review_decisions",
+                "onboarding_provision_entries",
+                "onboarding_jobs",
+                "onboarding_extractions",
+                "onboarding_proposals",
+                "onboarding_documents",
+                "onboarding_uploads",
+            ):
+                session.execute(text(
+                    f"DELETE FROM {table} WHERE onboarding_id IN "
+                    "(SELECT id FROM onboarding_sessions WHERE tenant_id = :tenant_id)"
+                ), {"tenant_id": tenant_id})
+            session.execute(text(
+                "DELETE FROM onboarding_sessions WHERE tenant_id = :tenant_id"
+            ), {"tenant_id": tenant_id})
+
             for invite in session.exec(
                 select(UserInvite).where(UserInvite.tenant_id == tenant_id)
             ).all():

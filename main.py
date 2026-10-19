@@ -9,13 +9,19 @@ appropriately; see ``docs/architecture/v2/06_SECURITY_AND_DEPLOYMENT.md``.
 
 import os
 import socket
+import sys
 
 import uvicorn
+
+# Tenant databases, vault documents and photos are private financial records. A
+# restrictive process umask makes every file this server creates owner-only
+# before it ever reaches disk.
+os.umask(0o077)
 
 #: Address the server binds to unless the operator says otherwise. Loopback only:
 #: ``0.0.0.0`` would expose every portfolio to the whole network.
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8080
+DEFAULT_PORT = 8141
 
 #: Set to a non-loopback address (or `true` for all interfaces) to bind more widely.
 BIND_ALL_INTERFACES = {"1", "true", "yes", "all", "0.0.0.0", "::"}
@@ -29,9 +35,11 @@ def _resolve_host() -> str:
             print(
                 "Refusing to bind every interface: this instance holds multiple owners' "
                 "financial records. Set PROPTALLY_ALLOW_WIDE_BIND=true if you really mean "
-                "it, or set PROPTALLY_HOST to one specific address (e.g. a Tailscale IP)."
+                "it, or set PROPTALLY_HOST to one specific address (e.g. a Tailscale IP).",
+                file=sys.stderr,
             )
-            return DEFAULT_HOST
+            # A refused bind must not look like a successful start on loopback.
+            raise SystemExit(1)
         return "0.0.0.0"
     return requested
 

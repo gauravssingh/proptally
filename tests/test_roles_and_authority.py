@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from sqlalchemy import text
 from sqlmodel import Session, select
+from test_user_management import _invite_and_accept
 
 from proptally.db.models import (
     Document,
@@ -35,7 +36,6 @@ from proptally.db.system_models import (
     ROLE_OWNER,
     ROLE_READ_ONLY,
 )
-from test_user_management import _invite_and_accept
 
 
 def _csrf(client, path="/account"):
@@ -310,3 +310,32 @@ def test_the_control_plane_accepts_the_new_role_on_an_existing_database(tmp_path
         session.commit()
         roles = sorted(m.role for m in session.exec(select(TenantMembership)).all())
     assert roles == [ROLE_MANAGER, ROLE_OWNER]
+
+
+def test_direct_post_route_refuses_a_manager_claiming_client_confirmation(owner, monkeypatch):
+    """The register's direct-post button enforces the same role gates as the split form."""
+    monkeypatch.setenv("PROPTALLY_ALLOW_REGISTRATION", "true")
+    keeper = owner(email="keeper@example.com", portfolio_name="Shared Portfolio")
+    manager = owner(app=keeper.app, email="manager@example.com",
+                    password="manager-password-1", portfolio_name="Manager Portfolio")
+    _invite_and_accept(keeper, manager, ROLE_MANAGER, email="manager@example.com")
+
+    txn_id, _prop, _acct = _seed(keeper, kind="deposit")
+    allocated = manager.post("/transactions/split", {
+        "transaction_id": txn_id,
+        "property_id[]": "",
+        "category[]": "RENT_INCOME",
+        "amount_dollars[]": "1500.00",
+    }, follow_redirects=False)
+    assert allocated.status_code == 303, allocated.text[:300]
+
+    rejected = manager.post(
+        f"/transactions/{txn_id}/post",
+        data={"client_confirmed": "true"},
+        follow_redirects=False,
+    )
+    assert rejected.status_code == 403, rejected.text[:300]
+    with Session(keeper.engine) as session:
+        from proptally.db.models import TransactionProcessingState
+        state = session.get(TransactionProcessingState, txn_id)
+        assert state.posting_status == "UNPOSTED"

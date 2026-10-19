@@ -23,7 +23,7 @@
 <div class="pt-document-layout">
     <div class="pt-document-preview">
         {% if is_pdf %}
-        <div class="pt-pdf-viewer" data-pdf-viewer
+        <div class="pt-pdf-viewer" data-pdf-viewer data-pdf-fit-width
              data-pdf-url="/onboarding/import/{{ session.id }}/documents/{{ document.id }}/file"
              data-pdf-page="{{ page }}">
             <div class="pt-pdf-viewer__toolbar">

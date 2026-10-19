@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from sqlmodel import Session, select
 from starlette.testclient import TestClient
+from synthetic_statements import apple_card_installment_pdf
 
 from proptally.db.models import (
     Document,
@@ -267,7 +268,7 @@ def test_non_pdf_upload_is_rejected_before_anything_is_stored(owner, tmp_path):
     not_a_pdf.write_text("a statement this instance cannot read")
     rejected = _upload(signed_in, not_a_pdf, filename="notes.txt")
     assert rejected.status_code == 400
-    assert "%PDF-" in rejected.text
+    assert "PDF statement or a ZIP archive" in rejected.text
 
     # Extension is not evidence either: a file named .pdf must still carry the header.
     liar = tmp_path / "liar.pdf"
@@ -523,6 +524,79 @@ def test_a_statement_that_matched_no_account_offers_exactly_one_way_in(owner, st
     assert f'data-modal-open="approve-{extraction.id}"' not in page
     assert f'data-modal-open="import-{extraction.id}"' not in page
     assert f'action="/statements/extractions/{extraction.id}/update"' in _dialog_block(page, f"review-{extraction.id}")
+
+
+def test_retry_parse_reprocesses_a_document_already_in_the_vault(owner, tmp_path):
+    """A parser fix reaches files uploaded before it, without re-uploading them."""
+    signed_in = owner()
+    with Session(signed_in.engine) as session:
+        session.add(FinancialInstitution(id="inst_apple", name="Goldman Sachs Bank USA"))
+        session.flush()
+        session.add(FinancialAccount(
+            id="acct_apple_test",
+            institution_id="inst_apple",
+            account_name="Apple Card (Goldman Sachs)",
+            account_type="CREDIT_CARD",
+            account_number_masked="...AppleCard",
+            mixed_use_status="MIXED_USE",
+        ))
+        session.commit()
+
+    path = apple_card_installment_pdf(tmp_path / "apple-installment.pdf")
+    assert _upload(signed_in, path, filename="Apple Card Statement - September 2026.pdf").status_code == 303
+
+    with Session(signed_in.engine) as session:
+        document = session.exec(select(Document)).one()
+        document_id = document.id
+        for extraction in session.exec(
+            select(DocumentExtraction).where(DocumentExtraction.document_id == document_id)
+        ).all():
+            session.delete(extraction)
+        session.commit()
+
+    page = signed_in.client.get("/statements").text
+    assert f'action="/statements/documents/{document_id}/reprocess"' in page
+    assert "Retry parse" in page
+
+    response = signed_in.post(
+        f"/statements/documents/{document_id}/reprocess", {}, follow_redirects=False
+    )
+    assert response.status_code == 303
+
+    with Session(signed_in.engine) as session:
+        extraction = session.exec(
+            select(DocumentExtraction).where(DocumentExtraction.document_id == document_id)
+        ).one()
+        assert extraction.validation_status == "VALIDATED"
+        data = json.loads(extraction.extracted_data_json)
+        assert data["financial_account_id"] == "acct_apple_test"
+
+
+def test_bulk_retry_reprocesses_vault_documents_without_extractions(owner, tmp_path):
+    signed_in = owner()
+    path = apple_card_installment_pdf(tmp_path / "apple-bulk.pdf")
+    assert _upload(signed_in, path, filename="Apple Card Statement - December 2025.pdf").status_code == 303
+
+    with Session(signed_in.engine) as session:
+        document = session.exec(select(Document)).one()
+        document_id = document.id
+        for extraction in session.exec(
+            select(DocumentExtraction).where(DocumentExtraction.document_id == document_id)
+        ).all():
+            session.delete(extraction)
+        session.commit()
+
+    page = signed_in.client.get("/statements").text
+    assert "Retry parsing 1 unrecognized" in page
+
+    response = signed_in.post("/statements/reprocess-unrecognized", {}, follow_redirects=False)
+    assert response.status_code == 303
+
+    with Session(signed_in.engine) as session:
+        extraction = session.exec(
+            select(DocumentExtraction).where(DocumentExtraction.document_id == document_id)
+        ).one()
+        assert extraction.validation_status in {"VALIDATED", "NEEDS_REVIEW"}
 
 
 def test_a_bank_statement_with_no_registered_account_registers_it_from_the_dialog(owner, tmp_path):

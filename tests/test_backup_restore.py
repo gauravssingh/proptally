@@ -1,18 +1,16 @@
 """Integration tests for automated disaster recovery hot backup and restore scripts."""
 
 import hashlib
-import os
-import shutil
 import subprocess
 import tarfile
 from pathlib import Path
+
 import pytest
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from proptally.db.connection import get_engine
 from proptally.db.models import FinancialAccount, FinancialInstitution
 from proptally.db.schema import init_schema
-
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BACKUP_SCRIPT = REPO_ROOT / "scripts" / "backup.sh"

@@ -162,7 +162,9 @@ def parse_bofa_checking(path: Path) -> BankStatementExtraction | None:
     import pymupdf
 
     with pymupdf.open(path) as doc:
-        for p_no in range(2, len(doc)):
+        # Activity can start on any page; the section headings decide what is a
+        # transaction, so scanning from the first page cannot invent rows.
+        for p_no in range(len(doc)):
             lines = doc[p_no].get_text().splitlines()
             i = 0
             while i < len(lines):
@@ -301,7 +303,6 @@ def parse_bofa_credit_card(path: Path) -> BankStatementExtraction | None:
             if dm and current_section:
                 trans_m_d = dm.group(1)
                 i += 1
-                post_date = None
                 if i < len(lines) and re.match(r"^(\d{2}/\d{2})$", lines[i].strip()):
                     post_m_d = lines[i].strip()
                     i += 1
@@ -325,7 +326,9 @@ def parse_bofa_credit_card(path: Path) -> BankStatementExtraction | None:
                     am = re.match(r"^-?\$?([\d,]+\.\d{2})$", cand)
                     if am and desc_lines:
                         val = int((Decimal(am.group(1).replace(",", "")) * 100).quantize(Decimal(1)))
-                        amount_cents = -val if current_section == "CREDIT" else val
+                        # Signed-cents convention shared with checking: a payment
+                        # or credit is an inflow (+), a purchase is an outflow (-).
+                        amount_cents = val if current_section == "CREDIT" else -val
                         i += 1
                         break
                     elif re.match(r"^\d{4}$", cand) and len(desc_lines) > 0:
@@ -358,7 +361,7 @@ def parse_bofa_credit_card(path: Path) -> BankStatementExtraction | None:
             transactions.append(BankTransaction(
                 transaction_date=end_date,
                 posting_date=end_date,
-                amount_cents=fee_cents,
+                amount_cents=-fee_cents,
                 direction="OUTFLOW",
                 raw_description="BofA Credit Card Fees Charged",
             ))
@@ -368,7 +371,7 @@ def parse_bofa_credit_card(path: Path) -> BankStatementExtraction | None:
             transactions.append(BankTransaction(
                 transaction_date=end_date,
                 posting_date=end_date,
-                amount_cents=int_cents,
+                amount_cents=-int_cents,
                 direction="OUTFLOW",
                 raw_description="BofA Credit Card Interest Charged",
             ))
@@ -381,7 +384,7 @@ def parse_bofa_credit_card(path: Path) -> BankStatementExtraction | None:
             transactions.append(BankTransaction(
                 transaction_date=end_date,
                 posting_date=end_date,
-                amount_cents=adv_cents,
+                amount_cents=-adv_cents,
                 direction="OUTFLOW",
                 raw_description="Direct Deposit and Check Cash Advances",
             ))
@@ -389,8 +392,8 @@ def parse_bofa_credit_card(path: Path) -> BankStatementExtraction | None:
     extraction = BankStatementExtraction(
         parser_name="BofaCreditCardParser",
         statement_type="CREDIT_CARD",
-        financial_account_id="acct_bofa_cc_9306",
-        institution_id="inst_bofa",
+        institution_name="Bank of America",
+        account_last4=_observed_account_last4(full_text),
         statement_date=end_date,
         period_start_date=start_date,
         period_end_date=end_date,
@@ -399,13 +402,14 @@ def parse_bofa_credit_card(path: Path) -> BankStatementExtraction | None:
         transactions=transactions,
     )
 
-    # Balance check: opening - credits + purchases == closing
-    purch_total = sum(t.amount_cents for t in transactions if t.amount_cents > 0)
-    credits_total = sum(-t.amount_cents for t in transactions if t.amount_cents < 0)
-    if opening_balance_cents - credits_total + purch_total != closing_balance_cents:
+    # A card's opening balance is what is owed. Signed cash-flow cents reduce
+    # that balance for inflows (payments/credits) and raise it for outflows
+    # (purchases), so owed = opening - net.
+    net_cents = sum(t.amount_cents for t in transactions)
+    if opening_balance_cents - net_cents != closing_balance_cents:
         extraction.status = "NEEDS_REVIEW"
         extraction.review_reasons.append(
-            f"Credit card balance discrepancy: opening ({opening_balance_cents}) - credits ({credits_total}) + purchases ({purch_total}) != closing ({closing_balance_cents})"
+            f"Credit card balance discrepancy: opening ({opening_balance_cents}) - net ({net_cents}) != closing ({closing_balance_cents})"
         )
     else:
         extraction.status = "VALIDATED"
@@ -415,6 +419,23 @@ def parse_bofa_credit_card(path: Path) -> BankStatementExtraction | None:
 
 # --- 3. Apple Card Parser ---
 
+def _apple_card_last4(text: str) -> str | None:
+    """The Apple Card's own last four digits, never the linked bank account's.
+
+    Apple Card statements print ACH payments as "account ending in 9456" and do
+    not always print the card number. Using the generic observer would attach
+    the checking account's digits to the card.
+    """
+    for pattern in (
+        r"Card\s+Number\s*:?\s*[^\d\n]*(\d{4})",
+        r"Apple\s+Card\s*(?:ending\s+in|number)?\s*[^\d\n]*(\d{4})",
+    ):
+        match = re.search(pattern, text, re.I)
+        if match:
+            return match.group(1)
+    return None
+
+
 def parse_apple_card(path: Path) -> BankStatementExtraction | None:
     full_text = _read_text(path)
 
@@ -422,7 +443,7 @@ def parse_apple_card(path: Path) -> BankStatementExtraction | None:
         return None
 
     # Statement month: e.g. "Dec 1 — Dec 31, 2025" or "Apple Card Statement - December 2025"
-    dates_m = re.search(r"([A-Za-z]+)\s+(\d{1,2})\s*—\s*([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})", full_text)
+    dates_m = re.search(r"([A-Za-z]+)\s+(\d{1,2})\s*[—–-]\s*([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})", full_text)
     if not dates_m:
         return None
 
@@ -431,8 +452,16 @@ def parse_apple_card(path: Path) -> BankStatementExtraction | None:
     start_date = datetime.strptime(start_raw, "%b %d %Y").date()
     end_date = datetime.strptime(end_raw, "%b %d %Y").date()
 
-    prev_m = re.search(r"Previous\s+Total\s+Balance\s+\$([\d,]+\.\d{2})", full_text)
-    tot_m = re.search(r"(?<!Previous\s)Total\s+Balance\s+\$([\d,]+\.\d{2})", full_text)
+    # The monthly balance excludes Apple Card Monthly Installments; the total
+    # balance includes them. Installments are financing, not this period's cash
+    # activity, so reconcile against the monthly balance when printed.
+    prev_m = re.search(r"Previous\s+Monthly\s+Balance\s+\$([\d,]+\.\d{2})", full_text)
+    tot_m = re.search(
+        r"Your\s+[A-Za-z]+\s+Balance\s+as\s+of[^$]*\$([\d,]+\.\d{2})", full_text, re.S
+    )
+    if not prev_m or not tot_m:
+        prev_m = re.search(r"Previous\s+Total\s+Balance\s+\$([\d,]+\.\d{2})", full_text)
+        tot_m = re.search(r"(?<!Previous\s)Total\s+Balance\s+\$([\d,]+\.\d{2})", full_text)
     if not prev_m or not tot_m:
         return None
 
@@ -440,6 +469,20 @@ def parse_apple_card(path: Path) -> BankStatementExtraction | None:
     closing_balance_cents = int((Decimal(tot_m.group(1).replace(",", "")) * 100).quantize(Decimal(1)))
 
     transactions: list[BankTransaction] = []
+
+    def money_cents(values: list[str]) -> list[int]:
+        """Every printed dollar amount, in cents, preserving sign and order.
+
+        Apple Card puts two amounts on a purchase line (Daily Cash and the
+        purchase), so splitting on whitespace or taking the last ``$`` token can
+        produce a string like ``0.21 20.95``. Read the numbers themselves.
+        """
+        amounts: list[int] = []
+        for value in values:
+            for match in re.finditer(r"-?\$([\d,]+\.\d{2})", value):
+                cents = int((Decimal(match.group(1).replace(",", "")) * 100).quantize(Decimal(1)))
+                amounts.append(-cents if match.group(0).startswith("-") else cents)
+        return amounts
 
     pages = _page_texts(path)
     for p_no in range(1, len(pages)):
@@ -461,75 +504,76 @@ def parse_apple_card(path: Path) -> BankStatementExtraction | None:
             if re.match(r"^\d{2}/\d{2}/\d{4}$", clean[i]):
                 start = i
                 i += 1
-                while i < len(clean) and not re.match(r"^\d{2}/\d{2}/\d{4}$", clean[i]) and not "Total " in clean[i]:
+                while i < len(clean) and not re.match(r"^\d{2}/\d{2}/\d{4}$", clean[i]) and "Total " not in clean[i]:
                     i += 1
                 block = clean[start:i]
                 tx_date = datetime.strptime(block[0], "%m/%d/%Y").date()
 
-                if len(block) > 1 and "ACH Deposit" in block[1]:
-                    # Payment
-                    amt_str = [x for x in block if "$" in x][-1].replace("-$", "").replace("$", "").replace(",", "")
-                    amt_val = int((Decimal(amt_str) * 100).quantize(Decimal(1)))
-                    desc = block[1]
-                    transactions.append(BankTransaction(
-                        transaction_date=tx_date,
-                        posting_date=tx_date,
-                        amount_cents=-amt_val,
-                        direction="INFLOW",  # inflow / payment reducing balance
-                        raw_description=desc,
-                    ))
-                else:
-                    # Purchase or Return
-                    is_return = any("(return)" in x.lower() for x in block)
-                    if is_return:
-                        amt_matches = [x for x in block if re.match(r"^-\$[\d,]+\.\d{2}$", x)]
-                        if amt_matches:
-                            amt_val = int((Decimal(amt_matches[0].replace("-$", "").replace(",", "")) * 100).quantize(Decimal(1)))
+                try:
+                    amounts = money_cents(block[1:])
+                    if any("ACH Deposit" in line for line in block[1:]):
+                        # Payment: the printed negative amount reduces the balance
+                        # owed. A payment line is an inflow in cash-flow terms.
+                        payment = next((a for a in amounts if a < 0), None)
+                        if payment is not None:
                             transactions.append(BankTransaction(
                                 transaction_date=tx_date,
                                 posting_date=tx_date,
-                                amount_cents=-amt_val,
+                                amount_cents=-payment,
+                                direction="INFLOW",
+                                raw_description=next(
+                                    (line for line in block[1:] if "ACH Deposit" in line), "ACH Deposit"
+                                ),
+                            ))
+                    elif any("(return)" in line.lower() for line in block):
+                        returns = [a for a in amounts if a < 0]
+                        if returns:
+                            transactions.append(BankTransaction(
+                                transaction_date=tx_date,
+                                posting_date=tx_date,
+                                amount_cents=-returns[0],
                                 direction="INFLOW",
                                 raw_description=" ".join(block[1:3]),
                             ))
-                    else:
-                        dollar_amts = [x for x in block if "$" in x]
-                        if dollar_amts:
-                            amt_str = dollar_amts[-1].replace("$", "").replace(",", "")
-                            amt_val = int((Decimal(amt_str) * 100).quantize(Decimal(1)))
-                            desc_parts = [b for b in block[1:] if not re.match(r"^\d+%$", b) and not "$" in b]
+                        # A return also reverses the Daily Cash earned on the
+                        # original purchase. The reversal is printed as a
+                        # positive number, but it is a charge back to the card:
+                        # the balance owed rises, so it is an outflow.
+                        for adjustment in (a for a in amounts if a > 0):
                             transactions.append(BankTransaction(
                                 transaction_date=tx_date,
                                 posting_date=tx_date,
-                                amount_cents=amt_val,
+                                amount_cents=-adjustment,
                                 direction="OUTFLOW",
-                                raw_description=" ".join(desc_parts),
+                                raw_description="Daily Cash Adjustment",
                             ))
+                    elif amounts:
+                        # Purchase: Daily Cash may precede the amount; the last
+                        # amount on the block is the purchase itself.
+                        purchase = amounts[-1]
+                        desc_parts = [b for b in block[1:] if not re.match(r"^\d+%$", b) and "$" not in b]
+                        transactions.append(BankTransaction(
+                            transaction_date=tx_date,
+                            posting_date=tx_date,
+                            amount_cents=-abs(purchase),
+                            direction="OUTFLOW",
+                            raw_description=" ".join(desc_parts),
+                        ))
+                except (ArithmeticError, ValueError, IndexError):
+                    # One malformed block must not discard the whole statement;
+                    # the balance check below will surface any resulting gap.
+                    pass
             else:
                 i += 1
 
-    # Check for daily cash return adjustment
-    returns_cnt = sum(1 for t in transactions if "(return)" in t.raw_description.lower())
-    if returns_cnt > 0:
-        # Sum of transactions
-        purch_cents = sum(t.amount_cents for t in transactions if t.amount_cents > 0)
-        credits_cents = sum(-t.amount_cents for t in transactions if t.amount_cents < 0)
-        net_needed = closing_balance_cents - opening_balance_cents + credits_cents
-        diff = net_needed - purch_cents
-        if diff > 0:
-            transactions.append(BankTransaction(
-                transaction_date=end_date,
-                posting_date=end_date,
-                amount_cents=diff,
-                direction="OUTFLOW",
-                raw_description="Apple Card Daily Cash Adjustment on Returns",
-            ))
-
+    # Never synthesize a row to make the balance foot. A return line that does
+    # not reconcile with the printed balances must surface as NEEDS_REVIEW, not
+    # be absorbed into an invented transaction.
     extraction = BankStatementExtraction(
         parser_name="AppleCardParser",
         statement_type="CREDIT_CARD",
         institution_name="Goldman Sachs Bank USA",
-        account_last4=_observed_account_last4(full_text),
+        account_last4=_apple_card_last4(full_text),
         statement_date=end_date,
         period_start_date=start_date,
         period_end_date=end_date,
@@ -538,13 +582,14 @@ def parse_apple_card(path: Path) -> BankStatementExtraction | None:
         transactions=transactions,
     )
 
-    # Balance check: opening - payments + purchases == closing
-    purch_total = sum(t.amount_cents for t in transactions if t.amount_cents > 0)
-    credits_total = sum(-t.amount_cents for t in transactions if t.amount_cents < 0)
-    if opening_balance_cents - credits_total + purch_total != closing_balance_cents:
+    # A card's opening balance is what is owed. Signed cash-flow cents reduce
+    # that balance for inflows (payments/returns) and raise it for outflows, so
+    # owed = opening - net.
+    net_cents = sum(t.amount_cents for t in transactions)
+    if opening_balance_cents - net_cents != closing_balance_cents:
         extraction.status = "NEEDS_REVIEW"
         extraction.review_reasons.append(
-            f"Apple Card balance discrepancy: opening ({opening_balance_cents}) - credits ({credits_total}) + purchases ({purch_total}) != closing ({closing_balance_cents})"
+            f"Apple Card balance discrepancy: opening ({opening_balance_cents}) - net ({net_cents}) != closing ({closing_balance_cents})"
         )
     else:
         extraction.status = "VALIDATED"

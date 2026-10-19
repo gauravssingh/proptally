@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from uuid import uuid4
+
 from sqlmodel import Session, select
 
 from proptally.db.connection import get_engine
@@ -36,7 +37,9 @@ from proptally.ingestion.parsers import PARSER_VERSION
 from proptally.ingestion.service import _import_bank_statement
 
 
-def run_activation(db_path: str = "storage/client-portfolio.db") -> dict:
+def run_activation(
+    db_path: str = "storage/client-portfolio.db", *, confirm_client: bool = False
+) -> dict:
     print(f"=== Activating Phase 3 against {db_path} ===")
     engine = get_engine(f"sqlite:///{db_path}")
 
@@ -160,7 +163,7 @@ def run_activation(db_path: str = "storage/client-portfolio.db") -> dict:
                         )
                     ]
                     apply_transaction_splits(session, txn.id, splits)
-                    post_transaction_to_ledger(session, txn.id, client_confirmed=True)
+                    post_transaction_to_ledger(session, txn.id, client_confirmed=confirm_client)
                     alder_posted += 1
                     print(f"  ✓ Posted Alder Rent: {txn.transaction_date} | ${txn.amount_cents/100:.2f} ({txn.raw_description[:45]})")
 
@@ -198,7 +201,7 @@ def run_activation(db_path: str = "storage/client-portfolio.db") -> dict:
                     settlements_staged += 1
                     print(f"  ⏳ Staged Transfer for Review Queue ({policy.reasons[0] if policy.reasons else 'Review'}): {txn.transaction_date} | ${abs(txn.amount_cents)/100:.2f}")
                 else:
-                    post_transaction_to_ledger(session, txn.id, client_confirmed=True)
+                    post_transaction_to_ledger(session, txn.id, client_confirmed=confirm_client)
                     settlements_posted += 1
                     print(f"  ✓ Posted Transfer: {txn.transaction_date} | ${abs(txn.amount_cents)/100:.2f} ({txn.raw_description[:45]})")
 
@@ -223,7 +226,7 @@ def run_activation(db_path: str = "storage/client-portfolio.db") -> dict:
                     print(f"  ⏳ Staged Maple ATM Rent (CBD-1 Review): {txn.transaction_date} | ${txn.amount_cents/100:.2f}")
 
         session.commit()
-        print(f"\nPosting Summary:")
+        print("\nPosting Summary:")
         print(f"  - Alder Rent Inflows Posted: {alder_posted}")
         print(f"  - Settlements / Transfers Posted: {settlements_posted}")
         print(f"  - Transfers Staged for Review: {settlements_staged}")
@@ -265,4 +268,14 @@ def run_activation(db_path: str = "storage/client-portfolio.db") -> dict:
 
 
 if __name__ == "__main__":
-    run_activation()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="One-off Phase 3 activation on a legacy database.")
+    parser.add_argument("--db", default="storage/client-portfolio.db")
+    parser.add_argument(
+        "--confirm-client",
+        action="store_true",
+        help="Assert that the client confirmed the CBD-1 rent inflows this run posts.",
+    )
+    cli = parser.parse_args()
+    run_activation(cli.db, confirm_client=cli.confirm_client)

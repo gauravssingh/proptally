@@ -10,15 +10,20 @@ import io
 import json
 import re
 import zipfile
+from datetime import UTC, datetime, timedelta
 from urllib.parse import unquote_plus
 
 import pymupdf
 import pytest
 from sqlmodel import Session, select
+from synthetic_statements import bofa_checking_pdf
 
 from proptally.db.models import (
     Document,
+    DocumentExtraction,
     FinancialAccount,
+    FinancialInstitution,
+    JournalEntry,
     Lease,
     LoanAccount,
     PortfolioSetup,
@@ -32,7 +37,7 @@ from proptally.db.onboarding_models import (
     OnboardingSession,
 )
 from proptally.domain.setup_progress import evaluate
-from proptally.onboarding.provisioning import run_provisioning
+from proptally.onboarding.provisioning import _stage_statement_extractions, run_provisioning
 from proptally.web.auth import cookie_name, issue_session, register_portfolio
 
 
@@ -218,6 +223,10 @@ def test_end_to_end_import_creates_the_portfolio_only_after_approval(owner):
     assert "Source documents" in record.text
     assert "Purchase Price" in record.text or "Purchase price" in record.text
     assert "sale_deed.pdf" in record.text
+    # Field editing keeps save, mark-unknown and cancel together; unknown is text.
+    assert "Mark unknown" in record.text
+    assert 'data-record-field-cancel' in record.text
+    assert "pt-field-cancel-icon" not in record.text
 
     for proposal in proposals:
         accepted = _accept(signed_in, onboarding_id, proposal.id)
@@ -260,7 +269,10 @@ def test_end_to_end_import_creates_the_portfolio_only_after_approval(owner):
         assert loans[0].property_id == properties[0].id
 
         accounts = tenant.exec(select(FinancialAccount)).all()
-        assert any(a.account_type == "CHECKING" and a.account_number_masked == "...7890" for a in accounts)
+        assert any(
+            a.account_type == "CHECKING" and a.account_number_masked == "...7890"
+            for a in accounts
+        )
 
         leases = tenant.exec(select(Lease)).all()
         assert len(leases) == 1
@@ -861,10 +873,15 @@ def test_upload_page_starts_at_the_first_step_when_no_import_exists(owner):
     page = signed_in.client.get("/onboarding/import")
     assert page.status_code == 200
     assert "Upload documents" in page.text
-    assert "Choose a ZIP" in page.text
-    # The journey card is present even before a session exists.
-    assert "pt-journey-card" in page.text
-    assert "pt-journey-steps__item is-current" in page.text
+    # The dropzone is the action; a second "Choose a ZIP" control is redundant.
+    assert "Choose a ZIP" not in page.text
+    assert "Upload and process" in page.text
+    # The top card is a short brief, and the next steps are a five-stage flow.
+    assert "pt-upload-brief" in page.text
+    assert "Put your deeds, mortgage statements" in page.text
+    assert page.text.count('class="pt-import-steps__item') == 3
+    assert "What happens next" in page.text
+    assert page.text.count('class="pt-flow__step"') == 5
 
 
 def test_status_page_filters_and_search_the_document_table(owner):
@@ -892,3 +909,176 @@ def test_status_page_filters_and_search_the_document_table(owner):
     assert search.status_code == 200
     assert "Showing 1 of 2 files" in search.text
     assert "sale_deed_copy.pdf" in search.text
+
+
+def test_edited_property_and_mortgage_sorted_first_still_provision(owner):
+    """A mortgage can be created before its property, and an edited address must
+    not detach it: provisioning orders properties first and links by group_key."""
+    signed_in = owner()
+    onboarding_id = _start(
+        signed_in,
+        _zip({
+            "sale_deed.pdf": _pdf(DEED),
+            "mortgage_statement.pdf": _pdf(MORTGAGE),
+            "bank_statement.pdf": _pdf(BANK),
+            "lease.pdf": _pdf(LEASE),
+        }),
+    )
+    proposals = _proposals(signed_in, onboarding_id)
+    prop = next(p for p in proposals if p.entity_type == "PROPERTY")
+    mortgage = next(p for p in proposals if p.entity_type == "MORTGAGE")
+
+    # Edit the property address in review. Its durable group_key stays the one the
+    # mortgage payload names.
+    edited = signed_in.client.post(
+        f"/onboarding/import/{onboarding_id}/records/{prop.id}/field",
+        data={
+            "field": "address_line1", "action": "save",
+            "value": "456 Edited Ave", "csrf_token": _csrf(signed_in),
+        },
+        follow_redirects=False,
+    )
+    assert edited.status_code == 303, edited.text[:400]
+
+    # Make the mortgage strictly older than the property, so created_at ordering
+    # would process it first without the two-pass sort.
+    with Session(signed_in.app.state.control_engine) as control:
+        property_row = control.get(OnboardingProposal, prop.id)
+        mortgage_row = control.get(OnboardingProposal, mortgage.id)
+        property_row.created_at = datetime.now(UTC)
+        mortgage_row.created_at = datetime.now(UTC) - timedelta(days=1)
+        control.add(property_row)
+        control.add(mortgage_row)
+        control.commit()
+
+    for proposal in _proposals(signed_in, onboarding_id):
+        accepted = _accept(signed_in, onboarding_id, proposal.id)
+        assert accepted.status_code == 303
+        assert "error=" not in accepted.headers["location"], accepted.headers["location"]
+
+    response = signed_in.client.post(
+        f"/onboarding/import/{onboarding_id}/approve",
+        data={"confirm": "yes", "csrf_token": _csrf(signed_in)},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    signed_in.app.state.onboarding_worker.drain()
+
+    with Session(signed_in.app.state.control_engine) as control:
+        assert control.get(OnboardingSession, onboarding_id).status == "COMPLETED"
+
+    with Session(signed_in.engine) as tenant:
+        properties = tenant.exec(select(Property)).all()
+        assert len(properties) == 1
+        assert properties[0].address_line1 == "456 Edited Ave"
+        loans = tenant.exec(select(LoanAccount)).all()
+        assert len(loans) == 1
+        assert loans[0].property_id == properties[0].id
+        # The mortgage opening balance reached the ledger under its own key.
+        opening = tenant.exec(
+            select(JournalEntry).where(
+                JournalEntry.idempotency_key == f"MORTGAGE_OPENING:{loans[0].id}"
+            )
+        ).first()
+        assert opening is not None and opening.status == "POSTED"
+
+
+def test_onboarding_stages_a_supported_bank_statement_for_ingestion(owner, tmp_path):
+    """Bank and card PDFs reach the same extraction queue as an upload."""
+    signed_in = owner()
+    pdf = bofa_checking_pdf(tmp_path / "bank.pdf")
+    with Session(signed_in.engine) as tenant:
+        tenant.add(FinancialInstitution(id="inst_onboarding_bofa", name="Bank of America"))
+        tenant.flush()
+        tenant.add(FinancialAccount(
+            id="acct_onboarding_bofa_9456",
+            institution_id="inst_onboarding_bofa",
+            account_name="Bank of America Checking (...9456)",
+            account_type="CHECKING",
+            account_number_masked="...9456",
+        ))
+        tenant.flush()
+        document = Document(
+            id="doc_onboarding_bank",
+            file_sha256="onboarding-bank-sha",
+            original_filename="bank_statement.pdf",
+            storage_path=str(pdf),
+            file_size_bytes=pdf.stat().st_size,
+            mime_type="application/pdf",
+            document_type="CHECKING_STATEMENT",
+        )
+        tenant.add(document)
+        tenant.commit()
+
+        _stage_statement_extractions(
+            tenant,
+            [{"id": "stage_bank", "category": "BANK_STATEMENT"}],
+            [("stage_bank", document.id)],
+        )
+        tenant.commit()
+
+        extraction = tenant.exec(
+            select(DocumentExtraction).where(
+                DocumentExtraction.document_id == document.id
+            )
+        ).one()
+        data = json.loads(extraction.extracted_data_json)
+        assert data["statement_type"] == "CHECKING"
+        assert data["financial_account_id"] == "acct_onboarding_bofa_9456"
+
+
+def test_onboarding_stages_mortgage_statements_for_ingestion(owner):
+    """A mortgage PDF copied by onboarding is parsed and linked to the new loan,
+    so it appears in Statements & Ingestion without a second upload."""
+    signed_in = owner()
+    onboarding_id = _start(
+        signed_in,
+        _zip({
+            "sale_deed.pdf": _pdf(DEED),
+            "mortgage_statement.pdf": _pdf(MORTGAGE),
+        }),
+    )
+    for proposal in _proposals(signed_in, onboarding_id):
+        accepted = _accept(signed_in, onboarding_id, proposal.id)
+        assert accepted.status_code == 303
+        assert "error=" not in accepted.headers["location"], accepted.headers["location"]
+
+    response = signed_in.client.post(
+        f"/onboarding/import/{onboarding_id}/approve",
+        data={"confirm": "yes", "csrf_token": _csrf(signed_in)},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    signed_in.app.state.onboarding_worker.drain()
+
+    with Session(signed_in.app.state.control_engine) as control:
+        assert control.get(OnboardingSession, onboarding_id).status == "COMPLETED"
+
+    with Session(signed_in.engine) as tenant:
+        loan = tenant.exec(select(LoanAccount)).one()
+        document = tenant.exec(
+            select(Document).where(Document.original_filename == "mortgage_statement.pdf")
+        ).one()
+        extraction = tenant.exec(
+            select(DocumentExtraction).where(DocumentExtraction.document_id == document.id)
+        ).one()
+        data = json.loads(extraction.extracted_data_json)
+        assert data["statement_type"] == "MORTGAGE"
+        assert data["loan_account_id"] == loan.id
+        assert data["property_id"] == loan.property_id
+        assert extraction.approval_status == "PENDING"
+        assert extraction.validation_status in {"VALIDATED", "NEEDS_REVIEW"}
+
+    page = signed_in.client.get("/statements")
+    assert page.status_code == 200
+    assert "mortgage_statement.pdf" in page.text
+
+
+def test_document_previews_are_allowed_in_same_origin_frames(owner):
+    signed_in = owner()
+    page = signed_in.client.get("/onboarding/import")
+    assert page.status_code == 200
+    assert page.headers["X-Frame-Options"] == "SAMEORIGIN"
+    csp = page.headers["Content-Security-Policy"]
+    assert "frame-ancestors 'self'" in csp
+    assert "frame-src 'self'" in csp

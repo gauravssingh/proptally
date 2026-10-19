@@ -18,17 +18,21 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
+from proptally.core.exceptions import GovernanceAuthorizationError
 from proptally.db.models import Property
 from proptally.db.tenant_manager import (
     TenantManager,
     get_system_engine,
     init_system_schema,
 )
+from proptally.domain.setup_state import load as load_setup
+from proptally.onboarding.store import OnboardingStore
+from proptally.onboarding.worker import OnboardingWorker, worker_enabled
 from proptally.web import navigation
 from proptally.web.auth import (
     AdminDependency,
@@ -49,7 +53,6 @@ from proptally.web.helpers import (
     format_date,
     initials,
 )
-from proptally.domain.setup_state import load as load_setup
 from proptally.web.property_forms import fresh_coordinates, google_maps_url
 from proptally.web.routes.admin import get_admin_router
 from proptally.web.routes.auth import get_auth_router
@@ -65,27 +68,26 @@ from proptally.web.routes.setup import get_setup_router
 from proptally.web.routes.tax import get_tax_router
 from proptally.web.routes.transactions import get_transactions_router
 from proptally.web.routes.vault import get_vault_router
-from proptally.onboarding.store import OnboardingStore
-from proptally.onboarding.worker import OnboardingWorker, worker_enabled
 
 logger = logging.getLogger(__name__)
 
 
 def create_app(
-    db_url: str | None = None,
     *,
     system_db_url: str | None = None,
     storage_root: str | None = None,
 ) -> FastAPI:
     """Creates and configures the PropTally web application.
 
-    ``db_url`` points every portfolio at one database file and exists for the test
-    harness; production leaves it unset so each portfolio gets its own file.
+    There is deliberately no shared-database parameter: production always resolves
+    each portfolio through ``TenantManager`` and its own physical database file.
+    A test that needs a pre-seeded single database constructs the manager in the
+    test harness instead (see ``tests/conftest.py``).
     """
     if system_db_url is None and storage_root is not None:
         system_db_url = f"sqlite:///{Path(storage_root).expanduser() / 'system.db'}"
     control_engine = get_system_engine(system_db_url)
-    tenant_manager = TenantManager(db_url=db_url, storage_root_path=storage_root)
+    tenant_manager = TenantManager(storage_root_path=storage_root)
     rate_limiter = LoginRateLimiter()
     onboarding_store = OnboardingStore(tenant_manager.root)
     onboarding_worker = OnboardingWorker(control_engine, tenant_manager, onboarding_store)
@@ -107,6 +109,34 @@ def create_app(
         version="0.3.0",
         lifespan=lifespan,
     )
+
+    @app.exception_handler(GovernanceAuthorizationError)
+    async def _governance_denied(_request, exc: GovernanceAuthorizationError):
+        """Every posting path answers an unapproved gate with 403, not a 500."""
+        return HTMLResponse(str(exc), status_code=403)
+
+    @app.middleware("http")
+    async def _security_headers(request, call_next):
+        response = await call_next(request)
+        if not request.url.path.startswith("/static/"):
+            # Portfolio pages carry account data; a shared browser cache must not
+            # retain one session's page for the next person.
+            response.headers["Cache-Control"] = "no-store"
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        # Same-origin frames are the document previews (PDFs and images on the
+        # onboarding and statement screens). External sites still cannot frame the app.
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self' 'unsafe-inline' blob:; "
+            "worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob: https:; font-src 'self' data:; "
+            "frame-ancestors 'self'; "
+            "frame-src 'self' https://www.google.com https://maps.google.com; "
+            "object-src 'none'; base-uri 'self'; form-action 'self'",
+        )
+        return response
 
     # --- Templates --------------------------------------------------------
 

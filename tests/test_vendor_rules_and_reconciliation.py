@@ -3,6 +3,7 @@
 from datetime import date
 
 import pytest
+from reference_portfolio import REFERENCE_VENDOR_RULES
 from sqlmodel import Session, select
 
 from proptally.db.connection import get_engine
@@ -19,7 +20,6 @@ from proptally.db.models import (
 )
 from proptally.db.schema import init_schema
 from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
-from reference_portfolio import REFERENCE_VENDOR_RULES
 from proptally.domain.transactions.suggest import (
     seed_vendor_rules,
     suggest_split_for_transaction,
@@ -233,3 +233,39 @@ def test_create_custom_vendor_rule(queue_env):
     assert sugg is not None
     assert sugg.vendor_name == "Airbnb Lodging"
     assert sugg.category == "PERSONAL"
+
+
+def test_a_rule_requiring_confirmation_stages_instead_of_authorising(queue_env):
+    """Requirement flags are policy; they must never be supplied as authorization."""
+    signed_in, db_uri = queue_env
+    engine = get_engine(db_uri)
+    with Session(engine) as session:
+        session.add(VendorRule(
+            id="vrule_apple_confirm",
+            pattern="APPLE",
+            vendor_name="Apple",
+            service_type="Apple purchases",
+            default_category="PERSONAL",
+            requires_client_confirmation=True,
+            is_active=True,
+        ))
+        session.commit()
+
+    response = signed_in.post(
+        "/reconciliation/batch-apply-rule",
+        data={"vendor_pattern": "APPLE", "category": "PERSONAL"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+    with Session(engine) as session:
+        for index in range(3):
+            txn_id = f"tx_apple_{index}"
+            state = session.get(TransactionProcessingState, txn_id)
+            assert state.posting_status == "UNPOSTED"
+            assert state.allocation_status == "FULLY_ALLOCATED"
+            txn = session.get(Transaction, txn_id)
+            assert txn.requires_client_confirmation is True
+            assert session.exec(
+                select(TransactionSplit).where(TransactionSplit.transaction_id == txn_id)
+            ).all()

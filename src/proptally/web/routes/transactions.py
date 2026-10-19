@@ -1,13 +1,14 @@
 """Transactions Register and Splitting web router."""
 
-from collections import defaultdict
-from datetime import date
 import math
 import urllib.parse
+from collections import defaultdict
+from datetime import date, datetime, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from proptally.core.exceptions import GovernanceAuthorizationError
@@ -25,8 +26,10 @@ from proptally.domain.transactions.policy import (
     evaluate_posting_policy,
 )
 from proptally.domain.transactions.splits import SplitItem, apply_transaction_splits
-from proptally.web.auth import validate_authorizations
-from proptally.web.auth import posting_actor_kwargs
+from proptally.web.auth import posting_actor_kwargs, validate_authorizations
+from proptally.web.form_parsing import FormError
+from proptally.web.form_parsing import cents as _cents
+from proptally.web.helpers import safe_referer
 
 
 def get_transactions_router(templates, get_session_dep):
@@ -49,40 +52,28 @@ def get_transactions_router(templates, get_session_dep):
         account_map = {a.id: a for a in accounts}
 
         properties = session.exec(select(Property).order_by(Property.name)).all()
-        prop_map = {p.id: p for p in properties}
 
-        # 2. Preload processing states and splits in batch (prevents N+1 queries)
-        all_states = session.exec(select(TransactionProcessingState)).all()
-        state_map = {s.transaction_id: s for s in all_states}
+        # 2. Headline counters are aggregates, not a full table scan in Python.
+        total_recorded = session.exec(select(func.count()).select_from(Transaction)).one()
+        global_posted = session.exec(
+            select(func.count()).select_from(TransactionProcessingState).where(
+                TransactionProcessingState.posting_status == "POSTED"
+            )
+        ).one()
+        fully_allocated = session.exec(
+            select(func.count()).select_from(TransactionProcessingState).where(
+                TransactionProcessingState.allocation_status == "FULLY_ALLOCATED"
+            )
+        ).one()
+        global_unallocated = max(0, total_recorded - fully_allocated)
+        global_inflows = session.exec(
+            select(func.count()).select_from(Transaction).where(Transaction.amount_cents > 0)
+        ).one()
+        global_outflows = session.exec(
+            select(func.count()).select_from(Transaction).where(Transaction.amount_cents < 0)
+        ).one()
 
-        all_splits = session.exec(select(TransactionSplit)).all()
-        splits_map = defaultdict(list)
-        for sp in all_splits:
-            splits_map[sp.transaction_id].append(sp)
-
-        # 3. Fetch all recorded transactions
-        txns = session.exec(
-            select(Transaction).order_by(Transaction.transaction_date.desc(), Transaction.id.desc())
-        ).all()
-
-        total_recorded = len(txns)
-        global_posted = 0
-        global_unallocated = 0
-        global_inflows = 0
-        global_outflows = 0
-
-        for txn in txns:
-            st = state_map.get(txn.id)
-            if st and st.posting_status == "POSTED":
-                global_posted += 1
-            if not st or st.allocation_status != "FULLY_ALLOCATED":
-                global_unallocated += 1
-            if txn.amount_cents > 0:
-                global_inflows += 1
-            elif txn.amount_cents < 0:
-                global_outflows += 1
-
-        # 4. Multi-dimensional filtering
+        # 3. Build the filter in SQL so pagination happens in the database.
         q_clean = q.strip().lower() if q and q.strip() else None
         account_filter = account_id.strip() if account_id and account_id.strip() != "ALL" else None
         status_filter = status.strip().upper() if status and status.strip() != "ALL" else None
@@ -91,89 +82,132 @@ def get_transactions_router(templates, get_session_dep):
 
         is_filtered = bool(q_clean or account_filter or status_filter or property_filter or direction_filter)
 
-        filtered_tuples = []
-        for txn in txns:
-            acct = account_map.get(txn.financial_account_id)
-            st = state_map.get(txn.id)
-            if not st:
-                st = TransactionProcessingState(
+        query = select(Transaction)
+        if q_clean:
+            matching_accounts = select(FinancialAccount.id).where(
+                func.lower(FinancialAccount.account_name).contains(q_clean)
+            )
+            query = query.where(or_(
+                func.lower(Transaction.raw_description).contains(q_clean),
+                Transaction.financial_account_id.in_(matching_accounts),
+            ))
+        if account_filter:
+            query = query.where(Transaction.financial_account_id == account_filter)
+        if direction_filter == "INFLOW":
+            query = query.where(Transaction.amount_cents > 0)
+        elif direction_filter == "OUTFLOW":
+            query = query.where(Transaction.amount_cents < 0)
+        if property_filter == "UNASSIGNED":
+            tagged = select(TransactionSplit.transaction_id).where(
+                TransactionSplit.property_id.is_not(None)
+            )
+            query = query.where(Transaction.id.not_in(tagged))
+        elif property_filter:
+            tagged = select(TransactionSplit.transaction_id).where(
+                TransactionSplit.property_id == property_filter
+            )
+            query = query.where(Transaction.id.in_(tagged))
+        if status_filter in {"POSTED", "FULLY_ALLOCATED", "PARTIALLY_ALLOCATED", "UNALLOCATED"}:
+            query = query.join(
+                TransactionProcessingState,
+                TransactionProcessingState.transaction_id == Transaction.id,
+            )
+            if status_filter == "POSTED":
+                query = query.where(TransactionProcessingState.posting_status == "POSTED")
+            elif status_filter == "FULLY_ALLOCATED":
+                query = query.where(
+                    TransactionProcessingState.allocation_status == "FULLY_ALLOCATED",
+                    TransactionProcessingState.posting_status != "POSTED",
+                )
+            else:
+                query = query.where(
+                    TransactionProcessingState.allocation_status == status_filter
+                )
+
+        ordered = query.order_by(Transaction.transaction_date.desc(), Transaction.id.desc())
+
+        def _page_counts(total: int) -> tuple[int, int, int, int, int, str]:
+            clean = per_page.strip() if per_page else "25"
+            if clean.upper() == "ALL":
+                size = max(total, 1)
+            else:
+                try:
+                    size = max(int(clean), 1)
+                except (ValueError, TypeError):
+                    size = 25
+                    clean = "25"
+            pages = max(1, math.ceil(total / size))
+            current = min(max(page, 1), pages)
+            start = (current - 1) * size
+            end = min(start + size, total)
+            return size, pages, current, start, end, clean
+
+        needs_attention = status_filter == "NEEDS_ATTENTION"
+        if needs_attention:
+            # Authorization policy is application logic, so this filter is the one
+            # case that must inspect matching rows before paginating.
+            rows = session.exec(ordered).all()
+            ids = [row.id for row in rows]
+            state_map = {
+                state.transaction_id: state
+                for state in session.exec(
+                    select(TransactionProcessingState).where(
+                        TransactionProcessingState.transaction_id.in_(ids)
+                    )
+                ).all()
+            } if ids else {}
+            splits_map: dict[str, list] = defaultdict(list)
+            if ids:
+                for split in session.exec(
+                    select(TransactionSplit).where(TransactionSplit.transaction_id.in_(ids))
+                ).all():
+                    splits_map[split.transaction_id].append(split)
+            filtered = []
+            for txn in rows:
+                st = state_map.get(txn.id)
+                acct = account_map.get(txn.financial_account_id)
+                splits = splits_map.get(txn.id, [])
+                policy = evaluate_posting_policy(session, txn, splits, account=acct)
+                if policy.requires_authorization or policy.should_offer_review:
+                    filtered.append((txn, acct, st, splits))
+            total_filtered = len(filtered)
+            per_page_num, total_pages, page, start_idx, end_idx, per_page_clean = _page_counts(total_filtered)
+            page_tuples = filtered[start_idx:end_idx]
+        else:
+            total_filtered = session.exec(
+                select(func.count()).select_from(query.subquery())
+            ).one()
+            per_page_num, total_pages, page, start_idx, end_idx, per_page_clean = _page_counts(total_filtered)
+            rows = session.exec(ordered.offset(start_idx).limit(per_page_num)).all()
+            ids = [row.id for row in rows]
+            state_map = {
+                state.transaction_id: state
+                for state in session.exec(
+                    select(TransactionProcessingState).where(
+                        TransactionProcessingState.transaction_id.in_(ids)
+                    )
+                ).all()
+            } if ids else {}
+            splits_map = defaultdict(list)
+            if ids:
+                for split in session.exec(
+                    select(TransactionSplit).where(TransactionSplit.transaction_id.in_(ids))
+                ).all():
+                    splits_map[split.transaction_id].append(split)
+            page_tuples = []
+            for txn in rows:
+                state = state_map.get(txn.id) or TransactionProcessingState(
                     transaction_id=txn.id,
                     allocation_status="UNALLOCATED",
                     allocated_cents=0,
                     residual_cents=abs(txn.amount_cents),
                 )
-            splits = splits_map.get(txn.id, [])
-
-            # Filter: Text search (merchant description or account name)
-            if q_clean:
-                desc = (txn.raw_description or "").lower()
-                acct_str = (acct.account_name if acct else "").lower()
-                if q_clean not in desc and q_clean not in acct_str:
-                    continue
-
-            # Filter: Account
-            if account_filter and txn.financial_account_id != account_filter:
-                continue
-
-            # Filter: Cash flow direction
-            if direction_filter:
-                if direction_filter == "INFLOW" and txn.amount_cents <= 0:
-                    continue
-                elif direction_filter == "OUTFLOW" and txn.amount_cents >= 0:
-                    continue
-
-            # Filter: Property / Door
-            if property_filter:
-                if property_filter == "UNASSIGNED":
-                    if splits and any(s.property_id for s in splits):
-                        continue
-                else:
-                    if not any(s.property_id == property_filter for s in splits):
-                        continue
-
-            # Filter: Allocation & Posting Status
-            if status_filter:
-                if status_filter == "POSTED":
-                    if st.posting_status != "POSTED":
-                        continue
-                elif status_filter == "FULLY_ALLOCATED":
-                    if st.allocation_status != "FULLY_ALLOCATED" or st.posting_status == "POSTED":
-                        continue
-                elif status_filter == "PARTIALLY_ALLOCATED":
-                    if st.allocation_status != "PARTIALLY_ALLOCATED":
-                        continue
-                elif status_filter == "UNALLOCATED":
-                    if st.allocation_status != "UNALLOCATED":
-                        continue
-                elif status_filter == "NEEDS_ATTENTION":
-                    pol = evaluate_posting_policy(session, txn, splits, account=acct)
-                    if not (pol.requires_authorization or pol.should_offer_review):
-                        continue
-
-            filtered_tuples.append((txn, acct, st, splits))
-
-        total_filtered = len(filtered_tuples)
-
-        # 5. Pagination calculation
-        per_page_clean = per_page.strip() if per_page else "25"
-        if per_page_clean.upper() == "ALL":
-            per_page_num = max(total_filtered, 1)
-        else:
-            try:
-                per_page_num = max(int(per_page_clean), 1)
-            except (ValueError, TypeError):
-                per_page_num = 25
-                per_page_clean = "25"
-
-        total_pages = max(1, math.ceil(total_filtered / per_page_num))
-        if page < 1:
-            page = 1
-        elif page > total_pages:
-            page = total_pages
-
-        start_idx = (page - 1) * per_page_num
-        end_idx = min(start_idx + per_page_num, total_filtered)
-        page_tuples = filtered_tuples[start_idx:end_idx]
+                page_tuples.append((
+                    txn,
+                    account_map.get(txn.financial_account_id),
+                    state,
+                    splits_map.get(txn.id, []),
+                ))
 
         # 6. Evaluate posting policy only for the current page slice
         transactions_data = []
@@ -252,12 +286,17 @@ def get_transactions_router(templates, get_session_dep):
         account_id: str = Form(...),
         transaction_date: str = Form(...),
         description: str = Form(...),
-        amount_dollars: float = Form(...),
+        amount_dollars: str = Form(...),
         direction: str = Form(...),
         counter_account_id: str = Form(None),
         session: Session = Depends(get_session_dep),
     ):
-        cents = round(amount_dollars * 100)
+        try:
+            cents = _cents(amount_dollars, "Amount")
+        except FormError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if cents is None or cents <= 0:
+            raise HTTPException(status_code=400, detail="Amount must be a positive money amount.")
         signed_cents = cents if direction == "INFLOW" else -cents
 
         # An optional counter account makes this a transfer. Choosing a credit
@@ -292,7 +331,7 @@ def get_transactions_router(templates, get_session_dep):
                 statement_type="MANUAL",
                 active_parser_name="ManualEntry",
                 active_parser_version="1.0",
-                statement_date=date.today(),
+                statement_date=datetime.now(timezone.utc).date(),
             )
             session.add(stmt)
             session.flush()
@@ -320,8 +359,9 @@ def get_transactions_router(templates, get_session_dep):
         session.add(state)
         session.commit()
 
-        referer = request.headers.get("referer")
-        target_url = referer if referer and "/transactions" in referer else "/transactions"
+        target_url = safe_referer(request, "/transactions")
+        if not urllib.parse.urlsplit(target_url).path.startswith("/transactions"):
+            target_url = "/transactions"
         return RedirectResponse(url=target_url, status_code=303)
 
     @router.post("/transactions/split")
@@ -353,8 +393,10 @@ def get_transactions_router(templates, get_session_dep):
 
         splits: list[SplitItem] = []
         for prop_id, cat, amt_str in zip(property_ids, categories, amount_dollars_list):
-            amt_float = float(amt_str) if amt_str else 0.0
-            amt_cents = round(amt_float * 100)
+            try:
+                amt_cents = _cents(amt_str, "Split amount") or 0
+            except FormError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             if amt_cents > 0:
                 splits.append(
                     SplitItem(
@@ -399,8 +441,9 @@ def get_transactions_router(templates, get_session_dep):
                 except GovernanceAuthorizationError as exc:
                     raise HTTPException(status_code=403, detail=str(exc))
 
-        referer = request.headers.get("referer")
-        target_url = referer if referer and "/transactions" in referer else "/transactions"
+        target_url = safe_referer(request, "/transactions")
+        if not urllib.parse.urlsplit(target_url).path.startswith("/transactions"):
+            target_url = "/transactions"
         return RedirectResponse(url=target_url, status_code=303)
 
     @router.post("/transactions/{transaction_id}/post")
@@ -411,18 +454,26 @@ def get_transactions_router(templates, get_session_dep):
     ):
         form = await request.form()
         from proptally.domain.transactions.splits import post_transaction_to_ledger
+
+        # The same role validation every other posting path uses: a MANAGER
+        # cannot assert a client confirmation, nor a non-owner a CPA review.
+        client_confirmed, user_attested_cpa_review = validate_authorizations(
+            client_confirmed=form.get("client_confirmed") == "true",
+            user_attested_cpa_review=form.get("user_attested_cpa_review") == "true",
+        )
         try:
             post_transaction_to_ledger(
                 session=session,
                 transaction_id=transaction_id,
-                client_confirmed=form.get("client_confirmed") == "true",
-                user_attested_cpa_review=form.get("user_attested_cpa_review") == "true",
+                client_confirmed=client_confirmed,
+                user_attested_cpa_review=user_attested_cpa_review,
                 **posting_actor_kwargs(),
             )
         except GovernanceAuthorizationError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
-        referer = request.headers.get("referer")
-        target_url = referer if referer and "/transactions" in referer else "/transactions"
+        target_url = safe_referer(request, "/transactions")
+        if not urllib.parse.urlsplit(target_url).path.startswith("/transactions"):
+            target_url = "/transactions"
         return RedirectResponse(url=target_url, status_code=303)
 
     return router

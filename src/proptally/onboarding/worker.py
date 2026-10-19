@@ -37,15 +37,22 @@ logger = logging.getLogger(__name__)
 def recover_interrupted_jobs(control_engine) -> int:
     """Return work claimed by a previous process to the queue.
 
-    A row in RUNNING at startup belongs to a worker that is gone. Its document may
-    still say EXTRACTING; resetting both makes the retry visible and idempotent.
-    Provisioning needs nothing special: its manifest already records what completed.
+    A row in RUNNING at startup belongs to a worker that is gone *only if its
+    lease has expired*. A live worker's row must not be stolen: two workers
+    processing one document is exactly the race the conditional claim prevents.
     """
+    lease_seconds = float(os.environ.get("PROPTALLY_ONBOARDING_LEASE_SECONDS", "900"))
+    cutoff = datetime.now(UTC).timestamp() - lease_seconds
     recovered = 0
     with Session(control_engine) as control:
         jobs = control.exec(
             select(OnboardingJob).where(OnboardingJob.status == "RUNNING")
         ).all()
+        jobs = [
+            job for job in jobs
+            if job.started_at is None
+            or job.started_at.timestamp() < cutoff
+        ]
         for job in jobs:
             job.status = "PENDING"
             job.started_at = None

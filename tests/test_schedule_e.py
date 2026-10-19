@@ -95,14 +95,14 @@ def test_schedule_e_workpaper_and_web_endpoints(tmp_path, owner):
         alder_col = [c for c in wp.columns if c.property_id == "prop_tinsley_huntley"][0]
         rowan_col = [c for c in wp.columns if c.property_id == "prop_burkey_algonquin"][0]
 
-        assert alder_col.line_20_depreciation == 1236364  # $12,363.64
-        assert rowan_col.line_20_depreciation == 0          # $0 (Primary)
+        assert alder_col.line_18_depreciation == 1236364  # $12,363.64
+        assert rowan_col.line_18_depreciation == 0          # $0 (Primary)
         assert wp.total_expenses >= 1236364
 
         # Test CSV export
         csv_text = export_schedule_e_csv(wp)
         assert "IRS Line Item,Line Description" in csv_text
-        assert "Line 20,Depreciation (27.5-Yr MACRS)" in csv_text
+        assert "Line 18,Depreciation (27.5-Yr MACRS)" in csv_text
         assert "12363.64" in csv_text
 
     # Web endpoints
@@ -112,6 +112,7 @@ def test_schedule_e_workpaper_and_web_endpoints(tmp_path, owner):
     assert resp_html.status_code == 200
     assert "IRS Schedule E Tax Workpaper" in resp_html.text
     assert "12307 Larkspur St" in resp_html.text
+    assert "Line 18" in resp_html.text
     assert "Line 20" in resp_html.text
 
     resp_csv = client.get("/tax/schedule-e/csv?year=2026")

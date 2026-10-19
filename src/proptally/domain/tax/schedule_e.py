@@ -6,14 +6,25 @@ import csv
 import io
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Dict, List, Optional
+from typing import List, Optional
+
 from sqlmodel import Session, select
 
 from proptally.db.models import (
     JournalEntry,
     JournalEntryLine,
     Property,
+    Transaction,
+    TransactionProcessingState,
     TransactionSplit,
+)
+from proptally.domain.accounting.coa import (
+    BANK_FEES_CODE,
+    COMMISSIONS_CODE,
+    HOA_CODE,
+    MANAGEMENT_CODE,
+    SNOW_LANDSCAPING_CODE,
+    UTILITIES_CODE,
 )
 from proptally.domain.tax.depreciation import (
     DepreciationResult,
@@ -29,10 +40,10 @@ class ScheduleEPropertyColumn:
     property_type: str
     is_rental: bool
     # Line Items (stored in integer cents)
-    line_3_rents: int = 0
+    line_3_rents_received: int = 0
     line_5_advertising: int = 0
     line_6_auto: int = 0
-    line_7_cleaning: int = 0
+    line_7_cleaning_maintenance: int = 0
     line_8_commissions: int = 0
     line_9_insurance: int = 0
     line_10_legal: int = 0
@@ -42,16 +53,16 @@ class ScheduleEPropertyColumn:
     line_15_supplies: int = 0
     line_16_taxes: int = 0
     line_17_utilities: int = 0
-    line_18_other: int = 0
-    line_20_depreciation: int = 0
+    line_19_other: int = 0
+    line_18_depreciation: int = 0
     depreciation_detail: Optional[DepreciationResult] = None
 
     @property
-    def line_21_total_expenses(self) -> int:
+    def line_20_total_expenses(self) -> int:
         return (
             self.line_5_advertising
             + self.line_6_auto
-            + self.line_7_cleaning
+            + self.line_7_cleaning_maintenance
             + self.line_8_commissions
             + self.line_9_insurance
             + self.line_10_legal
@@ -61,31 +72,35 @@ class ScheduleEPropertyColumn:
             + self.line_15_supplies
             + self.line_16_taxes
             + self.line_17_utilities
-            + self.line_18_other
-            + self.line_20_depreciation
+            + self.line_19_other
+            + self.line_18_depreciation
         )
 
     @property
-    def line_22_net_income_or_loss(self) -> int:
-        return self.line_3_rents - self.line_21_total_expenses
+    def line_21_net_income_or_loss(self) -> int:
+        return self.line_3_rents_received - self.line_20_total_expenses
 
 
 @dataclass
 class ScheduleEWorkpaper:
     tax_year: int
     columns: List[ScheduleEPropertyColumn] = field(default_factory=list)
+    #: Unposted allocations in the same year, reported as a diagnostic only.
+    #: They are never mixed into the official posted-ledger figures.
+    unposted_provisional_cents: int = 0
+    unposted_split_count: int = 0
 
     @property
     def total_rents(self) -> int:
-        return sum(c.line_3_rents for c in self.columns if c.is_rental)
+        return sum(c.line_3_rents_received for c in self.columns if c.is_rental)
 
     @property
     def total_expenses(self) -> int:
-        return sum(c.line_21_total_expenses for c in self.columns if c.is_rental)
+        return sum(c.line_20_total_expenses for c in self.columns if c.is_rental)
 
     @property
     def total_net_income(self) -> int:
-        return sum(c.line_22_net_income_or_loss for c in self.columns if c.is_rental)
+        return sum(c.line_21_net_income_or_loss for c in self.columns if c.is_rental)
 
 
 def generate_schedule_e_workpaper(session: Session, tax_year: int) -> ScheduleEWorkpaper:
@@ -109,7 +124,7 @@ def generate_schedule_e_workpaper(session: Session, tax_year: int) -> ScheduleEW
         # 1. Depreciation (only if rental property)
         if is_rental:
             deprec = calculate_annual_depreciation(prop, tax_year)
-            col.line_20_depreciation = deprec.depreciation_cents
+            col.line_18_depreciation = deprec.depreciation_cents
             col.depreciation_detail = deprec
 
         # 2. Posted journal lines tagged to this property in tax year
@@ -132,7 +147,7 @@ def generate_schedule_e_workpaper(session: Session, tax_year: int) -> ScheduleEW
 
             # Revenue (normal balance credit)
             if code in (4010, 4015, 4020):
-                col.line_3_rents += (credit - debit)
+                col.line_3_rents_received += (credit - debit)
 
             # Operating expenses (normal balance debit)
             elif code == 5010:  # Mortgage Interest
@@ -145,39 +160,39 @@ def generate_schedule_e_workpaper(session: Session, tax_year: int) -> ScheduleEW
                 col.line_14_repairs += (debit - credit)
             elif code == 5050:  # Supplies
                 col.line_15_supplies += (debit - credit)
-            elif code == 5060:  # Snow / Landscaping / Cleaning
-                col.line_7_cleaning += (debit - credit)
-            elif code in (5070, 5072):  # Management / Bank fees
+            elif code == SNOW_LANDSCAPING_CODE:  # Snow / Landscaping / Cleaning
+                col.line_7_cleaning_maintenance += (debit - credit)
+            elif code == MANAGEMENT_CODE:  # Management Fees (Line 11)
                 col.line_11_management += (debit - credit)
-            elif code == 5075:  # Realtor Commissions & Placement (Line 8)
+            elif code == COMMISSIONS_CODE:  # Realtor Commissions & Placement (Line 8)
                 col.line_8_commissions += (debit - credit)
-            elif code == 5078:  # HOA Assessments (Line 18 Other)
-                col.line_18_other += (debit - credit)
+            elif code in (HOA_CODE, BANK_FEES_CODE):  # HOA / bank charges (Line 18 Other)
+                col.line_19_other += (debit - credit)
+            elif code == UTILITIES_CODE:  # Utilities (Line 17)
+                col.line_17_utilities += (debit - credit)
             elif code == 5080:  # Legal / Professional
                 col.line_10_legal += (debit - credit)
 
-        # 3. Also check TransactionSplits for direct allocations
-        splits_query = (
-            select(TransactionSplit)
-            .where(
-                TransactionSplit.property_id == prop.id,
-                TransactionSplit.tax_review_status.in_(["AUTO_SUGGESTED", "CLIENT_CONFIRMED", "CPA_APPROVED"]),
-            )
-        )
-        splits = session.exec(splits_query).all()
-        # If no posted journal lines were found, splits provide the staged numbers
-        if col.line_3_rents == 0:
-            rent_splits = sum(s.amount_cents for s in splits if s.category == "RENT_INCOME")
-            col.line_3_rents = rent_splits
-        if col.line_11_management == 0:
-            col.line_11_management = sum(s.amount_cents for s in splits if s.category == "MANAGEMENT")
-        if col.line_8_commissions == 0:
-            col.line_8_commissions = sum(s.amount_cents for s in splits if s.category == "COMMISSIONS")
-        if col.line_18_other == 0:
-            col.line_18_other = sum(s.amount_cents for s in splits if s.category == "HOA")
-
+        # Official Schedule E figures are posted-ledger only. Unposted splits are
+        # reported separately below as a reconciliation diagnostic; mixing them
+        # into a line silently changes the tax basis.
         workpaper.columns.append(col)
 
+    provisional = session.exec(
+        select(TransactionSplit)
+        .join(Transaction, TransactionSplit.transaction_id == Transaction.id)
+        .join(
+            TransactionProcessingState,
+            TransactionProcessingState.transaction_id == Transaction.id,
+        )
+        .where(
+            Transaction.transaction_date >= start_date,
+            Transaction.transaction_date <= end_date,
+            TransactionProcessingState.posting_status == "UNPOSTED",
+        )
+    ).all()
+    workpaper.unposted_split_count = len(provisional)
+    workpaper.unposted_provisional_cents = sum(split.amount_cents for split in provisional)
     return workpaper
 
 
@@ -198,9 +213,11 @@ def export_schedule_e_csv(workpaper: ScheduleEWorkpaper) -> str:
         return f"{cents / 100:.2f}"
 
     rows = [
-        ("Line 3a", "Rents Received", [c.line_3_rents for c in workpaper.columns], workpaper.total_rents),
+        ("Line 3", "Rents Received", [c.line_3_rents_received for c in workpaper.columns], workpaper.total_rents),
         ("Line 5", "Advertising", [c.line_5_advertising for c in workpaper.columns], sum(c.line_5_advertising for c in workpaper.columns if c.is_rental)),
-        ("Line 7", "Cleaning and Maintenance", [c.line_7_cleaning for c in workpaper.columns], sum(c.line_7_cleaning for c in workpaper.columns if c.is_rental)),
+        ("Line 6", "Auto and Travel", [c.line_6_auto for c in workpaper.columns], sum(c.line_6_auto for c in workpaper.columns if c.is_rental)),
+        ("Line 7", "Cleaning and Maintenance", [c.line_7_cleaning_maintenance for c in workpaper.columns], sum(c.line_7_cleaning_maintenance for c in workpaper.columns if c.is_rental)),
+        ("Line 8", "Commissions", [c.line_8_commissions for c in workpaper.columns], sum(c.line_8_commissions for c in workpaper.columns if c.is_rental)),
         ("Line 9", "Insurance", [c.line_9_insurance for c in workpaper.columns], sum(c.line_9_insurance for c in workpaper.columns if c.is_rental)),
         ("Line 10", "Legal and Professional Fees", [c.line_10_legal for c in workpaper.columns], sum(c.line_10_legal for c in workpaper.columns if c.is_rental)),
         ("Line 11", "Management Fees", [c.line_11_management for c in workpaper.columns], sum(c.line_11_management for c in workpaper.columns if c.is_rental)),
@@ -209,9 +226,10 @@ def export_schedule_e_csv(workpaper: ScheduleEWorkpaper) -> str:
         ("Line 15", "Supplies", [c.line_15_supplies for c in workpaper.columns], sum(c.line_15_supplies for c in workpaper.columns if c.is_rental)),
         ("Line 16", "Property Taxes", [c.line_16_taxes for c in workpaper.columns], sum(c.line_16_taxes for c in workpaper.columns if c.is_rental)),
         ("Line 17", "Utilities", [c.line_17_utilities for c in workpaper.columns], sum(c.line_17_utilities for c in workpaper.columns if c.is_rental)),
-        ("Line 20", "Depreciation (27.5-Yr MACRS)", [c.line_20_depreciation for c in workpaper.columns], sum(c.line_20_depreciation for c in workpaper.columns if c.is_rental)),
-        ("Line 21", "Total Expenses", [c.line_21_total_expenses for c in workpaper.columns], workpaper.total_expenses),
-        ("Line 22", "Net Rental Income or (Loss)", [c.line_22_net_income_or_loss for c in workpaper.columns], workpaper.total_net_income),
+        ("Line 18", "Depreciation (27.5-Yr MACRS)", [c.line_18_depreciation for c in workpaper.columns], sum(c.line_18_depreciation for c in workpaper.columns if c.is_rental)),
+        ("Line 19", "Other (HOA, bank fees)", [c.line_19_other for c in workpaper.columns], sum(c.line_19_other for c in workpaper.columns if c.is_rental)),
+        ("Line 20", "Total Expenses", [c.line_20_total_expenses for c in workpaper.columns], workpaper.total_expenses),
+        ("Line 21", "Net Rental Income or (Loss)", [c.line_21_net_income_or_loss for c in workpaper.columns], workpaper.total_net_income),
     ]
 
     for line_code, desc, col_vals, total_val in rows:

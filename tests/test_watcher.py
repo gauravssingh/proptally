@@ -1,13 +1,12 @@
 """Tests for automated hot-folder watcher and inbox intake."""
 
 import json
-import os
 import shutil
 import sys
-from pathlib import Path
 
 import pytest
 from sqlmodel import Session, select
+from synthetic_statements import bofa_checking_pdf
 
 from proptally.db.connection import get_engine
 from proptally.db.models import (
@@ -24,16 +23,6 @@ from proptally.db.tenant_manager import (
     init_system_schema,
 )
 from proptally.ingestion.watcher import process_inbox_once
-
-# The statement PDFs these tests exercise live outside the repository. Point
-# PROPTALLY_TEST_DOCS_DIR at the folder holding them when running locally; with
-# the variable unset the tests skip rather than hardcode a machine path.
-DOCS_BASE = Path(
-    os.environ.get(
-        "PROPTALLY_TEST_DOCS_DIR",
-        str(Path.home() / "Documents" / "client-statements"),
-    )
-)
 
 
 @pytest.fixture
@@ -76,12 +65,8 @@ def test_watcher_process_valid_pdf_auto_import(test_env):
     vault_dir = test_env["vault_dir"]
     engine = test_env["engine"]
 
-    sample_source = DOCS_BASE / "BOFA Checking" / "eStmt_2026-01-15.pdf"
-    if not sample_source.exists():
-        pytest.skip("Test sample PDF not found")
-
     target_pdf = inbox_dir / "eStmt_2026-01-15.pdf"
-    shutil.copy2(sample_source, target_pdf)
+    bofa_checking_pdf(target_pdf)
 
     with Session(engine) as session:
         results = process_inbox_once(
@@ -116,15 +101,12 @@ def test_watcher_duplicate_handling(test_env):
     vault_dir = test_env["vault_dir"]
     engine = test_env["engine"]
 
-    sample_source = DOCS_BASE / "BOFA Checking" / "eStmt_2026-01-15.pdf"
-    if not sample_source.exists():
-        pytest.skip("Test sample PDF not found")
-
+    sample_source = bofa_checking_pdf(inbox_dir.parent / "sample_source.pdf")
     target_pdf = inbox_dir / "sample_copy1.pdf"
     shutil.copy2(sample_source, target_pdf)
 
     with Session(engine) as session:
-        res1 = process_inbox_once(inbox_dir, session, vault_dir)
+        res1 = process_inbox_once(inbox_dir, session, vault_dir, auto_import=True)
         assert res1[0].status == "PROCESSED"
 
     # Now drop the exact same statement again under a different filename
@@ -179,12 +161,8 @@ def test_watcher_auto_import_false_moves_to_review(test_env):
     vault_dir = test_env["vault_dir"]
     engine = test_env["engine"]
 
-    sample_source = DOCS_BASE / "BOFA Checking" / "eStmt_2026-02-12.pdf"
-    if not sample_source.exists():
-        pytest.skip("Test sample PDF not found")
-
     target_pdf = inbox_dir / "eStmt_2026-02-12.pdf"
-    shutil.copy2(sample_source, target_pdf)
+    bofa_checking_pdf(target_pdf, period_end="February 12, 2026")
 
     with Session(engine) as session:
         results = process_inbox_once(
@@ -237,16 +215,12 @@ def _tenant_watcher_environment(tmp_path, monkeypatch):
 
 
 def test_cli_watch_once_flag_uses_active_tenant_context(tmp_path, monkeypatch, capsys):
-    sample_source = DOCS_BASE / "BOFA Checking" / "eStmt_2026-03-17-1.pdf"
-    if not sample_source.exists():
-        pytest.skip("Test sample PDF not found")
-
     control, manager, tenant, paths = _tenant_watcher_environment(tmp_path, monkeypatch)
     paths.inbox.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(sample_source, paths.inbox / "stmt3.pdf")
+    bofa_checking_pdf(paths.inbox / "stmt3.pdf", period_end="March 17, 2026")
     from proptally.ingestion.cli import main
 
-    test_args = ["proptally-ingest", "--watch", "--once", "--tenant", tenant.id]
+    test_args = ["proptally-ingest", "--watch", "--once", "--auto-import", "--tenant", tenant.id]
     monkeypatch.setattr(sys, "argv", test_args)
     main()
     data = json.loads(capsys.readouterr().out)

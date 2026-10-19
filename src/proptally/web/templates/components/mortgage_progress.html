@@ -8,6 +8,42 @@
 {% import "components/ui.html" as ui with context %}
 
 
+{% macro principal_widget(percent, paid_down_cents, current_cents, start_cents,
+                          periods, first_date, latest_date) -%}
+<div class="pt-mortgage-progress">
+    <div class="pt-mortgage-progress__head">
+        <span class="pt-mortgage-progress__label">Principal paid down</span>
+        <strong class="pt-mortgage-progress__percent">{{ percent }}%</strong>
+    </div>
+
+    {{ ui.progress(percent, "Mortgage principal paid down") }}
+
+    <div class="pt-mortgage-progress__stats">
+        <div>
+            <span>Paid down</span>
+            <strong>{{ ui.amount(paid_down_cents, mode="plain") }}</strong>
+        </div>
+        <div>
+            <span>Current principal</span>
+            <strong>{{ ui.amount(current_cents, mode="plain") }}</strong>
+        </div>
+        <div>
+            <span>Statements</span>
+            <strong>{{ periods }}</strong>
+        </div>
+    </div>
+
+    <p class="pt-mortgage-progress__meta">
+        From {{ ui.amount(start_cents, mode="plain") }} on {{ first_date | format_date }}
+        to {{ ui.amount(current_cents, mode="plain") }} on {{ latest_date | format_date }}.
+        <span class="pt-mortgage-progress__source">
+            Based on servicer statement balances, not settled bank payments.
+        </span>
+    </p>
+</div>
+{%- endmacro %}
+
+
 {% macro widget(percent, paid, remaining, total, last_amount=None, last_date=None,
                 over_term=false) -%}
 <div class="pt-mortgage-progress">

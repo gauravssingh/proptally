@@ -167,9 +167,28 @@ def enqueue(
 def claim_next_job(control_engine) -> OnboardingJob | None:
     """Atomically take one pending job. Two workers cannot take the same row."""
     with Session(control_engine) as session:
+        # Retries are finite. A row that has exhausted its attempts is failed
+        # rather than looped on forever.
+        exhausted = session.exec(
+            select(OnboardingJob).where(
+                OnboardingJob.status == JOB_PENDING,
+                OnboardingJob.attempts >= OnboardingJob.max_attempts,
+            )
+        ).all()
+        for job in exhausted:
+            job.status = JOB_FAILED
+            job.error = "The maximum number of attempts was reached."
+            job.finished_at = utc_now()
+            session.add(job)
+        if exhausted:
+            session.commit()
+
         candidate = session.exec(
             select(OnboardingJob)
-            .where(OnboardingJob.status == JOB_PENDING)
+            .where(
+                OnboardingJob.status == JOB_PENDING,
+                OnboardingJob.attempts < OnboardingJob.max_attempts,
+            )
             .order_by(OnboardingJob.created_at)
             .limit(1)
         ).first()
@@ -897,8 +916,34 @@ def _merge_partial_property_drafts(drafts: dict[str, Draft]) -> None:
                 # Two genuinely different complete addresses on the same street line.
                 continue
             for name, value in other.values.items():
-                if canonical.values.get(name) in (None, "", []) and value not in (None, "", []):
+                current = canonical.values.get(name)
+                if current in (None, "", []) and value not in (None, "", []):
                     canonical.values[name] = value
+                elif (
+                    current not in (None, "", [])
+                    and value not in (None, "", [])
+                    and jsonable(current) != jsonable(value)
+                ):
+                    # Both documents state a different value: keep both as
+                    # explicit candidates so approval cannot silently pick one.
+                    options = canonical.conflicts.setdefault(name, [])
+                    for candidate_value, source in ((current, canonical), (value, other)):
+                        if any(o["value"] == jsonable(candidate_value) for o in options):
+                            continue
+                        evidence = next(
+                            (e for e in source.evidence
+                             if e.get("field_name") == name
+                             and e.get("value") == jsonable(candidate_value)),
+                            None,
+                        ) or {}
+                        options.append({
+                            "value": jsonable(candidate_value),
+                            "document_id": evidence.get("document_id", ""),
+                            "page": evidence.get("page", 0),
+                            "evidence": evidence.get("evidence", ""),
+                            "confidence": evidence.get("confidence", 0.5),
+                            "source_location": evidence.get("source_location", {}),
+                        })
             canonical.evidence.extend(other.evidence)
             canonical.document_ids |= other.document_ids
             for name, options in other.conflicts.items():

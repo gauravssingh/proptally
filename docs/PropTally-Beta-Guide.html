@@ -1,0 +1,2320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>PropTally — Beta Field Guide</title>
+<meta name="description" content="A feature summary and practical user guide for PropTally beta testers: portfolio signup, setup, how the ledger works, the feature tour, and beta caveats.">
+<style>
+/* ==========================================================================
+   PropTally Beta Field Guide
+   Self-contained: no fonts, scripts, images, or network requests.
+   ========================================================================== */
+
+:root {
+    --bg: #edf2f7;
+    --surface: #ffffff;
+    --surface-2: #f8fafc;
+    --surface-3: #f1f5f9;
+    --ink: #0f172a;
+    --ink-2: #334155;
+    --muted: #64748b;
+    --line: #dbe4ec;
+    --line-strong: #cbd5e1;
+    --accent: #047857;
+    --accent-2: #065f46;
+    --accent-soft: #d1fae5;
+    --accent-line: #a7f3d0;
+    --navy: #0f172a;
+    --navy-deep: #020617;
+    --amber: #92400e;
+    --amber-bg: #fffbeb;
+    --amber-line: #fde68a;
+    --red: #9f1239;
+    --red-bg: #fff1f2;
+    --red-line: #fecdd3;
+    --blue: #1e40af;
+    --blue-bg: #eff6ff;
+    --blue-line: #bfdbfe;
+    --violet: #3730a3;
+    --violet-bg: #eef2ff;
+    --violet-line: #c7d2fe;
+    --radius: 18px;
+    --radius-sm: 12px;
+    --shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 18px 40px -24px rgba(15, 23, 42, .24);
+    --max: 1080px;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #070d18;
+        --surface: #0f172a;
+        --surface-2: #111c30;
+        --surface-3: #16233a;
+        --ink: #e8eef6;
+        --ink-2: #cbd5e1;
+        --muted: #94a3b8;
+        --line: #1e2b40;
+        --line-strong: #334155;
+        --accent: #34d399;
+        --accent-2: #6ee7b7;
+        --accent-soft: rgba(16, 185, 129, .14);
+        --accent-line: rgba(52, 211, 153, .34);
+        --amber: #fbbf24;
+        --amber-bg: rgba(245, 158, 11, .09);
+        --amber-line: rgba(245, 158, 11, .30);
+        --red: #fda4af;
+        --red-bg: rgba(244, 63, 94, .10);
+        --red-line: rgba(244, 63, 94, .30);
+        --blue: #93c5fd;
+        --blue-bg: rgba(59, 130, 246, .10);
+        --blue-line: rgba(59, 130, 246, .30);
+        --violet: #c7d2fe;
+        --violet-bg: rgba(99, 102, 241, .10);
+        --violet-line: rgba(99, 102, 241, .30);
+        --shadow: 0 1px 2px rgba(0, 0, 0, .24), 0 18px 40px -24px rgba(0, 0, 0, .6);
+    }
+}
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+a {
+    color: var(--accent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+}
+a:hover { color: var(--accent-2); }
+
+:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 4px;
+}
+
+.skip-link {
+    position: absolute;
+    left: 16px;
+    top: -100px;
+    z-index: 100;
+    background: var(--surface);
+    color: var(--ink);
+    padding: 12px 18px;
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    font-weight: 700;
+}
+.skip-link:focus { top: 16px; }
+
+.wrap {
+    width: min(var(--max), calc(100% - 48px));
+    margin-inline: auto;
+}
+
+/* --------------------------------------------------------------------------
+   Masthead
+   -------------------------------------------------------------------------- */
+
+.masthead {
+    position: relative;
+    overflow: hidden;
+    background:
+        radial-gradient(circle at 92% 8%, rgba(16, 185, 129, .26), transparent 34rem),
+        radial-gradient(circle at 6% 108%, rgba(37, 99, 235, .18), transparent 30rem),
+        linear-gradient(145deg, var(--navy-deep), var(--navy) 65%, #0b2531);
+    color: #f1f5f9;
+    padding: 34px 0 0;
+}
+.masthead::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: .22;
+    background-image:
+        linear-gradient(rgba(148, 163, 184, .12) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, .12) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: linear-gradient(to bottom, black, transparent 78%);
+}
+
+.masthead__inner { position: relative; z-index: 1; }
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 44px;
+}
+.brand__mark {
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: linear-gradient(145deg, #10b981, #047857);
+    color: #ffffff;
+    font-weight: 800;
+    font-size: 20px;
+    letter-spacing: -.04em;
+    box-shadow: 0 8px 22px -8px rgba(16, 185, 129, .8);
+}
+.brand__text {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: -.02em;
+    color: #ffffff;
+}
+.brand__doc {
+    font-weight: 500;
+    font-size: 12px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: #a7f3d0;
+}
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid rgba(255, 255, 255, .18);
+    background: rgba(255, 255, 255, .08);
+    color: #e2e8f0;
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.badge--beta {
+    background: rgba(251, 191, 36, .16);
+    border-color: rgba(251, 191, 36, .4);
+    color: #fde68a;
+}
+
+.masthead__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr);
+    gap: 56px;
+    align-items: end;
+}
+
+.eyebrow {
+    margin: 0 0 12px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+.masthead .eyebrow { color: #6ee7b7; }
+
+h1 {
+    margin: 0 0 22px;
+    max-width: 13ch;
+    font-size: clamp(2.7rem, 5.2vw, 4.3rem);
+    line-height: 1.02;
+    letter-spacing: -.055em;
+    font-weight: 800;
+    color: #ffffff;
+}
+h1 span { color: #6ee7b7; }
+
+.lede {
+    margin: 0;
+    max-width: 59ch;
+    font-size: 1.08rem;
+    line-height: 1.65;
+    color: #cbd5e1;
+}
+
+.meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 26px;
+}
+.meta-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 11px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, .14);
+    background: rgba(255, 255, 255, .055);
+    color: #e2e8f0;
+    font-size: 12px;
+    font-weight: 500;
+}
+.meta-chip::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #34d399;
+    box-shadow: 0 0 0 3px rgba(52, 211, 153, .15);
+}
+
+.masthead__aside {
+    border: 1px solid rgba(255, 255, 255, .14);
+    background: rgba(2, 6, 23, .28);
+    backdrop-filter: blur(6px);
+    border-radius: 16px;
+    padding: 18px;
+    margin-bottom: 6px;
+}
+.aside-label {
+    margin: 0 0 10px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: #94a3b8;
+}
+.contents {
+    display: grid;
+    gap: 2px;
+    counter-reset: toc;
+}
+.contents a {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    padding: 7px 8px;
+    border-radius: 8px;
+    color: #e2e8f0;
+    text-decoration: none;
+    font-size: 13px;
+    line-height: 1.35;
+}
+.contents a::before {
+    counter-increment: toc;
+    content: counter(toc, decimal-leading-zero);
+    color: #6ee7b7;
+    font-family: var(--mono);
+    font-size: 10px;
+    min-width: 18px;
+}
+.contents a:hover {
+    background: rgba(255, 255, 255, .08);
+    color: #ffffff;
+}
+
+.beta-strip {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    flex-wrap: wrap;
+    margin-top: 46px;
+    padding: 14px 18px;
+    border-top: 1px solid rgba(253, 230, 138, .24);
+    background: rgba(251, 191, 36, .11);
+    color: #fef3c7;
+    font-size: 13px;
+}
+.beta-strip strong { color: #fde68a; }
+.beta-strip a {
+    color: #ffffff;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
+   Document layout
+   -------------------------------------------------------------------------- */
+
+main { padding: 34px 0 64px; }
+
+.doc-section {
+    scroll-margin-top: 24px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: clamp(24px, 4vw, 46px);
+    margin-bottom: 24px;
+}
+.doc-section--attention {
+    border-top: 4px solid #d97706;
+}
+
+.section-head {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+    margin-bottom: 28px;
+}
+.section-num {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    margin: 0 0 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--accent);
+}
+.section-num::after {
+    content: "";
+    width: 36px;
+    height: 1px;
+    background: var(--accent-line);
+}
+
+h2 {
+    margin: 0 0 10px;
+    max-width: 26ch;
+    font-size: clamp(1.55rem, 2.6vw, 2.1rem);
+    line-height: 1.16;
+    letter-spacing: -.035em;
+    color: var(--ink);
+}
+h3 {
+    margin: 0 0 8px;
+    font-size: 1.06rem;
+    line-height: 1.3;
+    letter-spacing: -.015em;
+    color: var(--ink);
+}
+h4 {
+    margin: 0 0 6px;
+    font-size: .92rem;
+    letter-spacing: -.005em;
+    color: var(--ink);
+}
+.section-intro {
+    margin: 0;
+    max-width: 74ch;
+    color: var(--ink-2);
+    font-size: 1rem;
+}
+p { margin: 0 0 14px; }
+p:last-child { margin-bottom: 0; }
+strong { color: var(--ink); }
+
+.small { font-size: .875rem; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+
+code {
+    font-family: var(--mono);
+    font-size: .86em;
+    background: var(--surface-3);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: .08em .36em;
+    overflow-wrap: anywhere;
+}
+pre {
+    margin: 0;
+    padding: 14px 16px;
+    background: var(--surface-3);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: .82rem;
+    line-height: 1.55;
+    color: var(--ink-2);
+}
+pre code { background: none; border: 0; padding: 0; }
+
+/* --------------------------------------------------------------------------
+   Cards, grids, lists
+   -------------------------------------------------------------------------- */
+
+.grid { display: grid; gap: 16px; }
+.grid--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.grid--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.split {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(250px, .5fr);
+    gap: 32px;
+    align-items: start;
+}
+.grid > *,
+.split > *,
+.path-grid > *,
+.feature-grid > *,
+.notice-grid > *,
+.principles > *,
+.masthead__grid > * { min-width: 0; }
+
+.card {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 20px;
+}
+.card--accent {
+    background: linear-gradient(180deg, var(--accent-soft), transparent 60%), var(--surface-2);
+    border-color: var(--accent-line);
+}
+.card--dark {
+    background: var(--navy);
+    border-color: #1e293b;
+    color: #e2e8f0;
+}
+.card--dark h3, .card--dark strong { color: #ffffff; }
+.card--dark p { color: #cbd5e1; }
+
+.notice-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    margin-bottom: 22px;
+}
+.notice {
+    padding: 20px;
+    border-radius: 14px;
+    border: 1px solid var(--amber-line);
+    background: var(--amber-bg);
+}
+.notice__mark {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    margin-bottom: 12px;
+    background: #f59e0b;
+    color: #ffffff;
+    font-weight: 800;
+    font-size: 14px;
+}
+.notice h3 { color: var(--amber); }
+.notice p { color: var(--ink-2); font-size: .92rem; }
+
+.callout {
+    display: grid;
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 14px;
+    padding: 18px 20px;
+    border: 1px solid var(--line-strong);
+    border-radius: 14px;
+    background: var(--surface-2);
+    margin: 22px 0 0;
+}
+.callout__mark {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    background: var(--surface-3);
+    color: var(--ink-2);
+    font-weight: 800;
+    font-size: 13px;
+}
+.callout__body { min-width: 0; }
+.callout__body > :last-child { margin-bottom: 0; }
+.callout--info { border-color: var(--blue-line); background: var(--blue-bg); }
+.callout--info .callout__mark { background: var(--blue); color: #ffffff; }
+.callout--good { border-color: var(--accent-line); background: var(--accent-soft); }
+.callout--good .callout__mark { background: var(--accent); color: #ffffff; }
+.callout--warn { border-color: var(--amber-line); background: var(--amber-bg); }
+.callout--warn .callout__mark { background: #d97706; color: #ffffff; }
+.callout--danger { border-color: var(--red-line); background: var(--red-bg); }
+.callout--danger .callout__mark { background: #be123c; color: #ffffff; }
+.callout h3 { margin-bottom: 4px; }
+
+ul, ol { margin: 0 0 14px; padding-left: 1.2em; }
+li { margin: 0 0 6px; }
+li:last-child { margin-bottom: 0; }
+ul.tight, ol.tight { margin-bottom: 0; }
+ul.tight li, ol.tight li { margin-bottom: 4px; }
+
+ul.checklist {
+    list-style: none;
+    padding-left: 0;
+}
+ul.checklist li {
+    position: relative;
+    padding-left: 26px;
+}
+ul.checklist li::before {
+    content: "✓";
+    position: absolute;
+    left: 0;
+    top: 1px;
+    color: var(--accent);
+    font-weight: 800;
+}
+ul.dashlist {
+    list-style: none;
+    padding-left: 0;
+}
+ul.dashlist li {
+    position: relative;
+    padding-left: 20px;
+}
+ul.dashlist li::before {
+    content: "—";
+    position: absolute;
+    left: 0;
+    color: var(--muted);
+}
+
+/* --------------------------------------------------------------------------
+   Steps and paths
+   -------------------------------------------------------------------------- */
+
+.steps {
+    display: grid;
+    gap: 0;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--surface);
+}
+.step {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 14px;
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--line);
+}
+.step:last-child { border-bottom: 0; }
+.step__num {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-line);
+    color: var(--accent-2);
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 800;
+}
+.step h3 { margin-bottom: 3px; }
+.step p { margin: 0; color: var(--ink-2); font-size: .93rem; }
+.step .detail {
+    display: block;
+    margin-top: 6px;
+    color: var(--muted);
+    font-size: .82rem;
+}
+
+.path-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+}
+.path-card {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--surface-2);
+    padding: 24px;
+}
+.path-card--accent {
+    border-color: var(--accent-line);
+    background: linear-gradient(180deg, var(--accent-soft), transparent 44%), var(--surface-2);
+}
+.path-card__tag {
+    display: inline-flex;
+    align-self: flex-start;
+    padding: 4px 9px;
+    border-radius: 999px;
+    margin-bottom: 12px;
+    background: var(--surface-3);
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+}
+.path-card--accent .path-card__tag {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
+}
+.path-card h3 { font-size: 1.2rem; }
+.path-card > p { color: var(--ink-2); font-size: .93rem; }
+.path-card ol, .path-card ul { font-size: .92rem; color: var(--ink-2); }
+.path-card__foot {
+    margin-top: auto;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: .8rem;
+}
+
+.mini-facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin: 16px 0 0;
+}
+.mini-fact {
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+}
+.mini-fact dt {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 2px;
+}
+.mini-fact dd {
+    margin: 0;
+    font-size: .86rem;
+    color: var(--ink-2);
+    line-height: 1.45;
+}
+
+/* --------------------------------------------------------------------------
+   Tables
+   -------------------------------------------------------------------------- */
+
+.table-wrap {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface);
+}
+table {
+    width: 100%;
+    min-width: 620px;
+    border-collapse: collapse;
+    font-size: .9rem;
+}
+caption {
+    caption-side: top;
+    text-align: left;
+    padding: 14px 16px 0;
+    color: var(--muted);
+    font-size: .8rem;
+}
+th {
+    text-align: left;
+    padding: 11px 14px;
+    background: var(--surface-3);
+    border-bottom: 1px solid var(--line-strong);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+td {
+    padding: 13px 14px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    color: var(--ink-2);
+}
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: var(--surface-2); }
+td strong { color: var(--ink); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* --------------------------------------------------------------------------
+   Principles and features
+   -------------------------------------------------------------------------- */
+
+.principles {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+.principle {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 12px;
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface-2);
+}
+.principle__num {
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 800;
+    padding-top: 3px;
+}
+.principle h3 { font-size: .98rem; margin-bottom: 4px; }
+.principle p { color: var(--ink-2); font-size: .88rem; margin: 0; }
+
+.feature-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+.feature {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface-2);
+    padding: 22px;
+}
+.feature--wide { grid-column: 1 / -1; }
+.feature__head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+.feature__num {
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+.feature h3 { font-size: 1.1rem; margin: 0; }
+.where {
+    margin: 0 0 12px;
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: .03em;
+}
+.where strong { color: var(--ink-2); font-weight: 600; }
+.feature ul { font-size: .9rem; color: var(--ink-2); }
+.feature__note {
+    margin-top: auto;
+    padding-top: 12px;
+    border-top: 1px dashed var(--line-strong);
+    font-size: .82rem;
+    color: var(--muted);
+}
+.feature__note strong { color: var(--ink-2); }
+
+/* --------------------------------------------------------------------------
+   Journey loop
+   -------------------------------------------------------------------------- */
+
+.loop {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 16px;
+    border: 1px solid var(--accent-line);
+    border-radius: 14px;
+    background: var(--accent-soft);
+    margin-bottom: 22px;
+}
+.loop__step {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--accent-line);
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 700;
+}
+.loop__step::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+}
+.loop__arrow {
+    color: var(--accent-2);
+    font-weight: 800;
+    font-size: 14px;
+    line-height: 1;
+}
+
+/* --------------------------------------------------------------------------
+   Footer
+   -------------------------------------------------------------------------- */
+
+.site-foot {
+    background: var(--navy-deep);
+    color: #94a3b8;
+    padding: 34px 0 42px;
+    font-size: .82rem;
+}
+.site-foot .wrap {
+    display: flex;
+    justify-content: space-between;
+    gap: 22px;
+    flex-wrap: wrap;
+    align-items: flex-start;
+}
+.site-foot strong { color: #e2e8f0; }
+.site-foot p { margin: 0; max-width: 64ch; }
+.site-foot .foot-mark {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #e2e8f0;
+    font-weight: 700;
+}
+.site-foot .foot-mark span {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: #047857;
+    color: #ffffff;
+    font-size: 13px;
+}
+
+/* --------------------------------------------------------------------------
+   Responsive
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+    .masthead__grid { grid-template-columns: 1fr; gap: 30px; }
+    .masthead__aside { max-width: 520px; }
+    .grid--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .notice-grid { grid-template-columns: 1fr; }
+    .split { grid-template-columns: 1fr; }
+    .path-grid, .feature-grid, .principles { grid-template-columns: 1fr; }
+    .feature--wide { grid-column: auto; }
+}
+
+@media (max-width: 620px) {
+    .wrap { width: min(100% - 28px, var(--max)); }
+    .masthead { padding-top: 24px; }
+    .brand { margin-bottom: 30px; }
+    h1 { font-size: clamp(2.35rem, 11vw, 3.1rem); }
+    .doc-section { padding: 22px 18px; border-radius: 14px; }
+    .grid--2, .grid--3, .grid--4 { grid-template-columns: 1fr; }
+    .mini-facts { grid-template-columns: 1fr; }
+    .step { grid-template-columns: 38px minmax(0, 1fr); padding: 16px; }
+    .beta-strip { align-items: flex-start; }
+    .loop__arrow { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+}
+
+/* --------------------------------------------------------------------------
+   Print
+   -------------------------------------------------------------------------- */
+
+@media print {
+    :root {
+        --bg: #ffffff;
+        --surface: #ffffff;
+        --surface-2: #ffffff;
+        --surface-3: #f6f8fa;
+        --ink: #111827;
+        --ink-2: #374151;
+        --muted: #4b5563;
+        --line: #d1d5db;
+        --line-strong: #9ca3af;
+        --accent: #065f46;
+        --accent-2: #064e3b;
+        --accent-soft: #f0fdf4;
+        --accent-line: #bbf7d0;
+        --amber: #92400e;
+        --amber-bg: #fffbeb;
+        --amber-line: #fde68a;
+        --red: #9f1239;
+        --red-bg: #fff1f2;
+        --red-line: #fecdd3;
+        --blue: #1e40af;
+        --blue-bg: #eff6ff;
+        --blue-line: #bfdbfe;
+        --violet: #3730a3;
+        --violet-bg: #eef2ff;
+        --violet-line: #c7d2fe;
+        --shadow: none;
+    }
+
+    @page { margin: 16mm; }
+
+    body { background: #ffffff; color: #111827; font-size: 10.5pt; }
+    .no-print { display: none !important; }
+    .wrap { width: 100%; max-width: none; }
+    main { padding: 0; }
+
+    .masthead {
+        background: #ffffff !important;
+        color: #111827 !important;
+        padding: 0 0 14px;
+        border-bottom: 2px solid #111827;
+    }
+    .masthead::after { display: none; }
+    .masthead__inner { padding: 0; }
+    .brand { margin-bottom: 16px; }
+    .brand__text, .brand__doc { color: #111827 !important; }
+    .brand__mark { background: #111827 !important; color: #ffffff !important; box-shadow: none; }
+    .badge--beta { color: #92400e !important; border-color: #92400e !important; background: #fffbeb !important; }
+    h1 { color: #111827 !important; font-size: 26pt; max-width: none; }
+    h1 span { color: #065f46 !important; }
+    .lede { color: #374151 !important; }
+    .masthead .eyebrow { color: #065f46 !important; }
+    .meta-chip { color: #374151 !important; border-color: #d1d5db !important; background: #ffffff !important; }
+    .masthead__aside { display: none; }
+    .beta-strip {
+        color: #78350f !important;
+        background: #fffbeb !important;
+        border: 1px solid #fde68a !important;
+        margin-top: 16px;
+        padding: 8px 10px;
+    }
+    .beta-strip strong, .beta-strip a { color: #92400e !important; }
+
+    .doc-section {
+        box-shadow: none;
+        border: 1px solid #d1d5db;
+        border-radius: 0;
+        padding: 18px 0;
+        margin: 0 0 4px;
+    }
+    .doc-section--attention { border-top: 3px solid #d97706; }
+    .card, .path-card, .feature, .principle, .notice, .callout, .steps, .table-wrap {
+        break-inside: avoid;
+        box-shadow: none;
+    }
+    .section-head { break-inside: avoid; break-after: avoid; }
+    h2, h3, h4 { break-after: avoid; }
+    tr { break-inside: avoid; }
+    .masthead, .doc-section, .card, .path-card, .feature, .principle, .notice, .callout {
+        background: #ffffff !important;
+    }
+    /* A dark card is white in print, so its copy must flip back to ink. */
+    .card--dark { border: 1px solid #111827 !important; }
+    .card--dark .eyebrow { color: #065f46 !important; }
+    .card--dark h3, .card--dark h4, .card--dark strong, .card--dark p { color: #111827 !important; }
+    .card--dark hr { border-top-color: #d1d5db !important; }
+    .site-foot {
+        background: #ffffff !important;
+        color: #374151 !important;
+        border-top: 1px solid #d1d5db;
+        padding: 14px 0 0;
+    }
+    .site-foot strong, .site-foot .foot-mark { color: #111827 !important; }
+    .site-foot .foot-mark span { background: #111827 !important; }
+    a { color: #065f46 !important; }
+    code { background: #f3f4f6 !important; border-color: #d1d5db !important; }
+}
+</style>
+</head>
+<body>
+
+<a class="skip-link" href="#main">Skip to the guide</a>
+
+<header class="masthead" id="top">
+    <div class="wrap masthead__inner">
+        <div class="brand">
+            <span class="brand__mark" aria-hidden="true">P</span>
+            <span class="brand__text">PropTally <span class="brand__doc">Beta field guide</span></span>
+            <span class="badge badge--beta">Beta</span>
+        </div>
+
+        <div class="masthead__grid">
+            <div>
+                <p class="eyebrow">Feature summary &amp; user guide · <time datetime="2026-10-19">19 October 2026</time></p>
+                <h1>Property finance,<br><span>with a ledger underneath.</span></h1>
+                <p class="lede">
+                    PropTally is a self-hosted ledger for small residential portfolios: rent, operating
+                    expenses, mortgages, escrow, and the Schedule&nbsp;E workpapers those numbers become.
+                    This guide covers how to get in, how the app thinks, what each screen does, and what
+                    to expect while it is still in beta.
+                </p>
+                <div class="meta-row" aria-label="Guide scope">
+                    <span class="meta-chip">Built for 1–10 doors</span>
+                    <span class="meta-chip">Self-hosted &amp; privacy-first</span>
+                    <span class="meta-chip">Double-entry ledger</span>
+                    <span class="meta-chip">Active development</span>
+                </div>
+            </div>
+
+            <aside class="masthead__aside no-print">
+                <p class="aside-label">In this guide</p>
+                <nav class="contents" aria-label="Contents">
+                    <a href="#pitch">Why PropTally exists</a>
+                    <a href="#beta">Before you rely on it</a>
+                    <a href="#what">What PropTally is</a>
+                    <a href="#signup">Signup and first entry</a>
+                    <a href="#setup">First setup: two paths</a>
+                    <a href="#how">How the app operates</a>
+                    <a href="#tour">Feature tour</a>
+                    <a href="#journey">A month with PropTally</a>
+                    <a href="#roles">People and roles</a>
+                    <a href="#limits">Beta limits and help</a>
+                </nav>
+            </aside>
+        </div>
+
+        <div class="beta-strip" role="note">
+            <span><strong>Beta software.</strong> Active development · unplanned downtime · frequent UI/UX changes.</span>
+            <a href="#beta">Read the beta notice →</a>
+        </div>
+    </div>
+</header>
+
+<main id="main">
+    <div class="wrap">
+
+        <!-- ================================================================
+             00 · The pitch
+             ================================================================ -->
+        <section class="doc-section" id="pitch" aria-labelledby="pitch-heading">
+            <div class="section-head">
+                <p class="section-num">00 · The pitch</p>
+                <h2 id="pitch-heading">Rental property finances, kept like books.</h2>
+                <p class="section-intro">
+                    Most independent landlords do not have a math problem. They have a structure problem:
+                    the spreadsheet they inherited counts cash, not what the cash means. A mortgage payment
+                    is principal, interest, and escrow at once. One hardware-store receipt belongs to three
+                    doors and a personal bathroom. In April, the year has to be rebuilt from memory.
+                    PropTally replaces that spreadsheet with a double-entry ledger built for residential
+                    rentals, so every reported figure is posted, traceable, and defensible.
+                </p>
+            </div>
+
+            <div class="split">
+                <div>
+                    <h3>The problem we are solving</h3>
+                    <ul class="tight">
+                        <li><strong>Cash counting hides the economics.</strong> A mortgage payment is not an
+                            expense; a credit-card payment is not a second expense; escrow is not free. Tools
+                            that record only inflows and outflows flatten all three and the numbers stop tying
+                            out.</li>
+                        <li><strong>One transaction, many doors.</strong> Mixed-use cards, shared maintenance,
+                            and personal draws make “which property paid for this?” a monthly argument. Manual
+                            percentage guesses turn into unreconcilable books.</li>
+                        <li><strong>Institutional software, consumer data terms.</strong> Property-management
+                            suites assume dozens of units and a bank feed. Cloud bookkeeping asks you to upload
+                            deeds, leases, mortgage statements, and tax workpapers to somebody else’s server.</li>
+                        <li><strong>Tax season becomes archaeology.</strong> Schedule&nbsp;E asks for income and
+                            expenses by category. Reconstructing that from a year of receipts is where weekends
+                            and CPA fees disappear.</li>
+                    </ul>
+                    <p style="color:var(--ink-2);margin-top:14px">
+                        Existing tools each solve a slice: spreadsheets are flexible but ungoverned, consumer
+                        budgeting apps are single-entry, and enterprise property management is priced and
+                        designed for portfolios a small landlord will never have. Nobody built the middle —
+                        until now.
+                    </p>
+                </div>
+
+                <aside class="card card--dark">
+                    <p class="eyebrow" style="color:#6ee7b7">The elevator pitch</p>
+                    <h3>Your portfolio’s books, not another budgeting app.</h3>
+                    <p>
+                        <strong style="color:#ffffff">PropTally is a self-hosted, double-entry financial system for
+                        independent landlords with one to ten doors.</strong> It turns rent, mortgages, escrow,
+                        and a folder of receipts into auditable per-door books and a Schedule&nbsp;E workpaper —
+                        without sending the documents anywhere.
+                    </p>
+                    <hr style="border:0;border-top:1px solid #1e293b;margin:18px 0">
+                    <p style="margin-bottom:0">
+                        <strong style="color:#ffffff">In one line:</strong> the rigor of a general ledger,
+                        the scope of a small landlord, and the privacy of a filing cabinet.
+                    </p>
+                </aside>
+            </div>
+
+            <h3 style="margin-top:30px">Why it holds up</h3>
+            <div class="principles">
+                <article class="principle">
+                    <div class="principle__num">01</div>
+                    <div>
+                        <h3>Double-entry, to the cent</h3>
+                        <p>
+                            Every entry is a balanced journal transaction in integer cents. Posted entries are
+                            immutable at the database level; corrections are audited compensating reversals,
+                            never quiet edits.
+                        </p>
+                    </div>
+                </article>
+                <article class="principle">
+                    <div class="principle__num">02</div>
+                    <div>
+                        <h3>Mortgages modeled honestly</h3>
+                        <p>
+                            Statement receipt and bank settlement are separate stages, so the loan balance
+                            reflects what the servicer actually applied. No phantom equity from counting a
+                            payment twice — or from counting it too early.
+                        </p>
+                    </div>
+                </article>
+                <article class="principle">
+                    <div class="principle__num">03</div>
+                    <div>
+                        <h3>Exact splits across doors</h3>
+                        <p>
+                            One outflow can be allocated across rental doors and personal use with absolute-value
+                            validation. The books say who paid for what, and the reports agree.
+                        </p>
+                    </div>
+                </article>
+                <article class="principle">
+                    <div class="principle__num">04</div>
+                    <div>
+                        <h3>Evidence, not guesses</h3>
+                        <p>
+                            Documents are extracted locally and every proposed value cites its page and
+                            supporting text. Nothing posts until a person approves it. AI extraction is optional,
+                            off by default, and restricted to a local or private endpoint.
+                        </p>
+                    </div>
+                </article>
+                <article class="principle">
+                    <div class="principle__num">05</div>
+                    <div>
+                        <h3>Reports you can trace</h3>
+                        <p>
+                            NOI, operating cash flow, debt service, CADS, per-door P&amp;L, and the cash-flow
+                            waterfall are computed from posted entries — not from a parallel spreadsheet — and the
+                            Schedule&nbsp;E workpaper exports to CSV.
+                        </p>
+                    </div>
+                </article>
+                <article class="principle">
+                    <div class="principle__num">06</div>
+                    <div>
+                        <h3>Private by architecture</h3>
+                        <p>
+                            Each portfolio gets its own database and document vault on your infrastructure.
+                            There is no bank feed, no cloud OCR, and no third-party analytics; the data does not
+                            leave the host.
+                        </p>
+                    </div>
+                </article>
+            </div>
+        </section>
+
+        <!-- ================================================================
+             01 · Beta notice
+             ================================================================ -->
+        <section class="doc-section doc-section--attention" id="beta" aria-labelledby="beta-heading">
+            <div class="section-head">
+                <p class="section-num">01 · Beta notice</p>
+                <h2 id="beta-heading">Read this before you rely on it</h2>
+                <p class="section-intro">
+                    PropTally is in <strong>active development</strong>. It is already useful, but it is not a
+                    finished product, and it is not yet a system of record you should depend on alone.
+                    Treat this beta as a working preview: use it, test it, and tell us where it breaks.
+                </p>
+            </div>
+
+            <div class="notice-grid">
+                <article class="notice">
+                    <div class="notice__mark" aria-hidden="true">!</div>
+                    <h3>Unplanned downtime</h3>
+                    <p>
+                        The instance may restart, go offline, or be upgraded without notice. A long-running
+                        import can be interrupted. Try again if a page or upload fails; report a failure that
+                        persists.
+                    </p>
+                </article>
+                <article class="notice">
+                    <div class="notice__mark" aria-hidden="true">↔</div>
+                    <h3>UI/UX will move</h3>
+                    <p>
+                        Screens, labels, navigation, status names, and workflows will change frequently
+                        during beta. This guide describes the app as of October 2026 and will sometimes lag
+                        behind the live interface.
+                    </p>
+                </article>
+                <article class="notice">
+                    <div class="notice__mark" aria-hidden="true">△</div>
+                    <h3>Data and behavior may change</h3>
+                    <p>
+                        Features, parsers, ledger behavior, and storage schemas may change. Keep your
+                        original documents outside PropTally, and download a fresh portfolio export before
+                        you depend on any figure.
+                    </p>
+                </article>
+            </div>
+
+            <div class="callout callout--danger">
+                <span class="callout__mark" aria-hidden="true">!</span>
+                <div class="callout__body">
+                    <h3>Beta ground rules</h3>
+                    <ul class="tight">
+                        <li><strong>Keep an independent copy.</strong> Retain your source statements and take a portfolio export regularly; do not make PropTally your only record.</li>
+                        <li><strong>Do not file from it unreviewed.</strong> The tax workpapers are an aid, not a filed return, and not tax, legal, or accounting advice.</li>
+                        <li><strong>Do not work around a ledger error.</strong> If a balance, allocation, or report looks wrong, stop and report it rather than entering a correction that hides it.</li>
+                        <li><strong>Only enter data you are authorized to hold.</strong> This is a shared beta; treat every uploaded statement and document accordingly.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="callout callout--info">
+                <span class="callout__mark" aria-hidden="true">i</span>
+                <div class="callout__body">
+                    <p>
+                        <strong>What this document is.</strong> A feature summary and practical user guide for
+                        beta testers. It is not a contract, a service-level agreement, a security
+                        certification, or a promise that a described feature will behave identically after the
+                        next update.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================================================================
+             02 · What it is
+             ================================================================ -->
+        <section class="doc-section" id="what" aria-labelledby="what-heading">
+            <div class="section-head">
+                <p class="section-num">02 · Orientation</p>
+                <h2 id="what-heading">What PropTally is — and is not</h2>
+                <p class="section-intro">
+                    PropTally records the money that moves around a small residential portfolio and turns
+                    it into books you can inspect. It is built around a double-entry ledger rather than a
+                    spreadsheet, so every reported figure comes from posted journal entries and can be
+                    traced back to a statement or a manual entry.
+                </p>
+            </div>
+
+            <div class="split">
+                <div>
+                    <div class="table-wrap">
+                        <table>
+                            <caption>At a glance</caption>
+                            <thead>
+                                <tr>
+                                    <th scope="col">Area</th>
+                                    <th scope="col">What it gives you</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><strong>Portfolio</strong></td>
+                                    <td>Doors, ownership type, valuation, cost basis, photos, and per-property operating statements.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Ledger</strong></td>
+                                    <td>Rent, operating expenses, mortgage payments, escrow, transfers, and exact splits across doors and personal use.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Reconciliation</strong></td>
+                                    <td>Bank, card, and mortgage statements matched to the right account, with a review queue for anything unresolved.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Reporting</strong></td>
+                                    <td>Equity, debt, NOI, OCF, CADS, a cash-flow waterfall, per-door P&amp;L, and a Schedule&nbsp;E workpaper with CSV export.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Documents</strong></td>
+                                    <td>A per-portfolio vault for statements, leases, deeds, policies, and receipts, stored once by content hash.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Access</strong></td>
+                                    <td>Four portfolio roles, invitations, a separate operator console, and physical separation between portfolios.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="callout callout--warn">
+                        <span class="callout__mark" aria-hidden="true">×</span>
+                        <div class="callout__body">
+                            <h3>What it is not</h3>
+                            <ul class="tight">
+                                <li><strong>Not a bank or payment processor.</strong> It does not collect rent, move money, or act as a tenant portal.</li>
+                                <li><strong>Not a bank-feed product.</strong> Statements are uploaded or dropped into a watched folder; there is no live bank connection.</li>
+                                <li><strong>Not a property-management CRM.</strong> It is a financial ledger and tax workpaper tool, not leasing, maintenance, or tenant communication software.</li>
+                                <li><strong>Not your CPA.</strong> It prepares workpapers for review; it does not verify a CPA’s identity or file a return.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <aside class="card card--dark">
+                    <p class="eyebrow" style="color:#6ee7b7">The short version</p>
+                    <h3>One private bookshelf per portfolio.</h3>
+                    <p>
+                        Each portfolio has its own database and document vault. You open one portfolio at a
+                        time, and the figures on screen belong only to it.
+                    </p>
+                    <hr style="border:0;border-top:1px solid #1e293b;margin:18px 0">
+                    <h4 style="color:#ffffff">Designed for</h4>
+                    <p style="margin-bottom:0">
+                        Independent investors and small operators with roughly <strong style="color:#ffffff">1–10 residential doors</strong>,
+                        including a primary residence alongside rental properties.
+                    </p>
+                </aside>
+            </div>
+        </section>
+
+        <!-- ================================================================
+             03 · Signup
+             ================================================================ -->
+        <section class="doc-section" id="signup" aria-labelledby="signup-heading">
+            <div class="section-head">
+                <p class="section-num">03 · Getting in</p>
+                <h2 id="signup-heading">Signup: from invitation to an empty portfolio</h2>
+                <p class="section-intro">
+                    The beta is invitation-based. Whoever runs your PropTally instance creates a
+                    <strong>single-use onboarding code</strong> and sends you either a link or the code itself.
+                    One code starts exactly one portfolio, expires after 14 days, and can be withdrawn.
+                </p>
+                <p class="small muted" style="margin-top:12px">
+                    In this guide, <strong>operator</strong> means the person who runs the instance and
+                    manages accounts, invitations, and backups. An <strong>account</strong> is your identity;
+                    a <strong>portfolio</strong> is the workspace. Redeeming a code creates both together.
+                </p>
+            </div>
+
+            <div class="split">
+                <div class="steps" aria-label="Portfolio signup steps">
+                    <div class="step">
+                        <div class="step__num">01</div>
+                        <div>
+                            <h3>Receive your invitation</h3>
+                            <p>
+                                A link looks like <code>/auth/join?code=…</code>. If you receive a code instead,
+                                you will enter it on the registration page. If the invitation is pinned to an
+                                email address, that address is fixed; otherwise use the address you want to sign in with.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step__num">02</div>
+                        <div>
+                            <h3>Create your account and name the portfolio</h3>
+                            <p>
+                                Give your name, a portfolio name, your email, and a password of at least
+                                10 characters. A link carries the code for you; on <code>/auth/register</code>
+                                you will also see a field for the code when the instance requires one.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step__num">03</div>
+                        <div>
+                            <h3>Land in an empty portfolio</h3>
+                            <p>
+                                Redeeming the code creates the account, the portfolio, and your
+                                <strong>OWNER</strong> membership. There is no sample data: the portfolio starts
+                                with the standard chart of accounts and generic vendor rules, and nothing else.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step__num">04</div>
+                        <div>
+                            <h3>Choose how to start</h3>
+                            <p>
+                                The empty portfolio offers two paths: enter the essentials manually, or upload a
+                                ZIP of existing documents and review what PropTally proposes. Both paths end in
+                                the same guided setup and the same dashboard.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <aside class="card card--accent">
+                    <h3>Have ready before you start</h3>
+                    <ul class="checklist tight">
+                        <li>Your invitation link or code</li>
+                        <li>A portfolio name you recognize</li>
+                        <li>The email you will sign in with</li>
+                        <li>A password of 10+ characters</li>
+                        <li>For the document path: deeds, mortgage statements, bank/card statements, leases, tax and insurance documents</li>
+                    </ul>
+                    <p class="small muted" style="margin-top:16px;margin-bottom:0">
+                        A ZIP that is already organized by property or servicer is easier to reconcile, but
+                        folders are not required.
+                    </p>
+                </aside>
+            </div>
+
+            <div class="callout callout--info">
+                <span class="callout__mark" aria-hidden="true">i</span>
+                <div class="callout__body">
+                    <h3>Registration rules, without the guesswork</h3>
+                    <ul class="tight">
+                        <li>
+                            <strong>First owner on a fresh host.</strong> If the instance has no portfolio yet,
+                            the first owner can register at <code>/auth/register</code> without a code. Once the
+                            instance is claimed, registration requires an invitation code.
+                        </li>
+                        <li>
+                            <strong>Already have an account?</strong> Sign in at <code>/auth/login</code>; do not
+                            redeem a new portfolio code with the same account.
+                        </li>
+                        <li>
+                            <strong>Joining somebody else’s portfolio?</strong> The owner invites you from
+                            <strong>Administration → People → Invite somebody</strong>, chooses your role, and
+                            gives you the generated link. The link is shown once, expires after 7 days, and holds
+                            no access until you accept it.
+                        </li>
+                        <li>
+                            <strong>No email is sent.</strong> Invitations, password resets, and onboarding codes
+                            are delivered out of band by the person who runs the instance.
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="table-wrap" style="margin-top:22px">
+                <table>
+                    <caption>If signup does not go as expected</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col">Situation</th>
+                            <th scope="col">What it means</th>
+                            <th scope="col">What to do</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>No code field on registration</strong></td>
+                            <td>The host is still unclaimed, or this deployment does not require a code.</td>
+                            <td>Continue. If you expected an invitation-only instance, confirm the URL with your operator.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Code is rejected</strong></td>
+                            <td>It may be expired, already used, withdrawn, or mistyped. Codes are single-use.</td>
+                            <td>Ask your operator for a fresh code or link.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Invitation link is dead</strong></td>
+                            <td>Membership invitations expire after 7 days and can be withdrawn.</td>
+                            <td>Ask the portfolio owner to send a new invitation.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Forgot your password</strong></td>
+                            <td>There is no automatic reset email.</td>
+                            <td>Ask the operator for a single-use reset link and use it promptly.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>You see a different portfolio</strong></td>
+                            <td>Your session is pointed at another portfolio you belong to.</td>
+                            <td>Use the workspace switcher, or open <strong>All Portfolios</strong> when it appears in the sidebar.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="small muted" style="margin-top:18px;margin-bottom:0">
+                The operator’s console is separate from the portfolio. It manages accounts, invitations, and
+                portfolio lifecycle; it does not give the operator access to a portfolio’s ledger.
+            </p>
+        </section>
+
+        <!-- ================================================================
+             04 · Setup
+             ================================================================ -->
+        <section class="doc-section" id="setup" aria-labelledby="setup-heading">
+            <div class="section-head">
+                <p class="section-num">04 · First setup</p>
+                <h2 id="setup-heading">Two ways to start: type it in, or bring your documents</h2>
+                <p class="section-intro">
+                    A new portfolio is empty on purpose. You can build the essentials one step at a time, or
+                    hand PropTally a ZIP of documents and review every proposed record before it is written.
+                    The two paths meet in the same guided setup.
+                </p>
+            </div>
+
+            <div class="path-grid">
+                <article class="path-card">
+                    <span class="path-card__tag">Path A</span>
+                    <h3>Set up manually</h3>
+                    <p>
+                        Best when your records are in your head, in a spreadsheet, or spread across a few
+                        documents you would rather type in.
+                    </p>
+                    <ol>
+                        <li><strong>Property.</strong> The door the portfolio reports on: address, type, acquisition date, valuation, and cost basis.</li>
+                        <li><strong>Bank or card account.</strong> Where rent lands and expenses are paid; classify it as dedicated rental, mixed use, or unclassified.</li>
+                        <li><strong>Mortgage (optional).</strong> Servicer, loan number, rate, term, payment, and escrow. Skip it if the property is free and clear.</li>
+                        <li><strong>Opening balances.</strong> One dated baseline for cost basis, cash, card balances, loan principal, and escrow.</li>
+                        <li><strong>First records (recommended).</strong> Upload a statement or enter a first transaction. This step is not required to publish.</li>
+                    </ol>
+                    <p class="path-card__foot">
+                        The first four steps are the publishing gate. The wizard saves as you go and resumes at
+                        the first unfinished step, so you can leave and come back.
+                    </p>
+                </article>
+
+                <article class="path-card path-card--accent">
+                    <span class="path-card__tag">Path B</span>
+                    <h3>Import existing documents</h3>
+                    <p>
+                        Best when you already have the paperwork. One ZIP goes in; a review queue of proposed
+                        properties, accounts, mortgages, and leases comes out.
+                    </p>
+                    <ul>
+                        <li><strong>One archive.</strong> Up to 50&nbsp;MB, 200 files, 25&nbsp;MB per file, 250&nbsp;MB extracted.</li>
+                        <li><strong>Accepted inside.</strong> PDF, PNG, JPG, TIFF, DOCX, XLSX, CSV, and TXT. Unsafe paths and executable content are rejected.</li>
+                        <li><strong>Background processing.</strong> One job per document; you can close the browser and come back.</li>
+                        <li><strong>Reconciliation.</strong> Related documents are grouped, disagreements become conflicts, and every proposed value cites its document and page.</li>
+                        <li><strong>Review.</strong> Accept, edit, reject, or defer each record. Required fields and unresolved conflicts block approval.</li>
+                        <li><strong>Provisioning.</strong> Only approved records are created, through the same setup services as the manual path.</li>
+                    </ul>
+                    <p class="path-card__foot">
+                        Abandoned import sessions expire after 30 days. Approved source documents are copied
+                        into the portfolio’s own vault.
+                    </p>
+                </article>
+            </div>
+
+            <div class="callout callout--good">
+                <span class="callout__mark" aria-hidden="true">✓</span>
+                <div class="callout__body">
+                    <h3>The rule that matters: nothing is written until you approve it</h3>
+                    <p>
+                        Document import proposes; you decide. A proposal is not a ledger entry, an accepted
+                        proposal is not a posted transaction, and an imported property or loan does not invent
+                        opening balances. After import, the guided setup resumes at whatever is still missing.
+                    </p>
+                </div>
+            </div>
+
+            <div class="callout callout--warn">
+                <span class="callout__mark" aria-hidden="true">!</span>
+                <div class="callout__body">
+                    <h3>What the document path can and cannot create</h3>
+                    <p>
+                        The import can create <strong>properties, financial accounts, loan accounts, and leases</strong>.
+                        Bank statements are retained and linked to the portfolio, but <strong>bank statement
+                        transactions are not posted to the ledger by the onboarding import</strong>. Use
+                        <strong>Statements &amp; Ingestion</strong> for transaction import and the review queue for
+                        allocation and posting. Rental, tax, insurance, valuation, and maintenance documents are
+                        classified and retained; they cite evidence rather than becoming separate records.
+                    </p>
+                </div>
+            </div>
+
+            <div class="grid grid--4" style="margin-top:22px">
+                <div class="card">
+                    <p class="eyebrow">Where it starts</p>
+                    <h3>Portfolio Onboarding</h3>
+                    <p class="small muted">The landing screen for an empty portfolio, with the manual and document paths side by side.</p>
+                </div>
+                <div class="card">
+                    <p class="eyebrow">Manual wizard</p>
+                    <h3>Guided setup</h3>
+                    <p class="small muted">Five steps, saved as you go. Publish when the first four essentials are complete.</p>
+                </div>
+                <div class="card">
+                    <p class="eyebrow">Document wizard</p>
+                    <h3>Import documents</h3>
+                    <p class="small muted">Upload, process, review records and fields, resolve conflicts, then approve.</p>
+                </div>
+                <div class="card">
+                    <p class="eyebrow">After setup</p>
+                    <h3>Portfolio Overview</h3>
+                    <p class="small muted">Once a portfolio has doors, the shell opens on the financial overview instead of onboarding.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================================================================
+             05 · How it operates
+             ================================================================ -->
+        <section class="doc-section" id="how" aria-labelledby="how-heading">
+            <div class="section-head">
+                <p class="section-num">05 · The mental model</p>
+                <h2 id="how-heading">How the app operates</h2>
+                <p class="section-intro">
+                    Most of PropTally’s behavior follows from six ideas. Once these are clear, the screens are
+                    easier to read and the numbers are easier to trust — or challenge.
+                </p>
+            </div>
+
+            <div class="principles">
+                <article class="principle">
+                    <div class="principle__num">01</div>
+                    <div>
+                        <h3>One portfolio, one private database</h3>
+                        <p>
+                            Each portfolio has its own SQLite database and its own vault under the instance’s
+                            storage. A signed-in session resolves to one portfolio at a time; another portfolio’s
+                            ledger is not reachable from inside it.
+                        </p>
+                    </div>
+                </article>
+                <article class="principle">
+                    <div class="principle__num">02</div>
+                    <div>
+                        <h3>Doors are the unit of reporting</h3>
+                        <p>
+                            Every property is a door. Rental doors carry operating metrics and Schedule&nbsp;E
+                            lines; a primary residence is visually separated and excluded from rental income and
+                            depreciation.
+                        </p>
+                    </div>
+                </article>
+                <article class="principle">
+                    <div class="principle__num">03</div>
+                    <div>
+                        <h3>Reports read posted entries, not raw activity</h3>
+                        <p>
+                            A transaction can be imported, split, and allocated without yet affecting the
+                            reports. Only a posted journal entry does. That is why the dashboard can show zero
+                            until statements are reviewed and posted.
+                        </p>
+                    </div>
+                </article>
+                <article class="principle">
+                    <div class="principle__num">04</div>
+                    <div>
+                        <h3>Double-entry, integer cents, immutable once posted</h3>
+                        <p>
+                            Debits must equal credits, and amounts are stored as integer cents. Posted journal
+                            entries and lines cannot be edited or deleted; corrections are compensating entries,
+                            so history stays intact.
+                        </p>
+                    </div>
+                </article>
+                <article class="principle">
+                    <div class="principle__num">05</div>
+                    <div>
+                        <h3>Documents are evidence</h3>
+                        <p>
+                            Statements and source documents live in a content-addressed vault, deduplicated by
+                            SHA-256. An extracted figure can point back to the document and page that produced
+                            it, and the original file is never renamed on disk.
+                        </p>
+                    </div>
+                </article>
+                <article class="principle">
+                    <div class="principle__num">06</div>
+                    <div>
+                        <h3>Roles decide authority</h3>
+                        <p>
+                            Four portfolio roles separate administration, bookkeeping, external review, and
+                            read-only access. The app enforces the same role sets in its routes and in its
+                            People screen, so the screen cannot describe authority the app will not carry out.
+                        </p>
+                    </div>
+                </article>
+            </div>
+
+            <h3 style="margin-top:30px">Reading the headline numbers</h3>
+            <div class="table-wrap">
+                <table>
+                    <caption>The dashboard’s vocabulary</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col">Figure</th>
+                            <th scope="col">What it means</th>
+                            <th scope="col">Source and caveat</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Portfolio equity</strong></td>
+                            <td>Recorded valuation less total mortgage debt across the portfolio.</td>
+                            <td>Valuation is manual or appraised input, not a live market quote. Treat it as an estimate.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Total debt outstanding</strong></td>
+                            <td>Principal still owed across all doors and servicers.</td>
+                            <td>Servicer-reported principal is authoritative where a statement exists; otherwise the posted-ledger principal is used.</td>
+                        </tr>
+                        <tr>
+                            <td><abbr title="Net Operating Income">NOI</abbr></td>
+                            <td>Rental income less operating expenses, before debt service.</td>
+                            <td>Rental-only and unleveraged. Personal draws and primary-residence costs are excluded.</td>
+                        </tr>
+                        <tr>
+                            <td><abbr title="Operating Cash Flow">OCF</abbr></td>
+                            <td>Cash the operating property produces before debt service.</td>
+                            <td>Cash-backed, derived from posted entries. It is not the same as accounting profit.</td>
+                        </tr>
+                        <tr>
+                            <td><abbr title="Cash Flow After Debt Service">CADS</abbr></td>
+                            <td>Cash retained after operating expenses and full debt service.</td>
+                            <td>The “what is left in the operating account” figure. Principal paydown builds equity; it is not an expense.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Escrow reserve</strong></td>
+                            <td>Money held by the servicer for taxes and insurance.</td>
+                            <td>An asset, not operating cash. Calculated and statement-reported balances are shown separately.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="callout callout--info">
+                <span class="callout__mark" aria-hidden="true">i</span>
+                <div class="callout__body">
+                    <h3>Why a credit-card payment is not a second expense</h3>
+                    <p>
+                        The original purchase already carried the expense. Paying the card from a deposit
+                        account is a <strong>transfer</strong>: it debits the card liability and credits the bank.
+                        When you record it, choose the card as the transfer target. Only the payment’s allocated
+                        rental share should reduce rental cash flow; the purchase is not expensed twice.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================================================================
+             06 · Feature tour
+             ================================================================ -->
+        <section class="doc-section" id="tour" aria-labelledby="tour-heading">
+            <div class="section-head">
+                <p class="section-num">06 · Feature tour</p>
+                <h2 id="tour-heading">What each screen is for</h2>
+                <p class="section-intro">
+                    Navigation grows with the portfolio: a section appears once there is data behind it.
+                    A brand-new portfolio opens on onboarding; after the first doors and records exist, the
+                    working screens appear in the sidebar.
+                </p>
+            </div>
+
+            <div class="table-wrap" style="margin-bottom:24px">
+                <table>
+                    <caption>Feature summary</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col">Screen</th>
+                            <th scope="col">The job it does</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><strong>Portfolio Overview</strong></td><td>Headline health, door performance, and the cash-flow waterfall.</td></tr>
+                        <tr><td><strong>Portfolio doors</strong></td><td>Per-property operating P&amp;L, mortgage debt, and tenant/lease information.</td></tr>
+                        <tr><td><strong>Mortgages &amp; Escrow</strong></td><td>Consolidated loan ledger and servicer escrow reserve health.</td></tr>
+                        <tr><td><strong>Transactions Register</strong></td><td>Every recorded cash movement, with allocation, splitting, and ledger posting.</td></tr>
+                        <tr><td><strong>Review Queue</strong></td><td>Unallocated activity, vendor rules, and governance gates before posting.</td></tr>
+                        <tr><td><strong>Statements &amp; Ingestion</strong></td><td>Upload, parse, correct, approve, and import bank and mortgage statements.</td></tr>
+                        <tr><td><strong>Document Vault</strong></td><td>Browse and search source documents by property and type.</td></tr>
+                        <tr><td><strong>Tax &amp; Schedule E</strong></td><td>Per-door Schedule&nbsp;E workpaper, depreciation, and CSV export.</td></tr>
+                        <tr><td><strong>Manage Portfolio Data</strong></td><td>Properties, accounts, loans, opening balances, and vendor rules.</td></tr>
+                        <tr><td><strong>Administration</strong></td><td>People, roles, invitations, portfolio status, backup, and sign-in.</td></tr>
+                        <tr><td><strong>All Portfolios</strong></td><td>Open, switch, export, or remove portfolios when the account reaches more than one.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="feature-grid">
+                <article class="feature">
+                    <div class="feature__head">
+                        <span class="feature__num">5.1</span>
+                        <h3>Portfolio Overview</h3>
+                    </div>
+                    <p class="where">Find it: <strong>Portfolio Overview</strong> in the sidebar</p>
+                    <ul>
+                        <li>Four headline KPIs: equity, debt, rental NOI, and CADS.</li>
+                        <li>Door cards that separate rental doors from the primary residence.</li>
+                        <li>A cash-flow waterfall from gross rent through operating expenses, interest, escrow, principal, and retained cash.</li>
+                        <li>An <strong>Action required</strong> panel that points at the review queue when something is waiting.</li>
+                    </ul>
+                    <p class="feature__note"><strong>Good to know:</strong> every figure is posted-entry only. A portfolio that has imported statements but not posted transactions will show very little here, by design.</p>
+                </article>
+
+                <article class="feature">
+                    <div class="feature__head">
+                        <span class="feature__num">5.2</span>
+                        <h3>Doors: property detail</h3>
+                    </div>
+                    <p class="where">Find it: <strong>Portfolio doors</strong> → a property</p>
+                    <ul>
+                        <li>Address, type, acquisition date, valuation, cost basis, occupancy, and photos.</li>
+                        <li><strong>Operating P&amp;L:</strong> monthly income and Schedule&nbsp;E expense categories from posted entries.</li>
+                        <li><strong>Mortgage debt and clearing ledger:</strong> principal, interest, escrow, and in-flight obligations.</li>
+                        <li><strong>Tenant and lease:</strong> tenant name, term, monthly rent, security deposit, and whether the signed lease is in the vault.</li>
+                    </ul>
+                    <p class="feature__note"><strong>Good to know:</strong> a tenant inferred from rent-like bank deposits is labeled unverified; it is not proof of a signed lease. A primary residence is a non-operating asset and is excluded from rental metrics.</p>
+                </article>
+
+                <article class="feature">
+                    <div class="feature__head">
+                        <span class="feature__num">5.3</span>
+                        <h3>Mortgages &amp; Escrow</h3>
+                    </div>
+                    <p class="where">Find it: <strong>Money → Mortgages &amp; Escrow</strong></p>
+                    <ul>
+                        <li>Consolidated loan ledger across servicers, with masked loan numbers and rates.</li>
+                        <li>Ledger principal, servicer-reported principal, and clearing balance kept in separate columns with their provenance.</li>
+                        <li>Escrow reserve accounts showing calculated and statement-reported balances.</li>
+                        <li>In-flight obligations that are recorded but not yet confirmed as cash-settled and applied by the servicer.</li>
+                    </ul>
+                    <p class="feature__note"><strong>Good to know:</strong> escrow is an asset held by the servicer, not cash available to spend. Two bases are shown so one never masquerades as the other.</p>
+                </article>
+
+                <article class="feature">
+                    <div class="feature__head">
+                        <span class="feature__num">5.4</span>
+                        <h3>Transactions Register</h3>
+                    </div>
+                    <p class="where">Find it: <strong>Money → Transactions Register</strong></p>
+                    <ul>
+                        <li>Filter by account, property, status, flow direction, merchant, date, and source.</li>
+                        <li>Add a transaction manually, including a credit-card payment as a transfer.</li>
+                        <li><strong>Split</strong> one outflow across multiple doors, categories, and a personal share.</li>
+                        <li>Assign a category and post the allocation to the ledger when it is complete.</li>
+                    </ul>
+                    <p class="feature__note"><strong>Good to know:</strong> a split must allocate every cent; the save control stays blocked until the split sum equals the transaction total. Posted entries are locked and cannot be re-split.</p>
+                </article>
+
+                <article class="feature">
+                    <div class="feature__head">
+                        <span class="feature__num">5.5</span>
+                        <h3>Review Queue</h3>
+                    </div>
+                    <p class="where">Find it: <strong>Money → Review Queue</strong></p>
+                    <ul>
+                        <li>One queue for unallocated activity, with counts for the whole queue and the current filter.</li>
+                        <li><strong>Vendor rules</strong> map repeat merchants to a service type and default Schedule&nbsp;E category; apply one suggestion or batch-classify.</li>
+                        <li>Manual assignment for anything a rule cannot explain.</li>
+                        <li>Separate governance controls for <strong>CBD-1</strong> (client confirmation) and <strong>CBD-2</strong> (external review of a mixed-use card charge).</li>
+                    </ul>
+                    <p class="feature__note"><strong>Good to know:</strong> rules are suggestions, not silent postings. CBD-1 and CBD-2 are not interchangeable: a client sign-off does not satisfy a review gate.</p>
+                </article>
+
+                <article class="feature">
+                    <div class="feature__head">
+                        <span class="feature__num">5.6</span>
+                        <h3>Statements &amp; Ingestion</h3>
+                    </div>
+                    <p class="where">Find it: <strong>Records → Statements &amp; Ingestion</strong></p>
+                    <ul>
+                        <li>Upload a statement PDF up to 50&nbsp;MB; it is stored in the vault and matched against the portfolio’s registered accounts.</li>
+                        <li>Review the extracted figures, correct them, and re-validate.</li>
+                        <li><strong>Approve</strong> records the decision but writes nothing to the ledger. <strong>Import</strong> makes the statement the authoritative record for that account and period and creates its itemized transactions.</li>
+                        <li>An unrecognized account can be registered directly from the statement.</li>
+                    </ul>
+                    <p class="feature__note"><strong>Good to know:</strong> importing a statement creates transactions for allocation; it does not post them. Importing the same statement twice is refused.</p>
+                </article>
+
+                <article class="feature">
+                    <div class="feature__head">
+                        <span class="feature__num">5.7</span>
+                        <h3>Document Vault</h3>
+                    </div>
+                    <p class="where">Find it: <strong>Records → Document Vault</strong></p>
+                    <ul>
+                        <li>Browse by property and document type, with <strong>Unfiled</strong> and <strong>Unclassified</strong> folders for the rest.</li>
+                        <li>Search across every folder; the folder tree’s counts follow the search.</li>
+                        <li>Upload several PDF, PNG, JPG, or WEBP files at once, up to 50&nbsp;MB each.</li>
+                        <li>Preview, download, and open the related extraction when one exists.</li>
+                    </ul>
+                    <p class="feature__note"><strong>Good to know:</strong> files are stored by SHA-256, not by original filename. Re-uploading known content does not duplicate it, and an existing classification is never overwritten.</p>
+                </article>
+
+                <article class="feature">
+                    <div class="feature__head">
+                        <span class="feature__num">5.8</span>
+                        <h3>Tax &amp; Schedule E</h3>
+                    </div>
+                    <p class="where">Find it: <strong>Tax → Tax &amp; Schedule E</strong></p>
+                    <ul>
+                        <li>Choose a tax year and read one column per rental door, with a portfolio total.</li>
+                        <li>Lines 3–21 map posted income and expense categories to the IRS Schedule&nbsp;E form.</li>
+                        <li>Depreciation uses the building basis, 27.5-year straight line, and the mid-month convention in the acquisition year.</li>
+                        <li>Export the workpaper as CSV for a CPA or tax-prep software.</li>
+                    </ul>
+                    <p class="feature__note"><strong>Good to know:</strong> unposted splits are excluded and called out as provisional. If land/building basis is missing, Line&nbsp;18 cannot be computed; the workpaper says so rather than guessing.</p>
+                </article>
+
+                <article class="feature">
+                    <div class="feature__head">
+                        <span class="feature__num">5.9</span>
+                        <h3>Manage Portfolio Data</h3>
+                    </div>
+                    <p class="where">Find it: <strong>Settings → Manage Portfolio Data</strong></p>
+                    <ul>
+                        <li>Add or edit properties, bank and card accounts, mortgage loans, and vendor rules.</li>
+                        <li>Record the dated opening balance baseline for the portfolio.</li>
+                        <li>Revisit setup after publishing; the wizard is a view over the same write services as this screen.</li>
+                    </ul>
+                    <p class="feature__note"><strong>Good to know:</strong> opening balances are ledger history, not a scratch pad. Change them deliberately, and ask your operator for a backup first if you are unsure.</p>
+                </article>
+
+                <article class="feature">
+                    <div class="feature__head">
+                        <span class="feature__num">5.10</span>
+                        <h3>Administration</h3>
+                    </div>
+                    <p class="where">Find it: <strong>Settings → Administration</strong></p>
+                    <ul>
+                        <li><strong>People:</strong> members, roles, a capability matrix, invitations, withdraw, and remove.</li>
+                        <li><strong>Portfolio status:</strong> counts of doors, loans, documents, transactions, journal entries, and files, plus database readability and storage sizes.</li>
+                        <li><strong>Backup:</strong> an owner-only download of the portfolio database, vault, photos, and a manifest.</li>
+                        <li><strong>Sign-in:</strong> your identity, role, and password change.</li>
+                    </ul>
+                    <p class="feature__note"><strong>Good to know:</strong> the last owner cannot be demoted or removed. Invitation links are shown once because the app sends no email.</p>
+                </article>
+
+                <article class="feature feature--wide">
+                    <div class="feature__head">
+                        <span class="feature__num">5.11</span>
+                        <h3>All Portfolios</h3>
+                    </div>
+                    <p class="where">Find it: <strong>Portfolios → All Portfolios</strong>, when the account reaches more than one</p>
+                    <ul>
+                        <li>One cross-portfolio view listing each portfolio, your role, door count, net equity, and debt.</li>
+                        <li>Open or switch the active workspace; a new sign-in with multiple memberships presents a chooser.</li>
+                        <li>Owners can export or remove a portfolio from here. An export contains one portfolio’s database, documents, photos, and manifest — never another portfolio and never the control plane.</li>
+                    </ul>
+                    <p class="feature__note"><strong>Good to know:</strong> a single-portfolio account does not see this screen; the workspace switcher already expresses the same choice.</p>
+                </article>
+            </div>
+
+            <div class="callout callout--warn">
+                <span class="callout__mark" aria-hidden="true">!</span>
+                <div class="callout__body">
+                    <h3>Statement parser coverage is deliberately narrow in beta</h3>
+                    <p>
+                        The built-in deterministic parsers currently target <strong>Rocket, PNC, and
+                        CrossCountry mortgage statements</strong>, <strong>Bank of America checking and credit-card
+                        statements</strong>, and <strong>Apple Card</strong>. Other layouts may be stored and
+                        marked unsupported or sent to review rather than guessed at. A scanned PDF needs OCR on
+                        the host; if OCR is unavailable, the document fails with a reason instead of appearing
+                        successfully empty.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================================================================
+             07 · Journey
+             ================================================================ -->
+        <section class="doc-section" id="journey" aria-labelledby="journey-heading">
+            <div class="section-head">
+                <p class="section-num">07 · Operating rhythm</p>
+                <h2 id="journey-heading">A month with PropTally</h2>
+                <p class="section-intro">
+                    The healthy loop is short: capture what happened, match it to the right account,
+                    allocate every cent, post it to the ledger, then read the reports that result.
+                </p>
+            </div>
+
+            <div class="loop" aria-label="The monthly loop">
+                <span class="loop__step">Capture</span>
+                <span class="loop__arrow" aria-hidden="true">→</span>
+                <span class="loop__step">Match</span>
+                <span class="loop__arrow" aria-hidden="true">→</span>
+                <span class="loop__step">Allocate</span>
+                <span class="loop__arrow" aria-hidden="true">→</span>
+                <span class="loop__step">Post</span>
+                <span class="loop__arrow" aria-hidden="true">→</span>
+                <span class="loop__step">Review</span>
+            </div>
+
+            <div class="table-wrap">
+                <table>
+                    <caption>A practical cadence</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col">When</th>
+                            <th scope="col">Do this</th>
+                            <th scope="col">Why it matters</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Day one</strong></td>
+                            <td>Create the portfolio, add the first door, account, mortgage (or skip), and opening balances. Publish, then add a first statement or manual transaction.</td>
+                            <td>Gives every later figure a door, an account, and a dated baseline.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Each statement cycle</strong></td>
+                            <td>Upload the statement, review the extracted figures, approve, then import. In the review queue, allocate and post the transactions.</td>
+                            <td>Statements are evidence; the ledger is the result. Allocation is what makes the expense belong to a door.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Weekly</strong></td>
+                            <td>Clear the review queue, check unmatched activity, and upload any new statements.</td>
+                            <td>A small queue is easy to reason about; a large one hides anomalies.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Monthly</strong></td>
+                            <td>Reconcile bank, card, and mortgage statements; check escrow balances; read NOI and CADS; scan for uncategorized or personal items.</td>
+                            <td>Catches double-counting, missing payments, and misallocated expenses before they reach tax season.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Quarter-end</strong></td>
+                            <td>Review per-door P&amp;L and large repairs or capital items with your CPA; confirm the depreciation basis is recorded.</td>
+                            <td>Keeps tax treatment decisions out of the year-end crunch.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Year-end</strong></td>
+                            <td>Pick the tax year in <strong>Tax &amp; Schedule E</strong>, review the workpaper, export the CSV, and download a portfolio export.</td>
+                            <td>Gives your CPA a traceable workpaper and gives you an independent copy of the books.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>When life changes</strong></td>
+                            <td>Add a door, account, or loan in <strong>Manage Portfolio Data</strong>; update lease terms; file the signed lease in the vault.</td>
+                            <td>The setup wizard is a starting path, not a one-time cage. The portfolio keeps growing.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="callout callout--good">
+                <span class="callout__mark" aria-hidden="true">✓</span>
+                <div class="callout__body">
+                    <h3>A good month looks boring</h3>
+                    <p>
+                        Every statement is imported, every transaction is allocated, the review queue is empty,
+                        escrow matches the servicer, and the only open question is a real one for your CPA.
+                        Boring is the goal.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================================================================
+             08 · Roles
+             ================================================================ -->
+        <section class="doc-section" id="roles" aria-labelledby="roles-heading">
+            <div class="section-head">
+                <p class="section-num">08 · People</p>
+                <h2 id="roles-heading">Roles, invitations, and access</h2>
+                <p class="section-intro">
+                    Roles are portfolio-level and enforced by the application, not just described on a screen.
+                    An owner can invite people from <strong>Administration → People</strong>; the invitation
+                    link is shown once and expires after 7 days.
+                </p>
+            </div>
+
+            <div class="table-wrap">
+                <table>
+                    <caption>Portfolio roles</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col">Role</th>
+                            <th scope="col">Can</th>
+                            <th scope="col">Cannot</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>OWNER</strong></td>
+                            <td>Administer people and invitations, do setup and bookkeeping, confirm for the client, export the portfolio, and remove it.</td>
+                            <td>—</td>
+                        </tr>
+                        <tr>
+                            <td><strong>MANAGER</strong></td>
+                            <td>Do setup and bookkeeping: import statements, allocate and post transactions, and manage properties, accounts, and loans.</td>
+                            <td>Manage people, provide the client’s confirmation, export, or remove the portfolio.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>CPA_REVIEWER</strong></td>
+                            <td>Do bookkeeping as needed and record a verified external review.</td>
+                            <td>Manage people or provide the client’s own confirmation.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>READ_ONLY</strong></td>
+                            <td>Read portfolio data.</td>
+                            <td>Change or export it.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="grid grid--3" style="margin-top:20px">
+                <div class="card">
+                    <h3>Inviting somebody</h3>
+                    <p class="small muted">
+                        Administration → People → <strong>Invite somebody</strong>. Choose the role, then copy
+                        the generated link. No email is sent; the link is the delivery mechanism.
+                    </p>
+                </div>
+                <div class="card">
+                    <h3>Removing access</h3>
+                    <p class="small muted">
+                        An owner can change a role or remove a person. The last owner cannot be demoted or
+                        removed, so a portfolio cannot be left without an administrator.
+                    </p>
+                </div>
+                <div class="card">
+                    <h3>External review in beta</h3>
+                    <p class="small muted">
+                        A <strong>CPA_REVIEWER</strong> membership is recorded as a verified reviewer. However,
+                        the current CBD-2 posting path also accepts an owner’s attestation checkbox. Treat that
+                        checkbox as a process note, not as independent CPA sign-off.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================================================================
+             09 · Limits and help
+             ================================================================ -->
+        <section class="doc-section" id="limits" aria-labelledby="limits-heading">
+            <div class="section-head">
+                <p class="section-num">09 · Beta boundaries</p>
+                <h2 id="limits-heading">Known limits, and how to get help</h2>
+                <p class="section-intro">
+                    These are the boundaries we know about today. Some are deliberate beta scope; some are
+                    still being built. Knowing them makes a bug report sharper and a workaround safer.
+                </p>
+            </div>
+
+            <div class="table-wrap">
+                <table>
+                    <caption>Beta behavior worth knowing</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col">Area</th>
+                            <th scope="col">What the beta does today</th>
+                            <th scope="col">What to do</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Availability</strong></td>
+                            <td>One self-hosted instance; restarts, upgrades, and unplanned downtime are possible.</td>
+                            <td>Retry briefly, then tell your operator. Do not assume a failed page saved.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>UI/UX</strong></td>
+                            <td>Screens, labels, navigation, and workflows change frequently during beta.</td>
+                            <td>Use this guide for concepts, not pixel positions. Ask if a screen has moved.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Data durability</strong></td>
+                            <td>Schemas and behavior may change; the app does not schedule backups on its own.</td>
+                            <td>Keep source documents; download a portfolio export regularly; confirm the operator’s backup cadence.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Bank connectivity</strong></td>
+                            <td>No live bank feeds. Statements are uploaded or placed in a watched folder.</td>
+                            <td>Upload each statement cycle; use manual entry when a statement is unavailable.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Parser coverage</strong></td>
+                            <td>Native parsing targets a small set of servicers and banks; other documents may need review or manual entry.</td>
+                            <td>Read the extraction’s reasons; correct the figures or enter the transactions manually.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Scanned documents</strong></td>
+                            <td>OCR depends on the host; without it, image-only PDFs fail explicitly.</td>
+                            <td>Ask your operator whether OCR is enabled; otherwise upload a text-based PDF.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Onboarding ZIP</strong></td>
+                            <td>Creates properties, accounts, loans, and leases; does not post bank transactions.</td>
+                            <td>Use <strong>Statements &amp; Ingestion</strong> for transaction import after setup.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>CPA review</strong></td>
+                            <td>CBD-2 can be satisfied by an owner self-attestation checkbox; cryptographic CPA sign-off is not built.</td>
+                            <td>Do not present the checkbox as independent CPA approval; retain your CPA’s own workpaper.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Tax reporting</strong></td>
+                            <td>Workpapers use posted entries only; unposted allocations are provisional; no return is filed.</td>
+                            <td>Review with your CPA before filing. Record building basis for depreciation.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Email</strong></td>
+                            <td>No mail transport: invitations, resets, and onboarding codes are delivered out of band.</td>
+                            <td>Ask the operator or portfolio owner for the link or code.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Mobile &amp; integrations</strong></td>
+                            <td>Responsive web interface; no native mobile app and no third-party accounting sync.</td>
+                            <td>Use a current browser. Export CSV for tax-prep software.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Address lookup</strong></td>
+                            <td>Google Maps address search and the mini map are optional; without a key, property creation falls back to manual entry.</td>
+                            <td>Type the address manually if the lookup is unavailable.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="grid grid--2" style="margin-top:22px">
+                <article class="card">
+                    <h3>Reporting a problem</h3>
+                    <p class="small muted">Send it to the person who invited you to the beta. Include:</p>
+                    <ul class="checklist tight small">
+                        <li>Date and time, and the portfolio you were in</li>
+                        <li>The screen name and URL</li>
+                        <li>What you did, step by step</li>
+                        <li>What you expected and what happened</li>
+                        <li>A screenshot, with account numbers and personal data redacted</li>
+                        <li>Your browser and whether the issue reproduces</li>
+                    </ul>
+                </article>
+                <article class="card card--accent">
+                    <h3>Report immediately if…</h3>
+                    <ul class="dashlist tight small">
+                        <li>A ledger balance or report disagrees with a statement in a way you cannot explain.</li>
+                        <li>An import is stuck, duplicated, or created the wrong entity.</li>
+                        <li>You can see another portfolio’s data, or someone else can see yours.</li>
+                        <li>A password, invitation, or session behaves unexpectedly.</li>
+                        <li>You suspect data was lost after an upgrade or restart.</li>
+                    </ul>
+                    <p class="small muted" style="margin-top:12px;margin-bottom:0">
+                        Do not try to repair a ledger discrepancy by posting a balancing entry. Preserve the
+                        evidence and let the operator inspect it first.
+                    </p>
+                </article>
+            </div>
+
+            <div class="callout callout--info" style="margin-top:22px">
+                <span class="callout__mark" aria-hidden="true">i</span>
+                <div class="callout__body">
+                    <h3>Thank you for testing</h3>
+                    <p>
+                        Beta is a partnership. The most useful report is a specific one: a screen, a statement,
+                        a number, and what you expected instead. That is how the ledger, the parsers, and the
+                        interface get better.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+    </div>
+</main>
+
+<footer class="site-foot">
+    <div class="wrap">
+        <div>
+            <div class="foot-mark"><span aria-hidden="true">P</span> PropTally</div>
+            <p style="margin-top:10px">
+                Beta field guide · <time datetime="2026-10-19">19 October 2026</time>. Describes beta behavior
+                and will change. PropTally is not tax, legal, or accounting advice.
+            </p>
+        </div>
+        <p>
+            Self-hosted · privacy-first · double-entry ledger<br>
+            For beta testers of the PropTally multi-portfolio deployment.
+        </p>
+    </div>
+</footer>
+
+</body>
+</html>

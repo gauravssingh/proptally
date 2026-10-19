@@ -596,7 +596,7 @@ def get_admin_router(
         admin=Depends(admin_dep),
     ):
         try:
-            revoke_invite(control_engine, invite_id, tenant_id=tenant_id)
+            revoke_invite(control_engine, invite_id, tenant_id=tenant_id, actor_user_id=admin.user.id)
         except MembershipError as exc:
             return RedirectResponse(
                 url=f"/admin/tenants/{tenant_id}?error=" + urllib.parse.quote(str(exc)),
@@ -616,7 +616,7 @@ def get_admin_router(
         admin=Depends(admin_dep),
     ):
         try:
-            change_member_role(control_engine, membership_id, role, tenant_id=tenant_id)
+            change_member_role(control_engine, membership_id, role, tenant_id=tenant_id, actor_user_id=admin.user.id)
         except MembershipError as exc:
             return RedirectResponse(
                 url=f"/admin/tenants/{tenant_id}?error=" + urllib.parse.quote(str(exc)),
@@ -634,7 +634,7 @@ def get_admin_router(
         admin=Depends(admin_dep),
     ):
         try:
-            remove_member(control_engine, membership_id, tenant_id=tenant_id)
+            remove_member(control_engine, membership_id, tenant_id=tenant_id, actor_user_id=admin.user.id)
         except MembershipError as exc:
             return RedirectResponse(
                 url=f"/admin/tenants/{tenant_id}?error=" + urllib.parse.quote(str(exc)),

@@ -15,6 +15,7 @@
     var statusEl = viewer.querySelector("[data-pdf-status]");
     var pdfUrl = viewer.getAttribute("data-pdf-url");
     var currentPage = Math.max(1, parseInt(viewer.getAttribute("data-pdf-page") || "1", 10));
+    var fitToWidth = viewer.hasAttribute("data-pdf-fit-width");
     var zoom = 1;
     var pdf = null;
     var page = null;
@@ -40,20 +41,25 @@
         if (location.page && location.page !== currentPage) return;
         if (!viewport || !page) return;
 
-        var height = Number(location.page_height) || (page.view[3] - page.view[1]);
+        // The server stores rectangles in the visible, rotated page space,
+        // measured from the top-left corner, together with the rotated page
+        // size. Scale them directly: pdf.js already rendered the rotated page.
+        var pageWidth = Number(location.page_width);
+        var pageHeight = Number(location.page_height);
+        if (!pageWidth || !pageHeight) return;
+        var scaleX = viewport.width / pageWidth;
+        var scaleY = viewport.height / pageHeight;
         location.rects.forEach(function (rect) {
-            var pdfRect = [rect.x0, height - rect.y1, rect.x1, height - rect.y0];
-            var box = viewport.convertToViewportRectangle(pdfRect);
-            var x0 = Math.min(box[0], box[2]);
-            var x1 = Math.max(box[0], box[2]);
-            var y0 = Math.min(box[1], box[3]);
-            var y1 = Math.max(box[1], box[3]);
+            var x0 = rect.x0 * scaleX;
+            var x1 = rect.x1 * scaleX;
+            var y0 = rect.y0 * scaleY;
+            var y1 = rect.y1 * scaleY;
             var node = document.createElement("div");
             node.className = "pt-pdf-highlight";
-            node.style.left = x0 + "px";
-            node.style.top = y0 + "px";
-            node.style.width = Math.max(1, x1 - x0) + "px";
-            node.style.height = Math.max(1, y1 - y0) + "px";
+            node.style.left = Math.min(x0, x1) + "px";
+            node.style.top = Math.min(y0, y1) + "px";
+            node.style.width = Math.max(1, Math.abs(x1 - x0)) + "px";
+            node.style.height = Math.max(1, Math.abs(y1 - y0)) + "px";
             highlightsEl.appendChild(node);
         });
 
@@ -78,6 +84,19 @@
         if (!pdf || !canvas) return Promise.resolve();
         return pdf.getPage(currentPage).then(function (nextPage) {
             page = nextPage;
+            if (fitToWidth && viewportEl) {
+                // Fit the page to the pane, not to the browser's default 100%.
+                // The viewport has its own padding; subtract it so the page edge
+                // lands on the visible edge rather than under the gutter.
+                var styles = window.getComputedStyle(viewportEl);
+                var available = viewportEl.clientWidth -
+                    parseFloat(styles.paddingLeft || 0) -
+                    parseFloat(styles.paddingRight || 0);
+                var natural = page.getViewport({scale: 1});
+                if (available > 0 && natural.width > 0) {
+                    zoom = Math.min(2.5, Math.max(0.25, available / natural.width));
+                }
+            }
             viewport = page.getViewport({scale: zoom});
             var ratio = window.devicePixelRatio || 1;
             canvas.width = Math.floor(viewport.width * ratio);
@@ -162,6 +181,7 @@
 
     viewer.querySelectorAll("[data-pdf-zoom-in], [data-pdf-zoom-out]").forEach(function (button) {
         button.addEventListener("click", function () {
+            fitToWidth = false;
             var next = zoom + (button.hasAttribute("data-pdf-zoom-in") ? 0.25 : -0.25);
             zoom = Math.min(2.5, Math.max(0.5, Math.round(next * 100) / 100));
             renderPage();

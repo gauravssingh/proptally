@@ -28,6 +28,9 @@
     {{ ui.btn("Vendor Classification Rules (" ~ (vendor_rules | length) ~ ")",
               variant="subtle", icon_name="sliders",
               attrs='data-modal-open="vendor-rules-modal"') }}
+    {{ ui.btn("Bulk Classify Rent",
+              variant="subtle", icon_name="home",
+              attrs='data-modal-open="bulk-rent-modal"') }}
 {% endcall %}
 
 {# --- Batch classification outcome (redirect back with ?applied=N) -------- #}
@@ -185,12 +188,13 @@
 {% set batch_category_options = [
     {"value": "PERSONAL", "label": "Personal Draw (Non-Op)"},
     {"value": "REPAIRS", "label": "Repairs & Maintenance (Line 14)"},
-    {"value": "SUPPLIES", "label": "Supplies (Line 17)"},
-    {"value": "UTILITIES", "label": "Utilities (Line 19)"},
+    {"value": "SUPPLIES", "label": "Supplies (Line 15)"},
+    {"value": "UTILITIES", "label": "Utilities (Line 17)"},
     {"value": "MANAGEMENT", "label": "Management Fees (Line 11)"},
     {"value": "COMMISSIONS", "label": "Tenant Placement (Line 8)"},
     {"value": "HOA", "label": "HOA Assessments (Line 19)"},
-    {"value": "RENT_INCOME", "label": "Rent Income (Line 3)"}
+    {"value": "RENT_INCOME", "label": "Rent Income (Line 3)"},
+    {"value": "SECURITY_DEPOSIT", "label": "Tenant Security Deposit (Liability)"}
 ] %}
 
 {% set batch_property_options = [{"value": "", "label": "Personal / None"}] %}
@@ -201,12 +205,13 @@
 {% set assign_category_options = [
     {"value": "PERSONAL", "label": "Personal Draw (Non-Op)"},
     {"value": "RENT_INCOME", "label": "Rent Income (Line 3)"},
+    {"value": "SECURITY_DEPOSIT", "label": "Tenant Security Deposit (Liability)"},
     {"value": "REPAIRS", "label": "Repairs & Maintenance (Line 14)"},
     {"value": "MANAGEMENT", "label": "Management Fees (Line 11)"},
     {"value": "COMMISSIONS", "label": "Tenant Placement (Line 8)"},
     {"value": "HOA", "label": "HOA Assessments (Line 19)"},
-    {"value": "SUPPLIES", "label": "Supplies (Line 17)"},
-    {"value": "UTILITIES", "label": "Utilities (Line 19)"},
+    {"value": "SUPPLIES", "label": "Supplies (Line 15)"},
+    {"value": "UTILITIES", "label": "Utilities (Line 17)"},
     {"value": "TAXES", "label": "Property Taxes (Line 16)"}
 ] %}
 
@@ -460,8 +465,8 @@
                     {{ ui.select_field("default_category", "Default Category", [
                         {"value": "PERSONAL", "label": "Personal Draw (Non-Op)"},
                         {"value": "REPAIRS", "label": "Repairs & Maintenance (Line 14)"},
-                        {"value": "SUPPLIES", "label": "Supplies (Line 17)"},
-                        {"value": "UTILITIES", "label": "Utilities (Line 19)"},
+                        {"value": "SUPPLIES", "label": "Supplies (Line 15)"},
+                        {"value": "UTILITIES", "label": "Utilities (Line 17)"},
                         {"value": "MANAGEMENT", "label": "Management Fees (Line 11)"},
                         {"value": "COMMISSIONS", "label": "Commissions (Line 8)"},
                         {"value": "HOA", "label": "HOA Dues (Line 19)"},
@@ -520,6 +525,52 @@
     <div class="pt-modal__footer pt-modal__footer--split">
         {{ ui.btn("Close", variant="secondary", attrs="data-modal-close") }}
         {{ ui.btn("Save Vendor Rule", variant="primary", type="submit") }}
+    </div>
+</form>
+{{ ui.modal_close() }}
+
+{# =========================================================================
+   Bulk tenant rent classification. Reads the remitter and memo from Zelle
+   inflows; deposits and mixed deposit/rent memos are deliberately skipped.
+   ========================================================================= #}
+{% set rental_properties = properties | selectattr('property_type', 'equalto', 'RENTAL_INVESTMENT') | list %}
+{{ ui.modal_open(
+    "bulk-rent-modal",
+    "Bulk Classify Rent",
+    "Reads tenant names and memos from Zelle inflows, attributes rent to one rental door, posts Rental Income, and creates a lease when the payment history supports it.",
+    size="lg"
+) }}
+<form class="pt-modal__form" action="/reconciliation/bulk-rent" method="POST">
+    {{ csrf_field() }}
+    <div class="pt-modal__body">
+        <div class="pt-form-grid pt-form-grid--2">
+            <div class="pt-field">
+                <label class="pt-field__label" for="bulkRentProperty">Rental property</label>
+                <select class="pt-input" id="bulkRentProperty" name="property_id" required>
+                    <option value="">Choose a rental door</option>
+                    {% for p in rental_properties %}
+                    <option value="{{ p.id }}">{{ p.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {{ ui.text_field("tenant_name", "Tenant name", id="bulkRentTenant", required=true,
+                             placeholder="e.g. Tyler J Saxsma") }}
+        </div>
+
+        {{ ui.checkbox_field(
+            "dry_run",
+            "Preview only — classify and report without posting",
+            help="Dry runs never create splits, journal entries, or leases."
+        ) }}
+
+        <p class="pt-text-muted pt-fs-body">
+            Security deposits post to the tenant-deposit liability, never rental income. Memos that mix a deposit with rent are skipped for manual splitting.
+        </p>
+    </div>
+
+    <div class="pt-modal__footer pt-modal__footer--split">
+        {{ ui.btn("Cancel", variant="secondary", attrs="data-modal-close") }}
+        {{ ui.btn("Classify & Post Rent", variant="primary", type="submit") }}
     </div>
 </form>
 {{ ui.modal_close() }}

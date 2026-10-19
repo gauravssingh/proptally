@@ -18,70 +18,159 @@
    stays readable at a glance and no two extractions compete for the same stretch of
    page. The row and its dialog are the same decision, which is why `action` — decided
    once per row in the route — drives both. #}
-<div class="pt-stack-3">
+<div class="pt-stack-4">
     {% set header_meta %}
         {{ ui.badge(ready_to_import ~ " READY TO IMPORT", variant="success", upper=true) }}
         {{ ui.badge(awaiting_review ~ " AWAITING REVIEW", variant="warning", upper=true) }}
-        {{ ui.badge(imported_total ~ " IMPORTED", variant="info", upper=true) }}
+        {{ ui.badge(imported_total ~ " IN LEDGER", variant="info", upper=true) }}
     {% endset %}
 
-    {{ ui.page_header(
-        "Statement Ingestion",
-        "Upload servicer and bank statements, match them to this portfolio's own accounts, then approve and import them.",
+    {% call ui.page_header(
+        "Statement Ingestion & Ledger Pipeline",
+        "Multi-stage pipeline: ingest, extract, review, approve, and import statements into the ledger.",
         meta=header_meta
-    ) }}
+    ) %}
+        {{ ui.btn("Upload a statement", variant="primary", type="button", icon_name="upload",
+                  attrs='data-modal-open="upload-statement"') }}
+        {{ ui.btn("Document Vault", variant="secondary", href="/documents?type=MORTGAGE_STATEMENT", icon_name="folder") }}
+        {% if unsupported_count %}
+        <form method="post" action="/statements/reprocess-unrecognized">
+            {{ csrf_field() }}
+            {{ ui.btn("Retry parsing " ~ unsupported_count ~ " unrecognized",
+                      variant="secondary", size="sm", type="submit") }}
+        </form>
+        {% endif %}
+    {% endcall %}
 
-    <div class="pt-explorer{% if selected %} pt-explorer--inspecting{% endif %}">
+    {% if message %}
+    {{ ui.alert(variant=message_variant or "info", title=message) }}
+    {% endif %}
 
-        {# ---- The rail: what the queue holds, and what is waiting in it. -------- #}
-        <div class="pt-explorer__rail">
-            <div class="pt-rail__heading">Status</div>
-            <div class="pt-tree">
-                {% for facet in status_facets %}
-                <a class="pt-tree__link{% if facet.active %} is-active{% endif %}" href="{{ facet.href }}"{% if facet.active %} aria-current="page"{% endif %}>
-                    <span class="pt-tree__icon">{{ ui.icon(facet.icon, "sm") }}</span>
-                    <span class="pt-tree__name">{{ facet.label }}</span>
-                    <span class="pt-tree__count">{{ facet.count }}</span>
-                </a>
-                {% endfor %}
+    {# ---- Multi-Stage Pipeline Progress Stepper --------------------------- #}
+    <div class="pt-pipeline" role="tablist" aria-label="Statement ingestion pipeline stages">
+        {% for facet in status_facets %}
+        <a class="pt-pipeline__step{% if facet.active %} is-active{% endif %}" href="{{ facet.href }}" role="tab" aria-selected="{{ 'true' if facet.active else 'false' }}">
+            <div class="pt-pipeline__header">
+                <span class="pt-pipeline__stage">
+                    {{ ui.icon(facet.icon, "sm") }}
+                    <span>{% if facet.key == 'all' %}Queue{% elif facet.key == 'review' %}Stage 1{% elif facet.key == 'approve' %}Stage 2{% elif facet.key == 'approved' %}Stage 3{% elif facet.key == 'imported' %}Stage 4{% endif %}</span>
+                </span>
+                <span class="pt-pipeline__count{% if facet.key == 'review' and facet.count > 0 %} pt-pipeline__count--warning{% elif facet.key == 'approve' and facet.count > 0 %} pt-pipeline__count--primary{% elif facet.key == 'approved' and facet.count > 0 %} pt-pipeline__count--success{% endif %}">
+                    {{ facet.count }}
+                </span>
             </div>
+            <h3 class="pt-pipeline__title">{{ facet.label }}</h3>
+            <p class="pt-pipeline__sub">
+                {% if facet.key == 'all' %}Complete queue overview
+                {% elif facet.key == 'review' %}Unmatched accounts &amp; doubts
+                {% elif facet.key == 'approve' %}Validated OCR &amp; balances
+                {% elif facet.key == 'approved' %}Approved for ledger post
+                {% elif facet.key == 'imported' %}Active double-entry records
+                {% endif %}
+            </p>
+        </a>
+        {% endfor %}
+    </div>
 
-            <div class="pt-rail__storage">
-                <div class="pt-rail__heading">Queue</div>
-                <p class="pt-fs-supporting pt-text-muted">
-                    {{ awaiting_review }} awaiting review · {{ ready_to_import }} ready to import
-                </p>
+    {# ---- Contextual Operational Callout Banners --------------------------- #}
+    {% if approved_ready %}
+    <div class="pt-pipeline-callout pt-pipeline-callout--success">
+        <div class="pt-pipeline-callout__lead">
+            <span class="pt-pipeline-callout__icon">{{ ui.icon("download", "lg") }}</span>
+            <div>
+                <strong class="pt-pipeline-callout__title">{{ approved_ready }} Approved Statement{{ '' if approved_ready == 1 else 's' }} Ready for Ledger Import</strong>
+                <span class="pt-pipeline-callout__desc">
+                    Extracted figures are verified and signed off. Importing generates double-entry statement records, posts transactions, and updates debt balances.
+                </span>
             </div>
         </div>
+        <div class="pt-pipeline-callout__actions">
+            {{ ui.btn("Import all " ~ approved_ready ~ " approved",
+                      variant="primary", size="sm", type="button", icon_name="download",
+                      attrs='data-modal-open="import-approved-modal"') }}
+            {% if status != 'approved' %}
+            <a href="/statements?status=approved" class="pt-btn pt-btn--secondary pt-btn--sm">View Ready to Import &rarr;</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
 
-        {# ---- The middle: the statements in this portfolio. --------------------- #}
-        <div class="pt-explorer__main pt-stack-3">
-            {{ ui.section_open() }}
-            {% call ui.titlebar("inbox", "Statements in this portfolio",
-                                total_documents ~ " document" ~ ('' if total_documents == 1 else 's')
-                                ~ " · " ~ imported_total ~ " imported") %}
-                {{ ui.btn("Upload a statement", variant="primary", type="button", icon_name="upload",
-                          attrs='data-modal-open="upload-statement"') }}
-            {% endcall %}
+    {% if ready_to_approve and status in ['all', 'approve'] %}
+    <div class="pt-pipeline-callout pt-pipeline-callout--info">
+        <div class="pt-pipeline-callout__lead">
+            <span class="pt-pipeline-callout__icon">{{ ui.icon("check_circle", "lg") }}</span>
+            <div>
+                <strong class="pt-pipeline-callout__title">{{ ready_to_approve }} Validated Statement{{ '' if ready_to_approve == 1 else 's' }} Ready to Approve</strong>
+                <span class="pt-pipeline-callout__desc">
+                    All OCR figures match registered portfolio accounts with zero balance discrepancy.
+                </span>
+            </div>
+        </div>
+        <div class="pt-pipeline-callout__actions">
+            {{ ui.btn("Approve all " ~ ready_to_approve ~ " ready",
+                      variant="secondary", size="sm", type="button", icon_name="check_circle",
+                      attrs='data-modal-open="approve-ready-modal"') }}
+        </div>
+    </div>
+    {% endif %}
 
-            <div class="pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-3">
-                <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-2">
-                    <span class="pt-fs-caption pt-text-muted">Sort</span>
-                    {% for option in sort_chips %}
-                    {{ ui.chip(option.label, option.href, option.active) }}
-                    {% endfor %}
+    {% if awaiting_review and status != 'review' %}
+    <div class="pt-pipeline-callout pt-pipeline-callout--warning">
+        <div class="pt-pipeline-callout__lead">
+            <span class="pt-pipeline-callout__icon">{{ ui.icon("alert_triangle", "lg") }}</span>
+            <div>
+                <strong class="pt-pipeline-callout__title">{{ awaiting_review }} Statement{{ '' if awaiting_review == 1 else 's' }} Require Operator Review</strong>
+                <span class="pt-pipeline-callout__desc">
+                    Parser extractions found unmatched institutions, unregistered accounts, or OCR doubts requiring review before approval.
+                </span>
+            </div>
+        </div>
+        <div class="pt-pipeline-callout__actions">
+            <a href="/statements?status=review" class="pt-btn pt-btn--warning pt-btn--sm">
+                <span>Review {{ awaiting_review }} Waiting Statement{{ '' if awaiting_review == 1 else 's' }} &rarr;</span>
+            </a>
+        </div>
+    </div>
+    {% endif %}
+
+    {# ---- Workspace: Full-width Table by default, Split with Inspector when selected ---- #}
+    <div class="pt-statements-workspace{% if selected %} pt-statements-workspace--split{% endif %}">
+
+        {# ---- Column 1: Main Statement Register ---------------------------- #}
+        <div class="pt-statements-main pt-stack-3">
+            <div class="pt-statements-toolbar">
+                <form class="pt-statements-toolbar__search pt-flex pt-items-center pt-gap-2" method="get" action="/statements" role="search">
+                    {% if status and status != 'all' %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
+                    {% if sort and sort != 'received' %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
+                    {% if per_page and per_page != '25' %}<input type="hidden" name="per_page" value="{{ per_page }}">{% endif %}
+                    {{ ui.search_field("q", "Search statements by filename, servicer, or account", value=q,
+                                       placeholder="Search statements by filename, servicer, or account…", cls="pt-flex-1",
+                                       hidden_label=true) }}
+                    {{ ui.btn("Search", variant="secondary", size="sm", type="submit") }}
+                    {% if is_searching %}
+                    {% set clear_params = [] %}
+                    {% if status and status != 'all' %}{% set _ = clear_params.append("status=" ~ status) %}{% endif %}
+                    {% if per_page and per_page != '25' %}{% set _ = clear_params.append("per_page=" ~ per_page) %}{% endif %}
+                    {% set clear_href = "/statements" ~ (("?" ~ clear_params | join("&")) if clear_params else "") %}
+                    {{ ui.btn("Clear", variant="ghost", size="sm", href=clear_href) }}
+                    {% endif %}
+                </form>
+
+                <div class="pt-flex pt-items-center pt-gap-3">
+                    <span class="pt-fs-caption pt-text-muted">Showing {{ start_item }}–{{ end_item }} of {{ total_items }} statement{{ '' if total_items == 1 else 's' }}</span>
                 </div>
-                <span class="pt-fs-caption pt-text-muted">{{ rows | length }} of {{ total_documents }} statements</span>
             </div>
 
             {% if rows %}
-            {{ ui.table_open(compact=true, label="Statements and their extractions") }}
+            {{ ui.table_open(compact=true, label="Statements and their extractions", cls="pt-statement-table") }}
                 <thead>
                     <tr>
                         {{ ui.th('<span class="pt-sr-only">Details</span>', cls="pt-table__pick") }}
-                        {{ ui.th("Document") }}
-                        {{ ui.th("Type") }}
-                        {{ ui.th("State") }}
+                        {{ ui.th("Document & Account", sort_href=sort_urls.name, sort_active=(sort == 'name'), sort_dir=('asc' if sort == 'name' else 'none')) }}
+                        {{ ui.th("Type", sort_href=sort_urls.type, sort_active=(sort == 'type'), sort_dir=('asc' if sort == 'type' else 'none')) }}
+                        {{ ui.th("Amount / Due", num=true, sort_href=sort_urls.amount, sort_active=(sort == 'amount'), sort_dir=('desc' if sort == 'amount' else 'none')) }}
+                        {{ ui.th("Received", sort_href=sort_urls.received, sort_active=(sort == 'received'), sort_dir=('desc' if sort == 'received' else 'none')) }}
+                        {{ ui.th("Pipeline Stage") }}
                         {{ ui.th('<span class="pt-sr-only">Actions</span>') }}
                     </tr>
                 </thead>
@@ -97,20 +186,40 @@
                             </a>
                         </td>
                         <td class="pt-table__name">
-                            <a class="pt-table__primary" href="{{ row.select_href }}"
-                               title="{{ row.document.original_filename }}">{{ row.document.original_filename }}</a>
-                            <span class="pt-table__sub" title="Uploaded {{ row.document.uploaded_at | format_date }}">
-                                {{ row.document.uploaded_at | format_date }}
-                                {% if row.data.get('servicer_name') %} · {{ row.data.get('servicer_name') }}{% endif %}
-                                {% if row.data.get('institution_name') %} · {{ row.data.get('institution_name') }}{% endif %}
-                                {% if row.data.get('loan_number') %} · loan {{ row.data.get('loan_number') }}{% endif %}
-                                {% if row.data.get('account_last4') %} · ending {{ row.data.get('account_last4') }}{% endif %}
+                            <div class="pt-flex pt-items-center pt-gap-2">
+                                <span class="pt-text-muted">
+                                    {% if row.data.get('statement_type') == 'CHECKING' %}
+                                        {{ ui.icon("bank", "sm") }}
+                                    {% elif row.data.get('statement_type') == 'CREDIT_CARD' %}
+                                        {{ ui.icon("card", "sm") }}
+                                    {% elif row.data.get('statement_type') == 'MORTGAGE_STATEMENT' %}
+                                        {{ ui.icon("home", "sm") }}
+                                    {% else %}
+                                        {{ ui.icon("file-text", "sm") }}
+                                    {% endif %}
+                                </span>
+                                <a class="pt-table__primary" href="{{ row.select_href }}"
+                                   title="{{ row.document.original_filename }}">{{ row.document.original_filename }}</a>
+                            </div>
+                            <span class="pt-table__sub">
+                                {% if row.data.get('institution_name') %}{{ row.data.get('institution_name') }}{% elif row.data.get('servicer_name') %}{{ row.data.get('servicer_name') }}{% else %}Statement{% endif %}
+                                {% if row.data.get('account_last4') %} · ending {{ row.data.get('account_last4') }}{% elif row.data.get('loan_number') %} · loan {{ row.data.get('loan_number') }}{% endif %}
+                                · <code class="pt-fs-caption pt-text-muted">{{ row.document.file_sha256[:8] }}…</code>
                             </span>
                         </td>
                         <td>{{ ui.badge(row.type_label, variant="neutral", upper=true) }}</td>
+                        <td class="pt-table__num">
+                            {% if row.is_bank and row.money.closing_balance %}
+                                <span class="pt-amount pt-amount--neutral" title="Closing balance">${{ row.money.closing_balance }}</span>
+                            {% elif not row.is_bank and row.money.total_due %}
+                                <span class="pt-amount pt-amount--neutral" title="Total due">${{ row.money.total_due }}</span>
+                            {% else %}
+                                <span class="pt-amount pt-amount--unavailable" title="No amount extracted">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="pt-table__date">{{ row.document.uploaded_at | format_date }}</td>
                         <td>
-                            {# What was read from the document, and whether it was signed off. The
-                               two are different facts and neither implies the other. #}
+                            {# What was read from the document, and whether it was signed off. #}
                             <div class="pt-status-cluster">
                                 {% if row.status == 'VALIDATED' %}
                                     {{ ui.badge("VALIDATED", variant="success", upper=true) }}
@@ -129,13 +238,20 @@
                             <span class="pt-table__sub" title="Imported as {{ row.statement.id }}">
                                 Imported {{ row.statement.statement_type }} · {{ row.statement.statement_date | format_date }}
                             </span>
+                            {% elif row.reasons and row.status == 'NEEDS_REVIEW' %}
+                            <span class="pt-table__sub pt-text-warning" title="{{ row.reasons[0] }}">
+                                {{ row.reasons[0] | truncate(35) }}
+                            </span>
                             {% endif %}
                         </td>
                         <td class="pt-table__actions">
                             <div class="pt-flex pt-items-center pt-gap-2 pt-justify-end">
                                 {% if not extraction %}
-                                    <span class="pt-amount pt-amount--unavailable"
-                                          title="Nothing was staged for this document.">—</span>
+                                    <span class="pt-badge pt-badge--neutral pt-badge--upper pt-badge--mono">NO EXTRACTION</span>
+                                    <form method="post" action="/statements/documents/{{ row.document.id }}/reprocess">
+                                        {{ csrf_field() }}
+                                        {{ ui.btn("Retry parse", variant="ghost", size="sm", type="submit") }}
+                                    </form>
                                 {% elif row.action == 'import' %}
                                     {{ ui.btn("Import", variant="primary", size="sm", type="button",
                                               attrs='data-modal-open="import-' ~ extraction.id ~ '"') }}
@@ -150,20 +266,18 @@
                                     {{ ui.btn("Review & correct", variant="primary", size="sm", type="button",
                                               attrs='data-modal-open="review-' ~ extraction.id ~ '"') }}
                                 {% else %}
-                                    <span class="pt-amount pt-amount--unavailable"
-                                          title="Imported; nothing left to do with this extraction.">—</span>
+                                    {{ ui.badge("IMPORTED", variant="info", upper=true) }}
                                 {% endif %}
 
-                                {# The row's other destinations, disclosed so that the table stays one
-                                   decision per row: the next step above, the files behind this menu. #}
                                 <details class="pt-menu">
                                     <summary class="pt-menu__trigger" aria-label="More for {{ row.document.original_filename }}">
                                         {{ ui.icon("more-vertical", "sm") }}
                                     </summary>
                                     <div class="pt-menu__list">
-                                        <a class="pt-menu__item" href="/documents/{{ row.document.id }}/view" target="_blank" rel="noopener noreferrer">Open</a>
-                                        <a class="pt-menu__item" href="/documents/{{ row.document.id }}/download">Download</a>
-                                        <a class="pt-menu__item" href="{{ row.select_href }}">Extraction</a>
+                                        <a class="pt-menu__item" href="/documents/{{ row.document.id }}/view" target="_blank" rel="noopener noreferrer">Open PDF</a>
+                                        <a class="pt-menu__item" href="/documents/{{ row.document.id }}/download">Download PDF</a>
+                                        <a class="pt-menu__item" href="{{ row.select_href }}">Inspect Figures</a>
+                                        <a class="pt-menu__item" href="/documents?doc={{ row.document.id }}">View in Vault</a>
                                     </div>
                                 </details>
                             </div>
@@ -172,48 +286,81 @@
                     {% endfor %}
                 </tbody>
             {{ ui.table_close() }}
+            {% if total_pages > 1 %}
+            {{ ui.pagination(page, total_pages, start_item, end_item, total_items, prev_url, next_url) }}
+            {% endif %}
+            {% elif is_searching %}
+            {{ ui.empty_state(
+                "No statements match your search",
+                "No statement matches “" ~ q ~ "”. Clear the search to see all statements in this stage.",
+                action_label="Clear search",
+                action_href="/statements" ~ (("?status=" ~ status) if status and status != 'all' else ""),
+                icon_name="search"
+            ) }}
             {% elif status != 'all' %}
             {{ ui.empty_state(
-                "Nothing in this facet",
-                "The queue holds nothing in that state. Choose All in the rail to see every statement this portfolio holds."
+                "No statements in this stage",
+                "The pipeline holds nothing in this stage right now.",
+                action_label="Show all statements",
+                action_href="/statements",
+                icon_name="inbox"
             ) }}
             {% else %}
             {{ ui.empty_state(
                 "No statements in this portfolio yet",
-                "Use Upload a statement; the file is added to this portfolio's vault and matched against the accounts already registered for it."
+                "Upload your first monthly bank or mortgage statement to start the ingestion pipeline.",
+                action_label="Upload a statement",
+                action_attrs='data-modal-open="upload-statement"',
+                icon_name="upload"
             ) }}
             {% endif %}
-            {{ ui.section_close() }}
         </div>
 
-        {# ---- The right: the statement you chose. ------------------------------- #}
+        {# ---- Column 2: Document Inspector (Only shown when a document is selected) ---- #}
         {% if selected %}
-        <div class="pt-explorer__aside pt-inspector">
+        <div class="pt-statements-inspector pt-inspector">
             <div class="pt-inspector__head">
-                <span class="pt-inspector__glyph">{{ ui.icon("file-text", "md") }}</span>
+                <span class="pt-inspector__glyph">{{ ui.icon("inbox", "md") }}</span>
                 <span class="pt-inspector__name" title="{{ selected.document.original_filename }}">{{ selected.document.original_filename }}</span>
                 <a class="pt-inspector__close pt-btn pt-btn--ghost pt-btn--sm" href="{{ inspector_close_href }}" aria-label="Close details">{{ ui.icon("close", "sm") }}</a>
             </div>
             {{ ui.tabs(inspector_tabs, active_tab) }}
             <div class="pt-inspector__body">
+                <div class="pt-action-tiles">
+                    {% if selected.extraction and selected.action and selected.action != 'done' %}
+                        {% if selected.action == 'import' %}
+                            {{ ui.action_tile("Import", "check_circle", variant="success",
+                                              attrs='data-modal-open="import-' ~ selected.extraction.id ~ '"') }}
+                        {% elif selected.action == 'approve' %}
+                            {{ ui.action_tile("Approve", "check", variant="primary",
+                                              attrs='data-modal-open="approve-' ~ selected.extraction.id ~ '"') }}
+                        {% else %}
+                            {{ ui.action_tile("Review", "alert_triangle", variant="warning",
+                                              attrs='data-modal-open="review-' ~ selected.extraction.id ~ '"') }}
+                        {% endif %}
+                    {% endif %}
+                    {{ ui.action_tile("Open", "eye", "/documents/" ~ selected.document.id ~ "/view",
+                                      attrs='target="_blank" rel="noopener noreferrer"') }}
+                    {{ ui.action_tile("Download", "download", "/documents/" ~ selected.document.id ~ "/download") }}
+                    {{ ui.action_tile("Vault", "folder", "/documents?doc=" ~ selected.document.id) }}
+                </div>
+
                 {% if selected.reasons %}
-                {# Why this one needs a person: the reasons are the point of the queue, and a
-                   table cell is the wrong place for a paragraph. The row states the verdict;
-                   the inspector states the case for it. #}
-                <div class="pt-stack-2">
-                    <h3 class="pt-section__title">Why it needs review</h3>
-                    <ul class="pt-stack-1 pt-fs-supporting pt-text-secondary">
-                        {% for reason in selected.reasons %}<li>{{ reason }}</li>{% endfor %}
-                    </ul>
+                <div class="pt-alert pt-alert--warning" role="alert">
+                    <span class="pt-alert__icon">{{ ui.icon("alert_triangle", "md") }}</span>
+                    <div class="pt-alert__body">
+                        <strong class="pt-alert__title">Why it needs review</strong>
+                        <ul class="pt-stack-1 pt-fs-caption pt-text-secondary">
+                            {% for reason in selected.reasons %}<li>{{ reason }}</li>{% endfor %}
+                        </ul>
+                    </div>
                 </div>
                 {% endif %}
+
                 {% if active_tab == 'figures' %}
                     {% if selected.extraction %}
                     {{ ui.statement_open() }}
                         {{ ui.statement_row("Statement", selected.type_label) }}
-                        {# Which account or loan it matched is a fact about this statement, and
-                           a table column is the wrong place for it: it is one value that can be
-                           long, in a list whose job is to be scannable. #}
                         {% if selected.account %}
                         {{ ui.statement_row("Matched account", selected.account.account_name ~ " · " ~ selected.account.account_number_masked) }}
                         {% elif selected.loan %}
@@ -221,7 +368,6 @@
                         {% else %}
                         {{ ui.statement_row("Matched account", "—") }}
                         {% endif %}
-                        {# Only what was actually read: an absent figure is not a zero. #}
                         {% for field, label in money_labels.items() %}
                         {% if selected.money.get(field) %}
                         {{ ui.statement_row(label, "$" ~ selected.money[field]) }}
@@ -253,7 +399,7 @@
                 {% else %}
                     {% if selected.can_preview %}
                     <div class="pt-preview">
-                        <iframe class="pt-preview__frame" src="/documents/{{ selected.document.id }}/view"
+                        <iframe class="pt-preview__frame" src="/documents/{{ selected.document.id }}/view#view=FitH"
                                 title="Preview of {{ selected.document.original_filename }}"></iframe>
                     </div>
                     {% else %}
@@ -263,45 +409,28 @@
                     {% endif %}
                 {% endif %}
 
-                <div class="pt-action-tiles">
-                    {% if selected.extraction and selected.action and selected.action != 'done' %}
-                    {# The row's next step, repeated here because the panel covers the row that
-                       carries it. Same dialog, same endpoint: it is one decision, reachable from
-                       either place. #}
-                    <button class="pt-action-tile" type="button"
-                            data-modal-open="{% if selected.action == 'import' %}import-{% elif selected.action == 'approve' %}approve-{% else %}review-{% endif %}{{ selected.extraction.id }}">
-                        {{ ui.icon("check", "md") }}
-                        <span>{% if selected.action == 'import' %}Import{% elif selected.action == 'approve' %}Approve{% else %}Review{% endif %}</span>
-                    </button>
-                    {% endif %}
-                    {{ ui.action_tile("Open", "eye", "/documents/" ~ selected.document.id ~ "/view",
-                                      'target="_blank" rel="noopener noreferrer"') }}
-                    {{ ui.action_tile("Download", "download", "/documents/" ~ selected.document.id ~ "/download") }}
-                    <a class="pt-action-tile" href="{{ inspector_close_href }}">
-                        {{ ui.icon("close", "md") }}
-                        <span>Close</span>
-                    </a>
-                </div>
-
                 <div class="pt-stack-2">
-                    <h3 class="pt-section__title">Tags</h3>
+                    <h3 class="pt-section__title">Tags & Classification</h3>
                     <div class="pt-inspector__tags">
                         {{ ui.chip(selected.type_label) }}
                         {{ ui.chip(selected.status_label) }}
                         {% if selected.approval_status %}{{ ui.chip(selected.approval_status) }}{% endif %}
                         {% if selected.statement %}{{ ui.chip("Imported") }}{% endif %}
+                        {% if selected.account %}{{ ui.chip(selected.account.account_name) }}{% endif %}
+                        {% if selected.loan %}{{ ui.chip("Loan " ~ selected.loan.loan_number) }}{% endif %}
                     </div>
                 </div>
             </div>
         </div>
         {% endif %}
+
     </div>
 </div>
 
 {# --- The dialogs: one next step, one dialog ------------------------------ #}
 {# The forms post to the same endpoints as before, so the behaviour is unchanged —
    only the address is: a dialog opens on the row you chose, and nothing else moves. #}
-{% for row in rows %}
+{% for row in dialog_rows %}
 {% set extraction = row.extraction %}
 {% if extraction and row.action != 'done' %}
 
@@ -327,7 +456,7 @@
                                  value="true", id="register-" ~ extraction.id) }}
             {% endif %}
 
-            <div class="pt-grid pt-gap-3">
+            <div class="pt-form-grid">
                 {% if row.data.get('statement_type') in ['CHECKING', 'CREDIT_CARD'] %}
                     {{ ui.text_field("institution_name", "Institution", value=(row.data.get('institution_name') or ""), id="inst-" ~ extraction.id) }}
                     {{ ui.text_field("account_last4", "Account last four", value=(row.data.get('account_last4') or ""), id="last4-" ~ extraction.id) }}
@@ -458,26 +587,238 @@
 
 {% endfor %}
 
-{# The uploader is a dialog, not furniture: this screen is a queue, and a form that is
-   always open spends the top of it saying what one button says. #}
+{% if approved_ready %}
 {{ ui.modal_open(
-    "upload-statement",
-    "Upload a statement",
-    "PDF only, up to " ~ max_upload_mb ~ " MB. The file is stored in this portfolio's vault and matched against its registered accounts.",
+    "import-approved-modal",
+    "Import all approved statements?",
+    "Each statement becomes the authoritative record for its loan or account and period. Duplicate periods are skipped, and nothing is posted to the ledger.",
     size="sm"
 ) }}
-<form method="POST" action="/statements/upload" enctype="multipart/form-data" class="pt-modal__form">
+<form method="POST" action="/statements/import-approved" class="pt-modal__form">
     {{ csrf_field() }}
+    <input type="hidden" name="status" value="{{ status }}">
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <input type="hidden" name="q" value="{{ q }}">
+    <input type="hidden" name="page" value="{{ page }}">
+    <input type="hidden" name="per_page" value="{{ per_page }}">
     <div class="pt-modal__body">
-        <div class="pt-field">
-            <label class="pt-field__label" for="statement-file">Statement PDF</label>
-            <input type="file" id="statement-file" name="file" accept="application/pdf,.pdf" required>
+        <div class="pt-stack pt-gap-3">
+            {{ ui.statement_open() }}
+                {{ ui.statement_row("Approved statements", approved_ready) }}
+                {{ ui.statement_row("Needs review (excluded)", awaiting_review) }}
+            {{ ui.statement_close() }}
+            {{ ui.alert(
+                variant="warning",
+                title="Duplicate periods are skipped",
+                text="If two statements cover the same loan and statement date, the newer upload is imported and the other is left unimported. Importing does not post a payment to the ledger."
+            ) }}
         </div>
     </div>
     <div class="pt-modal__footer">
         {{ ui.btn("Cancel", variant="secondary", size="sm", type="button", attrs="data-modal-close") }}
-        {{ ui.btn("Upload & extract", variant="primary", size="sm", type="submit", icon_name="upload") }}
+        {{ ui.btn("Import " ~ approved_ready ~ " statement" ~ ('' if approved_ready == 1 else 's'),
+                  variant="primary", size="sm", type="submit", icon_name="download") }}
     </div>
 </form>
 {{ ui.modal_close() }}
+{% endif %}
+
+{% if ready_to_approve %}
+{{ ui.modal_open(
+    "approve-ready-modal",
+    "Approve all ready statements?",
+    "This records that the extracted figures have been checked. It does not import them or write to the ledger.",
+    size="sm"
+) }}
+<form method="POST" action="/statements/approve-ready" class="pt-modal__form">
+    {{ csrf_field() }}
+    <input type="hidden" name="status" value="{{ status }}">
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <input type="hidden" name="q" value="{{ q }}">
+    <input type="hidden" name="page" value="{{ page }}">
+    <input type="hidden" name="per_page" value="{{ per_page }}">
+    <div class="pt-modal__body">
+        <div class="pt-stack pt-gap-3">
+            {{ ui.statement_open() }}
+                {{ ui.statement_row("Validated statements", ready_to_approve) }}
+                {{ ui.statement_row("Needs review (excluded)", awaiting_review) }}
+            {{ ui.statement_close() }}
+            {{ ui.alert(
+                variant="info",
+                title="Approval is not import",
+                text="Approved statements move to Ready to import. Each statement is still imported separately, and a duplicate loan period is refused."
+            ) }}
+        </div>
+    </div>
+    <div class="pt-modal__footer">
+        {{ ui.btn("Cancel", variant="secondary", size="sm", type="button", attrs="data-modal-close") }}
+        {{ ui.btn("Approve " ~ ready_to_approve ~ " statement" ~ ('' if ready_to_approve == 1 else 's'),
+                  variant="primary", size="sm", type="submit", icon_name="check") }}
+    </div>
+</form>
+{{ ui.modal_close() }}
+{% endif %}
+
+{# The uploader is a dialog, not furniture: this screen is a queue, and a form that is
+   always open spends the top of it saying what one button says. #}
+{{ ui.modal_open(
+    "upload-statement",
+    "Upload statements",
+    "A PDF statement or one ZIP of PDF statements, up to " ~ max_upload_mb ~ " MB. Files are stored in this portfolio's vault and matched against its registered accounts.",
+    size="md"
+) }}
+<form method="POST" action="/statements/upload" enctype="multipart/form-data" class="pt-modal__form" data-upload-form>
+    {{ csrf_field() }}
+    <div class="pt-modal__body">
+        <div class="pt-stack pt-gap-4">
+            <div class="pt-dropzone" data-dropzone>
+                <input type="file" name="file" id="statement-file" accept="application/pdf,.pdf,.zip,application/zip" required class="pt-dropzone__input" data-dropzone-input>
+                <span class="pt-dropzone__icon">{{ ui.icon("upload", "lg") }}</span>
+                <strong class="pt-dropzone__title" data-dropzone-title>Drag &amp; drop a statement PDF or ZIP here</strong>
+                <span class="pt-dropzone__hint" data-dropzone-hint>or <span class="pt-btn pt-btn--secondary pt-btn--xs">Browse from device</span></span>
+                <span class="pt-fs-caption pt-text-muted" data-dropzone-meta>PDF or ZIP · up to {{ max_upload_mb }} MB</span>
+            </div>
+            <div class="pt-filelist-wrap" data-filelist-wrap hidden>
+                <div class="pt-filelist" data-filelist></div>
+            </div>
+            <div class="pt-upload-indicator" data-upload-indicator hidden>
+                <div class="pt-upload-progress">
+                    <div class="pt-flex pt-items-center pt-justify-between">
+                        <span class="pt-fs-caption pt-text-muted" data-upload-status>Uploading…</span>
+                        <strong class="pt-num" data-upload-percent>0%</strong>
+                    </div>
+                    {{ ui.progress(0, "Upload progress") }}
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="pt-modal__footer">
+        {{ ui.btn("Cancel", variant="secondary", size="sm", type="button", attrs="data-modal-close") }}
+        {{ ui.btn("Upload & process", variant="primary", size="sm", type="submit", icon_name="upload", attrs="data-upload-submit") }}
+    </div>
+</form>
+{{ ui.modal_close() }}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const modal = document.getElementById("upload-statement");
+    if (!modal) return;
+
+    const dropzone = modal.querySelector("[data-dropzone]");
+    const input = modal.querySelector('input[type="file"]');
+    const titleEl = modal.querySelector("[data-dropzone-title]");
+    const hintEl = modal.querySelector("[data-dropzone-hint]");
+    const filelistWrap = modal.querySelector("[data-filelist-wrap]");
+    const filelistEl = modal.querySelector("[data-filelist]");
+
+    if (!input || !dropzone) return;
+
+    const maxMb = {{ max_upload_mb }};
+    const maxBytes = maxMb * 1024 * 1024;
+
+    const formatSize = (bytes) => {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return Math.ceil(bytes / 1024) + " KB";
+        const mb = bytes / (1024 * 1024);
+        return (Math.round(mb * 10) / 10).toFixed(1) + " MB";
+    };
+
+    const render = () => {
+        const file = input.files && input.files[0];
+        if (!file) {
+            if (filelistWrap) filelistWrap.hidden = true;
+            dropzone.classList.remove("has-files");
+            if (titleEl) titleEl.textContent = "Drag & drop a statement PDF or ZIP here";
+            if (hintEl) hintEl.innerHTML = 'or <span class="pt-btn pt-btn--secondary pt-btn--xs">Browse from device</span>';
+            if (filelistEl) filelistEl.innerHTML = "";
+            return;
+        }
+
+        if (filelistWrap) filelistWrap.hidden = false;
+        dropzone.classList.add("has-files");
+        if (titleEl) titleEl.textContent = "Drop another file to replace";
+        if (hintEl) hintEl.innerHTML = 'or <span class="pt-btn pt-btn--secondary pt-btn--xs">Choose another file</span>';
+
+        if (!filelistEl) return;
+        const isOversized = file.size > maxBytes;
+        const isPdf = /\.pdf$/i.test(file.name);
+        const isZip = /\.zip$/i.test(file.name);
+        const isSupported = isPdf || isZip;
+        const iconSvg = '<svg class="pt-icon pt-icon--sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>';
+        const closeSvg = '<svg class="pt-icon pt-icon--sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 18L18 6M6 6l12 12"/></svg>';
+
+        filelistEl.innerHTML = "";
+        const row = document.createElement("div");
+        row.className = "pt-filelist__row" + (isOversized ? " pt-filelist__row--error" : "");
+        row.innerHTML = `
+            <div class="pt-filelist__lead">
+                <span class="pt-filelist__icon">${iconSvg}</span>
+                <span class="pt-filelist__name" title="${file.name}">${file.name}</span>
+            </div>
+            <div class="pt-filelist__actions">
+                ${isOversized ? `<span class="pt-badge pt-badge--error pt-badge--pill">Exceeds ${maxMb}MB</span>` : (!isSupported ? '<span class="pt-badge pt-badge--warning pt-badge--pill">Not a PDF or ZIP</span>' : '')}
+                <span class="pt-filelist__size">${formatSize(file.size)}</span>
+                <button type="button" class="pt-filelist__remove" aria-label="Remove statement" data-remove-statement>
+                    ${closeSvg}
+                </button>
+            </div>
+        `;
+        filelistEl.appendChild(row);
+    };
+
+    input.addEventListener("change", render);
+
+    if (filelistEl) {
+        filelistEl.addEventListener("click", (e) => {
+            if (e.target.closest("[data-remove-statement]")) {
+                e.preventDefault();
+                input.value = "";
+                render();
+            }
+        });
+    }
+
+    ["dragenter", "dragover"].forEach((event) => {
+        dropzone.addEventListener(event, (e) => {
+            e.preventDefault();
+            dropzone.classList.add("pt-dropzone--over");
+        });
+    });
+
+    ["dragleave", "drop"].forEach((event) => {
+        dropzone.addEventListener(event, () => dropzone.classList.remove("pt-dropzone--over"));
+    });
+
+    dropzone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        if (e.dataTransfer && e.dataTransfer.files.length) {
+            input.files = e.dataTransfer.files;
+            render();
+        }
+    });
+
+    if (window.PT && window.PT.openModal) {
+        const openUploader = () => window.PT.openModal("upload-statement");
+        const inDropzone = (target) => target instanceof Node && dropzone.contains(target);
+        ["dragenter", "dragover"].forEach((event) => {
+            window.addEventListener(event, (e) => {
+                if (inDropzone(e.target) || !modal.hidden) return;
+                e.preventDefault();
+                openUploader();
+            });
+        });
+        window.addEventListener("drop", (e) => {
+            if (inDropzone(e.target)) return;
+            e.preventDefault();
+            openUploader();
+            if (e.dataTransfer && e.dataTransfer.files.length) {
+                input.files = e.dataTransfer.files;
+                render();
+            }
+        });
+    }
+})();
+</script>
 {% endblock %}

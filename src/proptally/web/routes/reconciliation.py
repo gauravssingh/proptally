@@ -9,11 +9,12 @@ straight through to the domain posting service as a second line of defence.
 import math
 from typing import Optional
 from uuid import uuid4
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
 
-from proptally.core.exceptions import GovernanceAuthorizationError
+from proptally.core.exceptions import GovernanceAuthorizationError, InvalidSplitSumError
 from proptally.db.models import (
     FinancialAccount,
     Property,
@@ -27,14 +28,14 @@ from proptally.domain.transactions.policy import (
     classification_status_for,
     evaluate_posting_policy,
 )
+from proptally.domain.transactions.rent import bulk_apply_rent_payments
 from proptally.domain.transactions.splits import (
     SplitItem,
     apply_transaction_splits,
     post_transaction_to_ledger,
 )
 from proptally.domain.transactions.suggest import suggest_split_for_transaction
-from proptally.web.auth import validate_authorizations
-from proptally.web.auth import posting_actor_kwargs
+from proptally.web.auth import posting_actor_kwargs, validate_authorizations
 
 
 def get_reconciliation_router(templates, get_session_dep):
@@ -66,12 +67,19 @@ def get_reconciliation_router(templates, get_session_dep):
         accounts_map = {a.id: a for a in session.exec(select(FinancialAccount)).all()}
         vendor_rules = session.exec(select(VendorRule).where(VendorRule.is_active == True)).all()
         properties = session.exec(select(Property).where(Property.is_active == True)).all()
+        state_ids = [state.transaction_id for state in unallocated_states]
+        transactions_map = {
+            txn.id: txn
+            for txn in session.exec(
+                select(Transaction).where(Transaction.id.in_(state_ids))
+            ).all()
+        } if state_ids else {}
 
         all_review_items = []
         vendor_match_counts = {}
 
         for state in unallocated_states:
-            txn = session.get(Transaction, state.transaction_id)
+            txn = transactions_map.get(state.transaction_id)
             if not txn:
                 continue
 
@@ -297,6 +305,31 @@ def get_reconciliation_router(templates, get_session_dep):
 
         return RedirectResponse(url="/reconciliation", status_code=303)
 
+    @router.post("/reconciliation/bulk-rent")
+    def bulk_classify_rent(
+        property_id: str = Form(...),
+        tenant_name: str = Form(...),
+        dry_run: bool = Form(False),
+        session: Session = Depends(get_session_dep),
+    ):
+        """Classify and post rent inflows for one tenant and rental door."""
+        property_id = property_id.strip()
+        tenant_name = tenant_name.strip()
+        if not property_id or not tenant_name:
+            raise HTTPException(status_code=400, detail="Choose a rental property and enter the tenant name.")
+        prop = session.get(Property, property_id)
+        if prop is None or prop.property_type != "RENTAL_INVESTMENT":
+            raise HTTPException(status_code=400, detail="Choose an active rental property.")
+
+        report = bulk_apply_rent_payments(
+            session,
+            property_id=property_id,
+            tenant_name=tenant_name,
+            dry_run=dry_run,
+        )
+        target = "/reconciliation" if dry_run else f"/reconciliation?applied={len(report.applied)}"
+        return RedirectResponse(url=target, status_code=303)
+
     @router.post("/reconciliation/split")
     def split_review_item(
         transaction_id: str = Form(...),
@@ -399,7 +432,21 @@ def get_reconciliation_router(templates, get_session_dep):
         user_attested_cpa_review: bool = Form(False),
         session: Session = Depends(get_session_dep),
     ):
-        """Batch-classifies and posts all unallocated transactions matching a vendor pattern."""
+        """Classifies matching transactions; posts only when no gate is required.
+
+        Requirement flags on a rule are policy, never authorization. A rule that
+        needs CBD-1/CBD-2 allocates the transaction and leaves it UNPOSTED so a
+        human can supply the actual confirmation.
+        """
+        rule = session.exec(
+            select(VendorRule).where(
+                VendorRule.pattern == vendor_pattern.strip().upper(),
+                VendorRule.is_active == True,  # noqa: E712
+            )
+        ).first()
+        required_client = bool(rule.requires_client_confirmation) if rule else False
+        required_cpa = bool(rule.requires_cpa_review) if rule else False
+
         unallocated_states = session.exec(
             select(TransactionProcessingState)
             .where(
@@ -423,19 +470,34 @@ def get_reconciliation_router(templates, get_session_dep):
                         property_id=prop_target,
                         category=category,
                         amount_cents=abs(txn.amount_cents),
-                        tax_review_status=classification_status_for(*validate_authorizations(
-                    client_confirmed, user_attested_cpa_review)),
+                        tax_review_status=classification_status_for(
+                            client_confirmed, user_attested_cpa_review
+                        ),
                         notes=f"Batch Vendor Rule: {vendor_pattern}",
                     )
                 ]
 
+                if required_client or required_cpa:
+                    # Apply the allocation, record the gates, and leave posting
+                    # to an explicit, attributable human action.
+                    txn.requires_client_confirmation = (
+                        txn.requires_client_confirmation or required_client
+                    )
+                    txn.requires_cpa_review = txn.requires_cpa_review or required_cpa
+                    session.add(txn)
+                    apply_transaction_splits(session, txn.id, splits)
+                    applied_count += 1
+                    continue
+
                 policy = evaluate_posting_policy(session, txn, splits)
                 try:
                     assert_posting_authorized(
-                        policy, client_confirmed=client_confirmed, user_attested_cpa_review=user_attested_cpa_review
+                        policy, client_confirmed=client_confirmed,
+                        user_attested_cpa_review=user_attested_cpa_review,
                     )
                 except GovernanceAuthorizationError:
-                    # Skip transactions that fail authorization gates rather than aborting batch
+                    # Skip transactions that fail authorization gates rather
+                    # than aborting the batch.
                     continue
 
                 apply_transaction_splits(session, txn.id, splits)
@@ -448,7 +510,7 @@ def get_reconciliation_router(templates, get_session_dep):
                         **posting_actor_kwargs(),
                     )
                     applied_count += 1
-                except Exception:
+                except (GovernanceAuthorizationError, InvalidSplitSumError):
                     continue
 
         return RedirectResponse(url=f"/reconciliation?applied={applied_count}", status_code=303)
@@ -492,8 +554,9 @@ def get_reconciliation_router(templates, get_session_dep):
                 vendor_pattern=clean_pattern,
                 category=default_category,
                 property_id=prop_target,
-                client_confirmed=requires_client_confirmation,
-                user_attested_cpa_review=requires_cpa_review,
+                # The rule's requirements are policy, not a client/CPA grant.
+                client_confirmed=False,
+                user_attested_cpa_review=False,
                 session=session,
             )
 

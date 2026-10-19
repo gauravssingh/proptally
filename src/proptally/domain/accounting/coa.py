@@ -66,6 +66,7 @@ HAZARD_INSURANCE_CODE = 5030
 REPAIRS_CODE = 5040
 SUPPLIES_CODE = 5050
 SNOW_LANDSCAPING_CODE = 5060
+UTILITIES_CODE = 5065
 BANK_FEES_CODE = 5070
 MANAGEMENT_CODE = 5072
 COMMISSIONS_CODE = 5075
@@ -84,6 +85,7 @@ OPEX_CODES: Tuple[int, ...] = (
     REPAIRS_CODE,
     SUPPLIES_CODE,
     SNOW_LANDSCAPING_CODE,
+    UTILITIES_CODE,
     BANK_FEES_CODE,
     MANAGEMENT_CODE,
     COMMISSIONS_CODE,
@@ -111,6 +113,7 @@ STANDARD_ACCOUNTS: List[Dict[str, object]] = [
     {"code": REPAIRS_CODE, "name": "Repairs & Maintenance Expense", "account_type": "EXPENSE", "normal_balance": "DEBIT"},
     {"code": SUPPLIES_CODE, "name": "Supplies Expense", "account_type": "EXPENSE", "normal_balance": "DEBIT"},
     {"code": SNOW_LANDSCAPING_CODE, "name": "Snow Removal & Landscaping", "account_type": "EXPENSE", "normal_balance": "DEBIT"},
+    {"code": UTILITIES_CODE, "name": "Utilities Expense (Line 17)", "account_type": "EXPENSE", "normal_balance": "DEBIT"},
     {"code": BANK_FEES_CODE, "name": "Bank Service Charges", "account_type": "EXPENSE", "normal_balance": "DEBIT"},
     {"code": MANAGEMENT_CODE, "name": "Property Management Fees (Line 11)", "account_type": "EXPENSE", "normal_balance": "DEBIT"},
     {"code": COMMISSIONS_CODE, "name": "Realtor Commissions & Tenant Placement (Line 8)", "account_type": "EXPENSE", "normal_balance": "DEBIT"},
@@ -170,11 +173,6 @@ def seed_standard_accounts(session: Session) -> None:
         if existing is None:
             session.add(LedgerAccount(**spec))
     session.flush()
-
-
-def _occupied_codes(session: Session) -> set:
-    """Every ledger code already in use, regardless of class."""
-    return {row for row in session.exec(select(LedgerAccount.code)).all()}
 
 
 def _ledger_account_types(session: Session) -> dict:

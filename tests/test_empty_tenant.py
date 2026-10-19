@@ -18,10 +18,10 @@ this module is where that is proven rather than assumed:
 from sqlmodel import Session, select
 
 from proptally.db.models import (
-    JournalEntryLine,
     Document,
     FinancialAccount,
     JournalEntry,
+    JournalEntryLine,
     LedgerAccount,
     LoanAccount,
     Property,
@@ -242,7 +242,7 @@ def test_the_first_workflow_produces_a_reportable_portfolio(owner):
 
         workpaper = generate_schedule_e_workpaper(session, tax_year=2026)
         column = next(c for c in workpaper.columns if c.property_id == prop.id)
-        assert column.line_3_rents == 250_000
+        assert column.line_3_rents_received == 250_000
         assert workpaper.total_rents == 250_000
 
     # 6. And it is visible as posted on the register.

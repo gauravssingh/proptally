@@ -292,9 +292,12 @@ def extract_and_resolve(
     recognised statement for an account this portfolio does not have comes back
     as NEEDS_REVIEW with the reason, so it can be registered and re-run.
     """
-    extraction = extract_pdf(path)
+    # Bank/card templates are more specific than the generic mortgage parser.
+    # Trying the mortgage parser first made credit-card statements that print an
+    # "account number" look like mortgages when their bank parser did not match.
+    extraction = extract_bank_or_card_pdf(path)
     if extraction is None:
-        extraction = extract_bank_or_card_pdf(path)
+        extraction = extract_pdf(path)
     if extraction is None:
         return None
     return resolve_statement_extraction(session, extraction)
@@ -349,6 +352,13 @@ def _copy_to_vault(source: Path, digest: str, vault_dir: Path, suffix: str = ".p
     created = False
     try:
         shutil.copy2(source, staging_path)
+        # The source may still be changing (an upload in flight); the vault name
+        # must describe the bytes actually stored, not the bytes observed earlier.
+        if _sha256(staging_path) != digest:
+            raise OSError(
+                "Source changed while being copied to the vault; refusing to store "
+                "content under a digest it does not match."
+            )
         try:
             os.link(staging_path, stored_path)
             created = True
@@ -400,14 +410,127 @@ def _persist_document(
         session.commit()
     except Exception as exc:
         session.rollback()
+        # This transaction failed, but a concurrent ingest may have committed a
+        # Document row pointing at the same content-addressed file. Only remove
+        # the file when no committed document references that digest.
+        still_referenced = False
         if created_vault_file:
+            bind = session.get_bind()
+            engine = getattr(bind, "engine", bind)
             try:
-                stored_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+                with Session(engine) as fresh:
+                    still_referenced = fresh.exec(
+                        select(Document).where(Document.file_sha256 == digest)
+                    ).first() is not None
+            except Exception:
+                # Unsure means keep: a stale file is recoverable, a deleted live
+                # document is not.
+                still_referenced = True
+            if not still_referenced:
+                try:
+                    stored_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
         orphan_path = stored_path if stored_path.exists() else None
         raise IngestionPersistenceError(str(exc), orphan_path) from exc
     return document, extraction_id
+
+
+def reprocess_document(
+    session: Session, document: Document, *, commit: bool = False
+) -> DocumentExtraction:
+    """Re-run the current parsers over a document already in the vault.
+
+    Parser fixes otherwise only help files uploaded after the fix. This keeps the
+    original document and extraction history, and adds a new extraction for the
+    review queue. Imported statements are refused: their authoritative version
+    is already recorded, and a second extraction would compete with it.
+    """
+    if not document.storage_path:
+        raise ValueError("The document has no stored file to reprocess.")
+    if session.exec(
+        select(DocumentExtraction).where(
+            DocumentExtraction.document_id == document.id,
+            DocumentExtraction.imported_statement_id.is_not(None),
+        )
+    ).first():
+        raise ValueError("This document has already been imported; reprocessing would create a competing extraction.")
+
+    path = Path(document.storage_path)
+    if not path.is_file():
+        raise ValueError("The stored file for this document is missing from the vault.")
+    if path.suffix.lower() != ".pdf":
+        raise ValueError("Only PDF statements can be reprocessed.")
+
+    extraction = extract_and_resolve(path, session)
+    if extraction is None:
+        raise ValueError("No supported statement format was recognized in this PDF.")
+
+    record = DocumentExtraction(
+        id=str(uuid4()),
+        document_id=document.id,
+        parser_name=extraction.parser_name,
+        parser_version=PARSER_VERSION,
+        validation_status=extraction.status,
+        approval_status="PENDING",
+        extracted_data_json=json.dumps(extraction.to_dict(), sort_keys=True),
+    )
+    session.add(record)
+    document.document_type = {
+        "MORTGAGE": "MORTGAGE_STATEMENT",
+        "CHECKING": "CHECKING_STATEMENT",
+        "CREDIT_CARD": "CREDIT_CARD_STATEMENT",
+    }.get(extraction.statement_type, document.document_type)
+    session.add(document)
+    session.flush()
+    if commit:
+        session.commit()
+    return record
+
+
+def reprocess_unrecognized_documents(session: Session, *, commit: bool = True) -> dict:
+    """Retry every vaulted document that has no extraction yet.
+
+    This is the repair path for a parser release: onboarding copies documents
+    before the statement queue sees them, and a re-upload would be skipped as a
+    duplicate SHA-256. The report separates parser misses from real errors so a
+    bulk run never hides an unreadable file behind a success count.
+    """
+    extracted = 0
+    unsupported = 0
+    errors = 0
+    recognized_ids: list[str] = []
+    unsupported_ids: list[str] = []
+    error_details: list[tuple[str, str]] = []
+
+    documents = session.exec(
+        select(Document)
+        .where(~Document.id.in_(select(DocumentExtraction.document_id)))
+        .order_by(Document.uploaded_at, Document.id)
+    ).all()
+    for document in documents:
+        try:
+            record = reprocess_document(session, document, commit=commit)
+        except ValueError as exc:
+            unsupported += 1
+            unsupported_ids.append(document.id)
+            error_details.append((document.id, str(exc)))
+        except Exception as exc:  # noqa: BLE001 - one document must not stop the batch
+            errors += 1
+            error_details.append((document.id, str(exc)))
+        else:
+            extracted += 1
+            recognized_ids.append(record.id)
+
+    return {
+        "scanned": len(documents),
+        "extracted": extracted,
+        "unsupported": unsupported,
+        "errors": errors,
+        "extraction_ids": recognized_ids,
+        "unsupported_document_ids": unsupported_ids,
+        "error_details": error_details,
+    }
 
 
 def ingest_folder(folder: Path, session: Session, vault_dir: Path, *, commit: bool = False) -> dict:
@@ -556,10 +679,21 @@ def update_extraction(session: Session, extraction_id: str, updates: dict, *, co
     for key, value in updates.items():
         data[key] = value
 
-    # If field ambiguities are resolved by user updates, clear them
+    # Editing a value invalidates any prior human approval of the old values.
+    record.approval_status = "PENDING"
+    record.approved_at = None
+
+    # If field ambiguities are resolved by user updates, clear them. Stored labels
+    # use spaces ("total due") while updates use columns ("total_due_cents").
     field_ambiguities = data.get("field_ambiguities", [])
     if field_ambiguities:
-        resolved = [f for f in field_ambiguities if f not in updates and f"{f}_cents" not in updates]
+        update_keys = {
+            key.replace(" ", "_").removesuffix("_cents") for key in updates
+        }
+        resolved = [
+            f for f in field_ambiguities
+            if f.replace(" ", "_").removesuffix("_cents") not in update_keys
+        ]
         data["field_ambiguities"] = resolved
 
     if data.get("statement_type") in BANK_STATEMENT_TYPES:
@@ -677,9 +811,14 @@ def _resolve_counter_account(session: Session, description: str, own_account_id:
     "Online payment from CHK 9456" and "ROCKET MORTGAGE" each name another of
     this portfolio's own accounts. Exactly one match links the two; no match, or
     several, leaves the transaction unlinked rather than guessing.
+
+    A bare institution mention is not a transfer: "BANK OF AMERICA ATM
+    WITHDRAWAL" must remain an expense, not a card settlement.
     """
     lowered = (description or "").lower()
     if not lowered:
+        return None
+    if not re.search(r"\b(payment|autopay|pymt|transfer|paid|pay)\b", lowered):
         return None
     matches: list[str] = []
     for account in session.exec(select(FinancialAccount)).all():
@@ -688,6 +827,10 @@ def _resolve_counter_account(session: Session, description: str, own_account_id:
         last4 = _digits(account.account_number_masked)
         if last4 and re.search(rf"{_ACCOUNT_MENTION_PREFIX}{re.escape(last4)}(?!\d)", lowered):
             matches.append(account.id)
+            continue
+        if account.account_type != "CREDIT_CARD":
+            # An institution-name mention only identifies a card payment; other
+            # account types need their account number to be named explicitly.
             continue
         institution = session.get(FinancialInstitution, account.institution_id)
         name = (institution.name if institution else "").lower()
@@ -710,6 +853,14 @@ def _import_bank_statement(session: Session, record: DocumentExtraction, data: d
         )
     ).first()
     if existing_statement:
+        if existing_statement.document_id != record.document_id:
+            # Same account and statement date but different bytes: this is a
+            # corrected or duplicate statement, and its transactions must not be
+            # silently discarded by claiming the extraction was imported.
+            raise ValueError(
+                f"A different statement for {account_id} dated {statement_date} is "
+                "already imported. Review or replace that statement explicitly."
+            )
         record.imported_statement_id = existing_statement.id
         session.add(record)
         if commit:

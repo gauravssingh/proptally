@@ -369,7 +369,7 @@ def test_custom_portfolio_schedule_e_lines(austin, session: Session):
     workpaper = generate_schedule_e_workpaper(session, tax_year=2026)
     column = next(c for c in workpaper.columns if c.property_id == PROPERTY_ID)
 
-    assert column.line_3_rents == RENT
+    assert column.line_3_rents_received == RENT
     assert column.line_16_taxes == TAXES
     assert column.line_14_repairs == CARD_REPAIRS
     assert column.line_15_supplies == CARD_SUPPLIES

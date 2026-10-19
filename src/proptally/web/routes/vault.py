@@ -109,11 +109,23 @@ def _document_row(
     uploaded: datetime = document.uploaded_at
     state = _extraction_state(extraction)
     mime = document.mime_type or ""
+    fn = (document.original_filename or "").lower()
+    if mime == "application/pdf" or fn.endswith(".pdf"):
+        file_icon = "file-pdf"
+    elif mime.startswith("image/") or fn.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg")):
+        file_icon = "image"
+    elif "csv" in mime or "sheet" in mime or "excel" in mime or fn.endswith((".csv", ".xlsx", ".xls")):
+        file_icon = "file-spreadsheet"
+    elif mime.startswith("text/") or fn.endswith((".txt", ".md", ".json")):
+        file_icon = "file-text"
+    else:
+        file_icon = "file"
     return {
         "id": document.id,
         "filename": document.original_filename,
         "mime_type": mime,
         "kind": "image" if mime.startswith("image/") else "pdf" if mime == "application/pdf" else "other",
+        "file_icon": file_icon,
         "can_preview": mime.startswith("image/") or mime == "application/pdf",
         "property_key": document.property_id or UNFILED,
         "property_name": property_record.name if property_record else "Unfiled",
@@ -285,6 +297,15 @@ def get_vault_router(templates, get_session_dep):
             and (current_type is None or row["type_key"] == current_type["key"])
         ]
 
+        parent_href: str | None = None
+        parent_label: str | None = None
+        if current_type is not None and current_property is not None:
+            parent_href = _vault_url(property_key=current_property["key"], type_key=None, q=None, kind=kind, sort=sort, per_page=per_page)
+            parent_label = current_property["label"]
+        elif current_property is not None:
+            parent_href = _vault_url(property_key=None, type_key=None, q=None, kind=kind, sort=sort, per_page=per_page)
+            parent_label = "Whole vault"
+
         # The chips are built from what the folder actually holds: a type nobody filed
         # under is not offered, so a chip never leads to an empty list.
         kind_counts: dict[str, int] = {}
@@ -293,7 +314,6 @@ def get_vault_router(templates, get_session_dep):
         kind_labels = {"pdf": "PDFs", "image": "Images", "other": "Other files"}
         kind_chips = [
             {"key": "all", "label": "All", "count": len(in_folder)},
-            {"key": "folders", "label": "Folders", "count": len(subfolders)},
         ] + [
             {"key": key, "label": kind_labels.get(key, key.title()), "count": kind_counts[key]}
             for key in ("pdf", "image", "other") if kind_counts.get(key)
@@ -305,9 +325,7 @@ def get_vault_router(templates, get_session_dep):
 
         if kind not in {chip["key"] for chip in kind_chips}:
             kind = "all"
-        visible = [row for row in in_folder if kind == "all" or (kind != "folders" and row["kind"] == kind)]
-        if kind == "folders":
-            visible = []
+        visible = [row for row in in_folder if kind == "all" or row["kind"] == kind]
 
         ordered = sorted(
             visible,
@@ -336,6 +354,8 @@ def get_vault_router(templates, get_session_dep):
 
         # The inspector: the one document being looked at, and its tab.
         selected = next((row for row in in_folder if row["id"] == doc), None)
+        if selected is None and doc:
+            selected = next((row for row in searched if row["id"] == doc), None)
         inspector_tabs: list[dict] = []
         if selected is not None:
             tabs = list(INSPECTOR_TABS) + ([("extraction", "Extraction")] if selected["extraction_id"] else [])
@@ -375,6 +395,8 @@ def get_vault_router(templates, get_session_dep):
                                          sort=sort, per_page=per_page),
                 "current_property": current_property,
                 "current_type": current_type,
+                "parent_href": parent_href,
+                "parent_label": parent_label,
                 "subfolders": subfolders,
                 "rows": ordered[start:end],
                 "q": q or "",
@@ -382,6 +404,12 @@ def get_vault_router(templates, get_session_dep):
                 "kind": kind,
                 "kind_chips": kind_chips,
                 "sort": sort,
+                "sort_urls": {
+                    key: _vault_url(property_key=property, type_key=type, q=q,
+                                    kind=kind, sort=key, per_page=per_page,
+                                    doc=selected["id"] if selected else None)
+                    for key, _ in SORTS
+                },
                 "sort_chips": [
                     {"label": label, "href": _vault_url(property_key=property, type_key=type, q=q,
                                                         kind=kind, sort=key, per_page=per_page),

@@ -16,14 +16,13 @@ from starlette.testclient import TestClient
 
 from proptally.db.system_models import (
     INVITABLE_ROLES,
-    ROLES,
     ROLE_CPA_REVIEWER,
     ROLE_MANAGER,
     ROLE_OWNER,
     ROLE_READ_ONLY,
+    ROLES,
 )
 from proptally.web import navigation
-
 
 
 def _csrf(client, path="/account"):

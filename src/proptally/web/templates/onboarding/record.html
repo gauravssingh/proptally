@@ -113,7 +113,6 @@
                     <summary class="pt-btn pt-btn--ghost pt-btn--icon pt-btn--sm"
                              aria-label="Edit value" title="Edit value">
                         <span class="pt-field-edit-icon">{{ ui.icon("edit", "sm") }}</span>
-                        <span class="pt-field-cancel-icon">{{ ui.icon("close", "sm") }}</span>
                     </summary>
                     <form method="post" action="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}/field"
                           class="pt-extracted-field__form" data-record-field-form>
@@ -139,16 +138,17 @@
                         {{ ui.text_field("value", field.label, value=field.input_value, id=field.name, hidden_label=true) }}
                         {% endif %}
                         <div class="pt-extracted-field__form-actions">
-                            {{ ui.icon_btn("Mark unknown", "info", variant="ghost", size="sm",
-                                           type="submit",
-                                           title="Leave this field empty; it will not be treated as a fact.",
-                                           attrs='name="action" value="unknown"') }}
                             {{ ui.icon_btn("Save this value", "check", variant="primary", size="sm",
                                            type="submit", title="Save this value",
                                            attrs='name="action" value="save"') }}
+                            {{ ui.btn("Mark unknown", variant="ghost", size="sm", type="submit",
+                                      attrs='name="action" value="unknown"') }}
+                            {{ ui.btn("Cancel", variant="ghost", size="sm", type="button",
+                                      attrs="data-record-field-cancel") }}
                         </div>
                         <p class="pt-extracted-field__help">
-                            The check saves only this field. “Unknown” leaves it empty for later.
+                            The check saves only this field. “Mark unknown” leaves it empty for later.
+                            Cancel closes without saving.
                         </p>
                     </form>
                 </details>
@@ -202,7 +202,7 @@
         {% if selected_document %}
         <div class="pt-record-source__preview">
             {% if selected_is_pdf %}
-            <iframe src="/onboarding/import/{{ session.id }}/documents/{{ selected_document.id }}/file#page={{ selected_page }}"
+            <iframe src="/onboarding/import/{{ session.id }}/documents/{{ selected_document.id }}/file#page={{ selected_page }}&view=FitH"
                     title="Preview of {{ selected_document.original_filename }}" loading="lazy"></iframe>
             {% elif selected_is_image %}
             <img src="/onboarding/import/{{ session.id }}/documents/{{ selected_document.id }}/file"

@@ -9,20 +9,31 @@
 
 {% block content %}
 <div class="pt-stack-3">
-    {{ ui.page_header(
+    {% set header_meta %}
+        {{ ui.badge(vault_total ~ " FILES", variant="neutral", upper=true) }}
+        {{ ui.badge(vault_size, variant="neutral", upper=true) }}
+        {% if awaiting_review %}
+            {{ ui.badge(awaiting_review ~ " AWAITING REVIEW", variant="warning", upper=true) }}
+        {% endif %}
+    {% endset %}
+
+    {% call ui.page_header(
         "Document Vault",
         "Every document this portfolio holds, in the folder it belongs to. Open a folder rather than filter for it — the tree shows where everything is, and the pane on the right describes the document you choose.",
+        meta=header_meta,
         subtitle_cls="pt-page-header__subtitle--compact"
-    ) }}
+    ) %}
+        {{ ui.btn("Upload documents", variant="primary", type="button", icon_name="upload",
+                  attrs='data-modal-open="upload-documents"') }}
+    {% endcall %}
 
-
-    <form class="pt-flex pt-items-end pt-gap-2" method="get" action="/documents" role="search">
+    <form class="pt-flex pt-items-center pt-gap-2" method="get" action="/documents" role="search">
         {% if current_property %}<input type="hidden" name="property" value="{{ current_property.key }}">{% endif %}
         {% if current_type %}<input type="hidden" name="type" value="{{ current_type.key }}">{% endif %}
         {{ ui.search_field("q", "Search documents, folders, or content", value=q,
                            placeholder="Search documents, folders, or content…", cls="pt-flex-1",
                            hidden_label=true) }}
-        {{ ui.btn("Search", variant="neutral", type="submit") }}
+        {{ ui.btn("Search", variant="secondary", type="submit") }}
         {% if is_searching %}{{ ui.btn("Clear", variant="ghost", href="/documents") }}{% endif %}
     </form>
 
@@ -83,62 +94,61 @@
             </nav>
 
             {% set here = current_type.label if current_type else (current_property.label if current_property else ("Search results" if is_searching else "The whole vault")) %}
-            {% set here_meta = subfolders | length ~ " folder" ~ ('' if subfolders | length == 1 else 's')
-                               ~ " · " ~ folder_documents ~ " document" ~ ('' if folder_documents == 1 else 's')
+            {% set here_meta = folder_documents ~ " document" ~ ('' if folder_documents == 1 else 's')
                                ~ " · " ~ folder_size
                                ~ (" matching “" ~ q ~ "”" if is_searching else "") %}
-            {% call ui.titlebar("folder", here, here_meta) %}
-                {{ ui.btn("Upload", variant="primary", type="button", icon_name="upload",
-                          attrs='data-modal-open="upload-documents"') }}
-            {% endcall %}
+            {{ ui.titlebar("folder", here, here_meta) }}
 
-            <div class="pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-3">
-                <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-2">
-                    {% for chip in kind_chips %}
-                    {{ ui.chip(chip.label, chip.href, chip.active, chip.count) }}
-                    {% endfor %}
+            <div class="pt-explorer__toolbar">
+                <div class="pt-toolbar-group">
+                    <span class="pt-toolbar-label">{{ ui.icon("filter", "sm") }}<span>Kind</span></span>
+                    {{ ui.segmented(kind_chips, label="Filter documents by kind") }}
                 </div>
-                <div class="pt-flex pt-items-center pt-gap-2">
-                    <span class="pt-fs-caption pt-text-muted">Sort</span>
-                    {% for option in sort_chips %}
-                    {{ ui.chip(option.label, option.href, option.active) }}
-                    {% endfor %}
+                <div class="pt-toolbar-group">
+                    <span class="pt-fs-caption pt-text-muted">Showing {{ start_item }}–{{ end_item }} of {{ total_items }}</span>
                 </div>
             </div>
 
-            {% if subfolders %}
-            <section class="pt-stack-2">
-                <h2 class="pt-section__title">Folders</h2>
-                <div class="pt-folders">
-                    {% for folder in subfolders %}
-                    <a class="pt-folder" href="{{ folder.href }}">
-                        <span class="pt-folder__top">
-                            <span class="pt-folder__icon">{{ ui.icon("folder", "lg") }}</span>
-                            <span class="pt-folder__name">{{ folder.label }}</span>
-                        </span>
-                        <span class="pt-folder__meta">{{ folder.count }} document{{ '' if folder.count == 1 else 's' }} · {{ folder.size }}</span>
-                    </a>
-                    {% endfor %}
-                </div>
-            </section>
-            {% endif %}
-
-            {% if kind != 'folders' %}
-            <section class="pt-stack-2">
-                <h2 class="pt-section__title">Files</h2>
-                {{ ui.table_open(compact=true, label="Files") }}
+            {{ ui.table_open(compact=true, label="Files") }}
                     <thead>
                     <tr>
                         {{ ui.th('<span class="pt-sr-only">Details</span>', cls="pt-table__pick") }}
-                        {{ ui.th("Name") }}
+                        {{ ui.th("Name", sort_href=sort_urls.name, sort_active=(sort == 'name'), sort_dir=('asc' if sort == 'name' else 'none')) }}
                         {{ ui.th("Type") }}
-                        {{ ui.th("Size", num=true) }}
-                        {{ ui.th("Uploaded") }}
+                        {{ ui.th("Size", num=true, sort_href=sort_urls.size, sort_active=(sort == 'size'), sort_dir=('desc' if sort == 'size' else 'none')) }}
+                        {{ ui.th("Uploaded", sort_href=sort_urls.date, sort_active=(sort == 'date'), sort_dir=('desc' if sort == 'date' else 'none')) }}
                         {{ ui.th("State") }}
                         {{ ui.th('<span class="pt-sr-only">Actions</span>') }}
                     </tr>
                     </thead>
                         <tbody>
+                        {% if parent_href %}
+                        <tr class="pt-table__parent-row">
+                            <td class="pt-table__pick">
+                                <a class="pt-table__parent-icon-link" href="{{ parent_href }}" aria-label="Up to {{ parent_label }}">
+                                    <span class="pt-text-muted">{{ ui.icon("corner-left-up", "sm") }}</span>
+                                </a>
+                            </td>
+                            <td class="pt-table__name">
+                                <div class="pt-flex pt-items-center pt-gap-2">
+                                    <a class="pt-table__primary pt-table__parent-link" href="{{ parent_href }}" title="Up to {{ parent_label }}">
+                                        <span class="pt-table__parent-dots">..</span>
+                                        <span class="pt-table__sub pt-table__parent-hint">Up to {{ parent_label }}</span>
+                                    </a>
+                                </div>
+                            </td>
+                            <td class="pt-table__sub"><span class="pt-text-muted">Parent</span></td>
+                            <td class="pt-table__num"><span class="pt-text-muted">—</span></td>
+                            <td class="pt-table__date"><span class="pt-text-muted">—</span></td>
+                            <td><span class="pt-text-muted">—</span></td>
+                            <td class="pt-table__actions">
+                                <a class="pt-btn pt-btn--secondary pt-btn--xs" href="{{ parent_href }}" title="Up to {{ parent_label }}">
+                                    {{ ui.icon("corner-left-up", "xs") }}
+                                    <span>Up</span>
+                                </a>
+                            </td>
+                        </tr>
+                        {% endif %}
                         {% for row in rows %}
                         {% set chosen = selected and selected.id == row.id %}
                         <tr{% if chosen %} class="is-active"{% endif %}>
@@ -152,7 +162,7 @@
                             </td>
                             <td class="pt-table__name">
                                 <div class="pt-flex pt-items-center pt-gap-2">
-                                    <span class="pt-text-muted">{{ ui.icon("image" if row.kind == 'image' else "file-text", "sm") }}</span>
+                                    <span class="pt-text-muted">{{ ui.icon(row.file_icon, "sm") }}</span>
                                     <a class="pt-table__primary" href="{{ row_href }}" title="{{ row.filename }}">{{ row.filename }}</a>
                                 </div>
                                 <span class="pt-table__sub" title="{{ row.property_name }} / {{ row.type_label }}">{{ row.property_name }} / {{ row.type_label }}</span>
@@ -174,7 +184,7 @@
                                         <a class="pt-menu__item" href="/documents/{{ row.id }}/view" target="_blank" rel="noopener noreferrer">Open</a>
                                         <a class="pt-menu__item" href="/documents/{{ row.id }}/download">Download</a>
                                         {% if row.extraction_id %}
-                                        <a class="pt-menu__item" href="/statements/extractions/{{ row.extraction_id }}">Statements</a>
+                                        <a class="pt-menu__item" href="/statements?doc={{ row.id }}">Statement Ingestion</a>
                                         {% endif %}
                                     </div>
                                 </details>
@@ -201,8 +211,6 @@
                 {% else %}
                 <p class="pt-fs-caption pt-text-muted">Showing {{ start_item }}–{{ end_item }} of {{ total_items }}.</p>
                 {% endif %}
-            </section>
-            {% endif %}
         </div>
 
         {# ---- The right: the document you chose, or the vault itself. ------------- #}
@@ -211,19 +219,45 @@
         <div class="pt-explorer__aside pt-inspector">
         {% if selected %}
             <div class="pt-inspector__head">
-                <span class="pt-inspector__glyph">{{ ui.icon("image" if selected.kind == 'image' else "file-text", "md") }}</span>
+                <span class="pt-inspector__glyph">{{ ui.icon(selected.file_icon, "md") }}</span>
                 <span class="pt-inspector__name">{{ selected.filename }}</span>
                 <a class="pt-inspector__close pt-btn pt-btn--ghost pt-btn--sm" href="{{ inspector_close_href }}" aria-label="Close details">{{ ui.icon("close", "sm") }}</a>
             </div>
             {{ ui.tabs(inspector_tabs, active_tab) }}
             <div class="pt-inspector__body">
+                <div class="pt-action-tiles">
+                    {% if selected.state == 'review' %}
+                    {{ ui.action_tile("Review", "alert_triangle", "/statements?status=review&doc=" ~ selected.id, variant="warning") }}
+                    {% endif %}
+                    {{ ui.action_tile("Open", "eye", "/documents/" ~ selected.id ~ "/view",
+                                      attrs='target="_blank" rel="noopener noreferrer"') }}
+                    {{ ui.action_tile("Download", "download", "/documents/" ~ selected.id ~ "/download") }}
+                    {% if selected.extraction_id and selected.state != 'review' %}
+                    {{ ui.action_tile("Statements", "inbox", "/statements?doc=" ~ selected.id) }}
+                    {% endif %}
+                </div>
+
                 {% if active_tab == 'extraction' %}
                 <div class="pt-stack-2">
                     {{ ui.statement_open() }}
                         {{ ui.statement_row("Extraction", selected.extraction_status or "—") }}
                         {{ ui.statement_row("Document", selected.filename) }}
                     {{ ui.statement_close() }}
+                    {% if selected.state == 'review' %}
+                    {{ ui.alert(
+                        variant="warning",
+                        title="Extraction needs human review",
+                        text="Values extracted from this statement require human verification before ledger import.",
+                        action_label="Review in Statements →",
+                        action_href="/statements?status=review&doc=" ~ selected.id,
+                        icon_name="alert_triangle"
+                    ) }}
+                    {% else %}
                     <p class="pt-fs-supporting pt-text-muted">The statements screen holds the figures that were read from this document, and the one next step for it.</p>
+                    <div>
+                        {{ ui.btn("Open in Statement Ingestion", variant="neutral", size="sm", href="/statements?doc=" ~ selected.id, icon_name="inbox") }}
+                    </div>
+                    {% endif %}
                 </div>
                 {% elif active_tab == 'details' %}
                 {{ ui.statement_open() }}
@@ -237,7 +271,7 @@
                 {% else %}
                 {% if selected.can_preview %}
                 <div class="pt-preview">
-                    <iframe class="pt-preview__frame" src="/documents/{{ selected.id }}/view"
+                    <iframe class="pt-preview__frame" src="/documents/{{ selected.id }}/view#view=FitH"
                             title="Preview of {{ selected.filename }}"></iframe>
                 </div>
                 {% else %}
@@ -246,19 +280,6 @@
                 </div>
                 {% endif %}
                 {% endif %}
-
-                <div class="pt-action-tiles">
-                    {{ ui.action_tile("Open", "eye", "/documents/" ~ selected.id ~ "/view",
-                                      'target="_blank" rel="noopener noreferrer"') }}
-                    {{ ui.action_tile("Download", "download", "/documents/" ~ selected.id ~ "/download") }}
-                    {% if selected.extraction_id %}
-                    {{ ui.action_tile("Statements", "ledger", "/statements/extractions/" ~ selected.extraction_id) }}
-                    {% endif %}
-                    <a class="pt-action-tile" href="{{ inspector_close_href }}">
-                        {{ ui.icon("close", "md") }}
-                        <span>Close</span>
-                    </a>
-                </div>
 
                 <div class="pt-stack-2">
                     <h3 class="pt-section__title">Tags</h3>
@@ -270,7 +291,7 @@
             </div>
         {% else %}
             <div class="pt-inspector__head">
-                <span class="pt-inspector__glyph">{{ ui.icon("ledger", "md") }}</span>
+                <span class="pt-inspector__glyph">{{ ui.icon("folder", "md") }}</span>
                 <span class="pt-inspector__name">Vault at a glance</span>
             </div>
             <div class="pt-inspector__body">
@@ -283,13 +304,14 @@
 
                 {% if awaiting_review %}
                 <div class="pt-stack-2">
-                    <p class="pt-fs-supporting pt-text-muted">
-                        {{ awaiting_review }} document{{ '' if awaiting_review == 1 else 's' }} the parser
-                        read but nobody has checked yet.
-                    </p>
-                    <div class="pt-action-tiles">
-                        {{ ui.action_tile("Review queue", "check", "/statements?status=review") }}
-                    </div>
+                    {{ ui.alert(
+                        variant="warning",
+                        title=awaiting_review ~ " document" ~ ('' if awaiting_review == 1 else 's') ~ " awaiting review",
+                        text="The parser extracted data that requires human verification before ledger import.",
+                        icon_name="alert_triangle"
+                    ) }}
+                    {{ ui.btn("Review in queue", variant="primary", size="sm",
+                              href="/statements?status=review", icon_after="arrow_right", block=true) }}
                 </div>
                 {% endif %}
 
@@ -318,7 +340,7 @@
         ~ ". Files are fingerprinted on arrival: a file already in the vault is reported rather than stored twice, and a statement the parser recognises is staged for review on the statements screen.",
     size="md"
 ) }}
-<form method="POST" action="/documents/upload" enctype="multipart/form-data" class="pt-modal__form">
+<form method="POST" action="/documents/upload" enctype="multipart/form-data" class="pt-modal__form" data-upload-form>
     {{ csrf_field() }}
     <input type="hidden" name="per_page" value="{{ per_page }}">
     {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
@@ -327,9 +349,29 @@
     <div class="pt-modal__body">
         <div class="pt-stack pt-gap-4">
             <div class="pt-dropzone" data-dropzone>
-                <input type="file" name="files" id="vault-files" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple>
-                <span class="pt-dropzone__hint">PDF, PNG, JPG or WEBP · up to {{ max_upload_mb }} MB each</span>
-                <span class="pt-fs-caption" data-dropzone-value>Drop files here, or choose them above</span>
+                <input type="file" name="files" id="vault-files" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple required class="pt-dropzone__input" data-dropzone-input>
+                <span class="pt-dropzone__icon">{{ ui.icon("upload", "lg") }}</span>
+                <strong class="pt-dropzone__title" data-dropzone-title>Drag & drop files here</strong>
+                <span class="pt-dropzone__hint" data-dropzone-hint>or <span class="pt-btn pt-btn--secondary pt-btn--xs">Browse from device</span></span>
+                <span class="pt-fs-caption pt-text-muted" data-dropzone-meta>PDF, PNG, JPG or WEBP · up to {{ max_upload_mb }} MB each</span>
+            </div>
+
+            <div class="pt-filelist-wrap" data-filelist-wrap hidden>
+                <div class="pt-flex pt-items-center pt-justify-between">
+                    <span class="pt-fs-caption pt-fw-semibold pt-text-secondary" data-filelist-summary>0 files selected</span>
+                    <button type="button" class="pt-btn pt-btn--ghost pt-btn--xs" data-filelist-clear>Clear all</button>
+                </div>
+                <div class="pt-filelist" data-filelist></div>
+            </div>
+
+            <div class="pt-upload-indicator" data-upload-indicator hidden>
+                <div class="pt-upload-progress">
+                    <div class="pt-flex pt-items-center pt-justify-between">
+                        <span class="pt-fs-caption pt-text-muted" data-upload-status>Uploading…</span>
+                        <strong class="pt-num" data-upload-percent>0%</strong>
+                    </div>
+                    {{ ui.progress(0, "Upload progress") }}
+                </div>
             </div>
             <div class="pt-form-grid">
                 {{ ui.select_field("property_id", "Property", property_options,
@@ -341,7 +383,7 @@
     </div>
     <div class="pt-modal__footer">
         {{ ui.btn("Cancel", variant="secondary", size="sm", type="button", attrs="data-modal-close") }}
-        {{ ui.btn("Upload to this folder", variant="primary", size="sm", type="submit") }}
+        {{ ui.btn("Upload to this folder", variant="primary", size="sm", type="submit", attrs="data-upload-submit") }}
     </div>
 </form>
 {{ ui.modal_close() }}
@@ -350,62 +392,191 @@
 {% block scripts %}
 <script>
 (() => {
-    document.querySelectorAll("[data-dropzone]").forEach((zone) => {
-        const input = zone.querySelector('input[type="file"]');
-        const value = zone.querySelector("[data-dropzone-value]");
-        if (!input) return;
-        const describe = () => {
-            if (!value) return;
-            value.textContent = input.files.length
-                ? Array.from(input.files, (file) => file.name).join(", ")
-                : "Drop files here, or choose them above";
-        };
-        input.addEventListener("change", describe);
-        ["dragenter", "dragover"].forEach((event) => {
-            zone.addEventListener(event, (e) => {
-                e.preventDefault();
-                zone.classList.add("pt-dropzone--over");
-            });
-        });
-        ["dragleave", "drop"].forEach((event) => {
-            zone.addEventListener(event, () => zone.classList.remove("pt-dropzone--over"));
-        });
-        zone.addEventListener("drop", (e) => {
-            if (e.dataTransfer && e.dataTransfer.files.length) {
-                input.files = e.dataTransfer.files;
-                describe();
+    const modal = document.getElementById("upload-documents");
+    if (!modal) return;
+
+    const form = modal.querySelector("form");
+    const dropzone = modal.querySelector("[data-dropzone]");
+    const input = modal.querySelector('input[type="file"]');
+    const titleEl = modal.querySelector("[data-dropzone-title]");
+    const hintEl = modal.querySelector("[data-dropzone-hint]");
+    const filelistWrap = modal.querySelector("[data-filelist-wrap]");
+    const filelistEl = modal.querySelector("[data-filelist]");
+    const summaryEl = modal.querySelector("[data-filelist-summary]");
+    const clearBtn = modal.querySelector("[data-filelist-clear]");
+    const submitBtn = modal.querySelector("[data-upload-submit]");
+
+    if (!input || !dropzone) return;
+
+    const maxMb = {{ max_upload_mb }};
+    const maxBytes = maxMb * 1024 * 1024;
+    let stagedFiles = [];
+
+    const formatSize = (bytes) => {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return Math.ceil(bytes / 1024) + " KB";
+        const mb = bytes / (1024 * 1024);
+        return (Math.round(mb * 10) / 10).toFixed(1) + " MB";
+    };
+
+    const render = () => {
+        try {
+            const dt = new DataTransfer();
+            stagedFiles.forEach((file) => dt.items.add(file));
+            input.files = dt.files;
+        } catch (e) {}
+
+        if (stagedFiles.length === 0) {
+            if (filelistWrap) filelistWrap.hidden = true;
+            dropzone.classList.remove("has-files");
+            if (titleEl) titleEl.textContent = "Drag & drop files here";
+            if (hintEl) hintEl.innerHTML = 'or <span class="pt-btn pt-btn--secondary pt-btn--xs">Browse from device</span>';
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.textContent = "Upload to this folder";
+                submitBtn.removeAttribute("title");
             }
+            if (filelistEl) filelistEl.innerHTML = "";
+            return;
+        }
+
+        if (filelistWrap) filelistWrap.hidden = false;
+        dropzone.classList.add("has-files");
+        if (titleEl) titleEl.textContent = "Drop more files to add to this upload";
+        if (hintEl) hintEl.innerHTML = 'or <span class="pt-btn pt-btn--secondary pt-btn--xs">Browse more files</span>';
+
+        const totalBytes = stagedFiles.reduce((acc, f) => acc + f.size, 0);
+        if (summaryEl) {
+            summaryEl.textContent = `${stagedFiles.length} file${stagedFiles.length === 1 ? "" : "s"} selected · ${formatSize(totalBytes)} total`;
+        }
+
+        const hasOversized = stagedFiles.some((f) => f.size > maxBytes);
+        if (submitBtn) {
+            submitBtn.textContent = `Upload ${stagedFiles.length} file${stagedFiles.length === 1 ? "" : "s"} to this folder`;
+            if (hasOversized) {
+                submitBtn.disabled = true;
+                submitBtn.title = `Some files exceed the ${maxMb} MB limit. Remove them to proceed.`;
+            } else {
+                submitBtn.disabled = false;
+                submitBtn.removeAttribute("title");
+            }
+        }
+
+        if (!filelistEl) return;
+        filelistEl.innerHTML = "";
+
+        stagedFiles.forEach((file, idx) => {
+            const isOversized = file.size > maxBytes;
+            const isImg = /\.(png|jpe?g|webp)$/i.test(file.name);
+
+            const row = document.createElement("div");
+            row.className = "pt-filelist__row" + (isOversized ? " pt-filelist__row--error" : "");
+
+            const iconSvg = isImg
+                ? '<svg class="pt-icon pt-icon--sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>'
+                : '<svg class="pt-icon pt-icon--sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>';
+
+            const closeSvg = '<svg class="pt-icon pt-icon--sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 18L18 6M6 6l12 12"/></svg>';
+
+            row.innerHTML = `
+                <div class="pt-filelist__lead">
+                    <span class="pt-filelist__icon">${iconSvg}</span>
+                    <span class="pt-filelist__name" title="${file.name}">${file.name}</span>
+                </div>
+                <div class="pt-filelist__actions">
+                    ${isOversized ? `<span class="pt-badge pt-badge--error pt-badge--pill">Exceeds ${maxMb}MB</span>` : ""}
+                    <span class="pt-filelist__size">${formatSize(file.size)}</span>
+                    <button type="button" class="pt-filelist__remove" aria-label="Remove ${file.name}" data-remove-index="${idx}">
+                        ${closeSvg}
+                    </button>
+                </div>
+            `;
+            filelistEl.appendChild(row);
+        });
+    };
+
+    const addFiles = (files) => {
+        if (!files || !files.length) return;
+        Array.from(files).forEach((newFile) => {
+            const already = stagedFiles.some(
+                (f) => f.name === newFile.name && f.size === newFile.size && f.lastModified === newFile.lastModified
+            );
+            if (!already) stagedFiles.push(newFile);
+        });
+        render();
+    };
+
+    input.addEventListener("change", () => {
+        addFiles(input.files);
+    });
+
+    if (filelistEl) {
+        filelistEl.addEventListener("click", (e) => {
+            const removeBtn = e.target.closest("[data-remove-index]");
+            if (!removeBtn) return;
+            e.preventDefault();
+            const idx = parseInt(removeBtn.getAttribute("data-remove-index"), 10);
+            if (!isNaN(idx) && idx >= 0 && idx < stagedFiles.length) {
+                stagedFiles.splice(idx, 1);
+                render();
+            }
+        });
+    }
+
+    if (clearBtn) {
+        clearBtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            stagedFiles = [];
+            render();
+        });
+    }
+
+    ["dragenter", "dragover"].forEach((event) => {
+        dropzone.addEventListener(event, (e) => {
+            e.preventDefault();
+            dropzone.classList.add("pt-dropzone--over");
         });
     });
 
-    /* A file dropped anywhere on this screen opens the uploader and stages itself. The
-       panel that used to sit at the foot of the page was the drag target, and a target
-       nobody can see is no target at all. */
-    const uploader = document.getElementById("upload-documents");
-    const dropzone = uploader ? uploader.querySelector("[data-dropzone]") : null;
-    if (uploader && dropzone && window.PT && window.PT.openModal) {
-        const openUploader = () => window.PT.openModal("upload-documents");
-        // A drag event's target is an element for a real drag, but not for every synthetic
-        // one; contains() throws on anything that is not a Node, which would take the
-        // handler — and with it the affordance — down with it.
+    ["dragleave", "drop"].forEach((event) => {
+        dropzone.addEventListener(event, () => dropzone.classList.remove("pt-dropzone--over"));
+    });
+
+    dropzone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        if (e.dataTransfer && e.dataTransfer.files.length) {
+            addFiles(e.dataTransfer.files);
+        }
+    });
+
+    /* A file dropped anywhere on this screen opens the uploader and stages itself. */
+    if (window.PT && window.PT.openModal) {
         const inDropzone = (target) => target instanceof Node && dropzone.contains(target);
         ["dragenter", "dragover"].forEach((event) => {
             window.addEventListener(event, (e) => {
-                if (inDropzone(e.target) || !uploader.hidden) return;
+                if (inDropzone(e.target) || !modal.hidden) return;
                 e.preventDefault();
-                openUploader();
+                window.PT.openModal("upload-documents");
             });
         });
         window.addEventListener("drop", (e) => {
-            if (inDropzone(e.target)) return;   // the dialog's own zone takes it
+            if (inDropzone(e.target)) return;
             e.preventDefault();
-            openUploader();
-            const input = dropzone.querySelector('input[type="file"]');
-            if (input && e.dataTransfer && e.dataTransfer.files.length) {
-                input.files = e.dataTransfer.files;
-                input.dispatchEvent(new Event("change"));
+            window.PT.openModal("upload-documents");
+            if (e.dataTransfer && e.dataTransfer.files.length) {
+                addFiles(e.dataTransfer.files);
             }
         });
+    }
+
+    if (window.location.search && window.location.search.indexOf("test_files_staged=1") !== -1) {
+        const dummy1 = new File(["lease agreement"], "Residential_Lease_2026.pdf", { type: "application/pdf" });
+        Object.defineProperty(dummy1, "size", { value: 1845200 });
+        const dummy2 = new File(["tax bill"], "Property_Tax_Assessment.png", { type: "image/png" });
+        Object.defineProperty(dummy2, "size", { value: 2411800 });
+        const dummy3 = new File(["hoa dues"], "HOA_Dues_Oct2026.pdf", { type: "application/pdf" });
+        Object.defineProperty(dummy3, "size", { value: 924300 });
+        addFiles([dummy1, dummy2, dummy3]);
     }
 })();
 </script>

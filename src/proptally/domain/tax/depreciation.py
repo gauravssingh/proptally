@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
-from sqlmodel import Session
 
 from proptally.db.models import Property
 
@@ -83,14 +82,21 @@ def calculate_annual_depreciation(
             notes=f"Property acquired {acq_date.isoformat()} after tax year {tax_year}.",
         )
 
-    # Full year depreciation: building_basis / 27.5
-    full_year_annual = int(round(building_basis / 27.5))
+    # Full-year depreciation: basis / 27.5, in exact decimal cents so a .5
+    # boundary can never be changed by binary floating point.
+    full_year_annual = int(
+        (Decimal(building_basis) / Decimal("27.5")).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    )
 
     if acq_date and acq_date.year == tax_year:
-        # IRS Mid-Month convention: month of acquisition counts as 0.5 month
+        # IRS Mid-Month convention: month of acquisition counts as 0.5 month.
         # Months in service = 12 - month + 0.5
-        months_in_service = (12 - acq_date.month) + 0.5
-        deprec_cents = int(round(full_year_annual * (months_in_service / 12.0)))
+        months_in_service = Decimal(12 - acq_date.month) + Decimal("0.5")
+        deprec_cents = int(
+            (Decimal(full_year_annual) * months_in_service / Decimal(12)).quantize(
+                Decimal("1"), rounding=ROUND_HALF_UP
+            )
+        )
         note = f"First year mid-month convention ({months_in_service:.1f} months in service)."
     else:
         deprec_cents = full_year_annual

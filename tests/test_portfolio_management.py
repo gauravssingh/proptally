@@ -12,7 +12,6 @@ trace of another.
 
 import io
 import json
-import shutil
 import tarfile
 from uuid import uuid4
 

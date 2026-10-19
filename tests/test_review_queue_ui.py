@@ -2,6 +2,7 @@
 
 from datetime import date
 
+from reference_portfolio import REFERENCE_VENDOR_RULES
 from sqlmodel import Session, select
 
 from proptally.db.connection import get_engine
@@ -17,7 +18,6 @@ from proptally.db.models import (
 )
 from proptally.db.schema import init_schema
 from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
-from reference_portfolio import REFERENCE_VENDOR_RULES
 from proptally.domain.transactions.suggest import (
     seed_vendor_rules,
     suggest_split_for_transaction,

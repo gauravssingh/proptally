@@ -136,12 +136,18 @@ def _step_done(session: Session, key: str) -> bool:
     if key == "mortgage":
         return session.exec(select(LoanAccount)).first() is not None
     if key == "opening-balances":
-        return session.exec(
+        # A loan's own opening entry records its principal and escrow, not the
+        # portfolio's dated baseline. Only the baseline satisfies this step.
+        entries = session.exec(
             select(JournalEntry).where(
                 JournalEntry.entry_type == "OPENING_BALANCE",
                 JournalEntry.status == "POSTED",
             )
-        ).first() is not None
+        ).all()
+        return any(
+            not (entry.idempotency_key or "").startswith("MORTGAGE_OPENING:")
+            for entry in entries
+        )
     if key == "records":
         if session.exec(select(Statement)).first() is not None:
             return True

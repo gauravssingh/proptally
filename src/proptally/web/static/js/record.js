@@ -50,6 +50,16 @@
     }
 
     Array.prototype.forEach.call(
+        document.querySelectorAll("[data-record-field-cancel]"),
+        function (button) {
+            button.addEventListener("click", function () {
+                var details = button.closest("details");
+                if (details) details.open = false;
+            });
+        }
+    );
+
+    Array.prototype.forEach.call(
         document.querySelectorAll("details.pt-extracted-field__edit, details.pt-field__edit"),
         function (details) {
             var read = details.closest(".pt-extracted-field__read, .pt-field__read");

@@ -276,9 +276,23 @@ def main() -> int:
     if not args.skip_smoke:
         from starlette.testclient import TestClient
 
-        from proptally.web.app import create_app
+        import proptally.web.app as web_app
+        from proptally.db.tenant_manager import TenantManager
 
-        app = create_app(db_url=f"sqlite:///{copy_path}")
+        # This developer tool deliberately runs the app against one copied legacy
+        # database. Production create_app has no such override, so the tool
+        # substitutes the manager for the duration of the factory call.
+        class _SharedTenantManager(TenantManager):
+            def __init__(self, *args, **kwargs):
+                kwargs["db_url"] = f"sqlite:///{copy_path}"
+                super().__init__(*args, **kwargs)
+
+        original = web_app.TenantManager
+        web_app.TenantManager = _SharedTenantManager
+        try:
+            app = web_app.create_app()
+        finally:
+            web_app.TenantManager = original
         with TestClient(app) as client:
             pages = {
                 path: client.get(path).status_code

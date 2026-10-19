@@ -1,6 +1,7 @@
 """Tests for Realtor/Property Management fees, Tenant Placement commissions, single-property repairs, and HOA dues."""
 
 from datetime import date
+
 from sqlmodel import Session, select
 
 from proptally.db.connection import get_engine
@@ -13,7 +14,6 @@ from proptally.db.models import (
     Property,
     Statement,
     Transaction,
-    TransactionProcessingState,
 )
 from proptally.db.schema import init_schema
 from proptally.domain.accounting.coa import STANDARD_ACCOUNTS, ensure_entity_ledger_accounts
@@ -243,4 +243,4 @@ def test_schedule_e_realtor_fees_and_single_property_repair(tmp_path):
         assert col.line_14_repairs == 35000        # $350.00
         assert col.line_11_management == 20000     # $200.00 (Schedule E Line 11 Management fees)
         assert col.line_8_commissions == 150000    # $1,500.00 (Schedule E Line 8 Commissions)
-        assert col.line_18_other == 15000          # $150.00 (Schedule E Line 19 HOA Assessments)
+        assert col.line_19_other == 15000          # $150.00 (Schedule E Line 19 HOA Assessments)

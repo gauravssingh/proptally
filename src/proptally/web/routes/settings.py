@@ -21,7 +21,6 @@ Every handler parses and validates its whole form before it writes anything, so 
 rejected submission leaves the portfolio exactly as it was.
 """
 
-from datetime import date
 from typing import Optional
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -44,32 +43,47 @@ from proptally.db.models import (
     VendorRule,
 )
 from proptally.db.tenant_manager import slugify
-from proptally.domain.accounting.coa import (
-    OWNER_EQUITY_CODE,
-    ensure_entity_ledger_accounts,
-)
-from proptally.domain.accounting.ledger import (
-    add_journal_line,
-    create_journal_entry,
-    post_journal_entry,
-)
+from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
 from proptally.domain.accounting.opening_balances import (
     OpeningAccountBalance,
     record_opening_balances,
+)
+from proptally.domain.accounting.opening_balances import (
+    post_loan_opening_balances as _post_loan_opening_balances,
 )
 from proptally.domain.transactions.suggest import DEFAULT_VENDOR_RULES
 from proptally.web.auth import AuthorizationError, current_context
 from proptally.web.form_parsing import (
     FormError as _FormError,
+)
+from proptally.web.form_parsing import (
     cents as _cents,
+)
+from proptally.web.form_parsing import (
     choice as _choice,
+)
+from proptally.web.form_parsing import (
     clean as _clean,
+)
+from proptally.web.form_parsing import (
     day as _day,
+)
+from proptally.web.form_parsing import (
     flag as _flag,
+)
+from proptally.web.form_parsing import (
     months as _months,
+)
+from proptally.web.form_parsing import (
     new_id as _new_id,
+)
+from proptally.web.form_parsing import (
     optional_choice as _optional_choice,
+)
+from proptally.web.form_parsing import (
     rate_bps as _rate_bps,
+)
+from proptally.web.form_parsing import (
     required as _required,
 )
 from proptally.web.property_forms import (
@@ -112,9 +126,10 @@ MIXED_USE_STATUSES = tuple(option["value"] for option in MIXED_USE_OPTIONS)
 CATEGORY_OPTIONS = [
     {"value": "PERSONAL", "label": "Personal draw (non-operating)"},
     {"value": "RENT_INCOME", "label": "Rent income (Schedule E line 3)"},
+    {"value": "SECURITY_DEPOSIT", "label": "Tenant security deposit (liability)"},
     {"value": "REPAIRS", "label": "Repairs & maintenance (line 14)"},
-    {"value": "SUPPLIES", "label": "Supplies (line 17)"},
-    {"value": "UTILITIES", "label": "Utilities (line 19)"},
+    {"value": "SUPPLIES", "label": "Supplies (line 15)"},
+    {"value": "UTILITIES", "label": "Utilities (line 17)"},
     {"value": "MANAGEMENT", "label": "Management fees (line 11)"},
     {"value": "COMMISSIONS", "label": "Commissions (line 8)"},
     {"value": "HOA", "label": "HOA assessments (line 19)"},
@@ -231,67 +246,6 @@ def _opening_balance_targets(session: Session) -> list[dict]:
     # baseline: they are stated on the loan itself (see _post_loan_opening_balances),
     # and a figure with two homes is a figure that can be counted twice.
     return targets
-
-
-def _post_loan_opening_balances(
-    session: Session,
-    loan: LoanAccount,
-    principal_cents: Optional[int],
-    escrow_cents: Optional[int],
-) -> None:
-    """Records a loan's opening principal and escrow reserve as one opening-balance entry.
-
-    A loan declared after the portfolio's dated baseline cannot share that entry's date
-    key, so it gets a key of its own, and the difference between the liability assumed
-    and the escrow asset acquired goes to owner equity exactly as
-    ``record_opening_balances`` plugs the difference for a whole portfolio.
-
-    Both of the loan's opening figures belong here rather than in the dated baseline.
-    Offering the same balance in two forms is how it gets counted twice: an owner who
-    filled in their mortgage on this screen *and* listed the principal in the baseline
-    would report twice the debt they owe.
-    """
-    principal_cents = principal_cents or 0
-    escrow_cents = escrow_cents or 0
-    if principal_cents <= 0 and escrow_cents <= 0:
-        return
-
-    entry = create_journal_entry(
-        session,
-        entry_date=loan.origination_date or date.today(),
-        entry_type="OPENING_BALANCE",
-        description=f"Opening balances declared for loan {loan.loan_number}",
-        idempotency_key=f"MORTGAGE_OPENING:{loan.id}",
-    )
-    if principal_cents:
-        add_journal_line(
-            session,
-            entry.id,
-            loan.principal_ledger_code,
-            credit_cents=principal_cents,
-            property_id=loan.property_id,
-        )
-    if escrow_cents:
-        add_journal_line(
-            session,
-            entry.id,
-            loan.escrow_ledger_code,
-            debit_cents=escrow_cents,
-            property_id=loan.property_id,
-        )
-
-    difference = principal_cents - escrow_cents
-    if difference > 0:
-        add_journal_line(
-            session, entry.id, OWNER_EQUITY_CODE,
-            debit_cents=difference, description="Opening mortgage liability assumed",
-        )
-    elif difference < 0:
-        add_journal_line(
-            session, entry.id, OWNER_EQUITY_CODE,
-            credit_cents=-difference, description="Opening escrow reserve acquired",
-        )
-    post_journal_entry(session, entry.id)
 
 
 # --- Router ----------------------------------------------------------------

@@ -26,21 +26,57 @@ def get_mortgages_router(templates, get_session_dep):
         loans = session.exec(select(LoanAccount).where(LoanAccount.is_active == True)).all()
         loans_data = []
 
+        # Batch the reference data instead of one query per loan.
+        properties = {
+            prop.id: prop
+            for prop in session.exec(
+                select(Property).where(Property.id.in_({loan.property_id for loan in loans}))
+            ).all()
+        } if loans else {}
+        accounts = {
+            acct.id: acct
+            for acct in session.exec(
+                select(FinancialAccount).where(
+                    FinancialAccount.id.in_({loan.financial_account_id for loan in loans})
+                )
+            ).all()
+        } if loans else {}
+        institutions = {
+            inst.id: inst
+            for inst in session.exec(
+                select(FinancialInstitution).where(
+                    FinancialInstitution.id.in_(
+                        {acct.institution_id for acct in accounts.values()}
+                    )
+                )
+            ).all()
+        } if accounts else {}
+        principal_codes = {
+            loan.principal_ledger_code for loan in loans
+            if loan.principal_ledger_code is not None
+        }
+        posted_by_code: dict[int, list] = {}
+        if principal_codes:
+            for line in session.exec(
+                select(JournalEntryLine)
+                .join(JournalEntry, JournalEntryLine.journal_entry_id == JournalEntry.id)
+                .where(
+                    JournalEntry.status == "POSTED",
+                    JournalEntryLine.ledger_account_code.in_(principal_codes),
+                )
+            ).all():
+                posted_by_code.setdefault(line.ledger_account_code, []).append(line)
+
         for loan in loans:
-            prop = session.get(Property, loan.property_id)
-            fin_acct = session.get(FinancialAccount, loan.financial_account_id)
-            inst = session.get(FinancialInstitution, fin_acct.institution_id) if fin_acct else None
+            prop = properties.get(loan.property_id)
+            fin_acct = accounts.get(loan.financial_account_id)
+            inst = institutions.get(fin_acct.institution_id) if fin_acct else None
 
             # 1. Ledger-Calculated Principal from strictly POSTED journal entry lines
             code = loan.principal_ledger_code
             ledger_calculated_principal_cents = None
             if code is not None:
-                posted_lines = session.exec(
-                    select(JournalEntryLine)
-                    .join(JournalEntry, JournalEntryLine.journal_entry_id == JournalEntry.id)
-                    .where(JournalEntry.status == "POSTED")
-                    .where(JournalEntryLine.ledger_account_code == code)
-                ).all()
+                posted_lines = posted_by_code.get(code, [])
                 if posted_lines:
                     ledger_calculated_principal_cents = max(
                         0, sum(l.credit_cents for l in posted_lines) - sum(l.debit_cents for l in posted_lines)

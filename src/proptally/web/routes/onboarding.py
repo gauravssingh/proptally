@@ -36,6 +36,7 @@ from proptally.db.onboarding_models import (
     ONBOARDING_APPROVED,
     ONBOARDING_CANCELLED,
     ONBOARDING_COMPLETED,
+    ONBOARDING_EXPIRED,
     ONBOARDING_PARTIAL,
     ONBOARDING_PROCESSING,
     ONBOARDING_PROCESSING_FAILED,
@@ -71,6 +72,7 @@ from proptally.onboarding.archive import (
 from proptally.onboarding.classify import category_label
 from proptally.onboarding.fields import (
     ENTITY_LABELS,
+    FIELD_ORDER,
     REQUIRED_FIELDS,
     display_value,
     editable,
@@ -635,11 +637,17 @@ def get_onboarding_router(templates, control_engine, tenant_manager, get_session
                 document.processed_at = None
                 control.add(document)
             onboarding = control.get(OnboardingSession, onboarding_id)
-            if onboarding is not None:
-                onboarding.status = ONBOARDING_PROCESSING
-                onboarding.last_error = None
-                onboarding.updated_at = datetime.now(UTC)
-                control.add(onboarding)
+            if onboarding is None:
+                raise HTTPException(status_code=404, detail="Onboarding session not found.")
+            if onboarding.status in _RETRY_BLOCKED_STATES:
+                return _redirect(
+                    f"/onboarding/import/{onboarding_id}",
+                    error="This import has already been approved or finished and cannot be retried.",
+                )
+            onboarding.status = ONBOARDING_PROCESSING
+            onboarding.last_error = None
+            onboarding.updated_at = datetime.now(UTC)
+            control.add(onboarding)
             control.commit()
         for document_id in retry_ids:
             if enqueue(control_engine, onboarding_id, JOB_DOCUMENT, document_id=document_id):
@@ -658,6 +666,14 @@ def get_onboarding_router(templates, control_engine, tenant_manager, get_session
         _require_work()
         _owned_session(onboarding_id)
         with Session(control_engine) as control:
+            onboarding = control.get(OnboardingSession, onboarding_id)
+            if onboarding is None:
+                raise HTTPException(status_code=404, detail="Onboarding session not found.")
+            if onboarding.status in _RETRY_BLOCKED_STATES:
+                return _redirect(
+                    f"/onboarding/import/{onboarding_id}",
+                    error="This import has already been approved or finished and cannot be retried.",
+                )
             document = control.get(OnboardingDocument, document_id)
             if document is None or document.onboarding_id != onboarding_id:
                 raise HTTPException(status_code=404, detail="Document not found.")
@@ -684,6 +700,15 @@ def get_onboarding_router(templates, control_engine, tenant_manager, get_session
         )
 
     # --- review ------------------------------------------------------------
+    #: Once a session has left review, retrying a document or a failed item would
+    #: reopen a finished or approved import and bypass its terminal state.
+    _RETRY_BLOCKED_STATES = {
+        ONBOARDING_COMPLETED,
+        ONBOARDING_CANCELLED,
+        ONBOARDING_EXPIRED,
+        ONBOARDING_PROVISIONING,
+        ONBOARDING_APPROVED,
+    }
 
     @router.get("/onboarding/import/{onboarding_id}/review", response_class=HTMLResponse)
     def portfolio_review(
@@ -1022,6 +1047,11 @@ def get_onboarding_router(templates, control_engine, tenant_manager, get_session
         proposal = _proposal(onboarding_id, proposal_id)
         conflicts = loads(proposal.conflicts_json)
         return_url = f"/onboarding/import/{onboarding_id}/records/{proposal_id}"
+        if field not in FIELD_ORDER.get(proposal.entity_type, ()) or not editable(field):
+            message = "That field cannot be edited on this record."
+            if wants_json:
+                return JSONResponse({"ok": False, "error": message}, status_code=400)
+            return _redirect(return_url, error=message)
         try:
             if action == "unknown":
                 updated = record_decision(

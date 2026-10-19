@@ -17,9 +17,9 @@ from __future__ import annotations
 import shutil
 import sqlite3
 import subprocess
-import threading
 import sys
 import tarfile
+import threading
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -35,6 +35,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import migrate_to_multitenant as migrator  # noqa: E402
+from reference_portfolio import seed_reference_portfolio  # noqa: E402
 
 from proptally.db.connection import get_engine  # noqa: E402
 from proptally.db.models import (  # noqa: E402
@@ -49,9 +50,9 @@ from proptally.db.models import (  # noqa: E402
 )
 from proptally.db.schema import init_schema  # noqa: E402
 from proptally.db.system_models import (  # noqa: E402
-    LegacyMigration,
     ROLE_CPA_REVIEWER,
     ROLE_OWNER,
+    LegacyMigration,
     Tenant,
     TenantMembership,
     User,
@@ -62,7 +63,6 @@ from proptally.domain.accounting.metrics import (  # noqa: E402
     calculate_portfolio_equity,
     calculate_property_financials,
 )
-from reference_portfolio import seed_reference_portfolio  # noqa: E402
 from proptally.domain.transactions.splits import (  # noqa: E402
     SplitItem,
     apply_transaction_splits,

@@ -370,7 +370,7 @@
 
     window.PT.closeModal = function (id) {
         var modal = id ? document.getElementById(id) : openStack[openStack.length - 1];
-        if (!modal || modal.hidden || modal.classList.contains('is-closing')) return;
+        if (!modal || modal.hidden || modal.classList.contains('is-closing') || modal.hasAttribute('data-modal-locked')) return;
 
         var finish = function () {
             if (modal._closeTimer) {
@@ -399,6 +399,14 @@
             if (modal.classList.contains('is-closing')) finish();
         }, 260);
     };
+
+    if (window.location.hash) {
+        var hashId = window.location.hash.substring(1);
+        var targetModal = document.getElementById(hashId);
+        if (targetModal && targetModal.classList.contains('pt-modal')) {
+            window.PT.openModal(hashId);
+        }
+    }
 
     document.addEventListener('click', function (event) {
         var closer = event.target.closest('[data-modal-close]');
@@ -446,6 +454,195 @@
             event.preventDefault();
         }
     });
+
+    /* --- Upload progress & double-submit protection ---------------- */
+    document.addEventListener('submit', function (event) {
+        var form = event.target.closest('form[data-upload-form]');
+        if (!form) return;
+
+        // Native HTML5 validation check: if required fields are missing, let browser report it
+        if (form.checkValidity && !form.checkValidity()) {
+            return;
+        }
+
+        // Check if there are file inputs and if any files were chosen
+        var fileInputs = form.querySelectorAll('input[type="file"]');
+        var totalFiles = 0;
+        var totalBytes = 0;
+        for (var i = 0; i < fileInputs.length; i++) {
+            var files = fileInputs[i].files;
+            if (files) {
+                totalFiles += files.length;
+                for (var j = 0; j < files.length; j++) {
+                    totalBytes += files[j].size;
+                }
+            }
+        }
+
+        // If no files selected and input was optional/empty, don't hijack
+        if (totalFiles === 0 && fileInputs.length > 0) {
+            return;
+        }
+
+        // Prevent double submit
+        if (form._isUploading) {
+            event.preventDefault();
+            return;
+        }
+
+        // If browser doesn't support XMLHttpRequest or FormData, let default submit happen
+        if (!window.XMLHttpRequest || !window.FormData) {
+            return;
+        }
+
+        event.preventDefault();
+        form._isUploading = true;
+
+        var submitBtn = form.querySelector('[data-upload-submit]') || form.querySelector('button[type="submit"]');
+        var modal = form.closest('.pt-modal');
+        var indicator = form.querySelector('[data-upload-indicator]');
+        var progressBar = indicator ? indicator.querySelector('progress, .pt-progress') : null;
+        var statusEl = indicator ? indicator.querySelector('[data-upload-status]') : null;
+        var percentEl = indicator ? indicator.querySelector('[data-upload-percent]') : null;
+
+        if (submitBtn) {
+            submitBtn._originalHtml = submitBtn.innerHTML;
+            submitBtn.disabled = true;
+            submitBtn.classList.add('is-loading');
+            var btnLabel = totalFiles > 1 ? ('Uploading ' + totalFiles + ' files…') : 'Uploading…';
+            submitBtn.innerHTML = '<span class="pt-spinner pt-spinner--inverse pt-spinner--sm" aria-hidden="true"></span><span>' + btnLabel + '</span>';
+        }
+
+        if (modal) {
+            modal.setAttribute('data-modal-locked', 'true');
+            modal.querySelectorAll('[data-modal-close]').forEach(function (el) {
+                el.setAttribute('disabled', 'true');
+                el.classList.add('is-disabled');
+            });
+        }
+
+        if (indicator) {
+            indicator.hidden = false;
+            indicator.classList.remove('pt-upload-indicator--error');
+        }
+
+        var formatBytes = function (bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return Math.ceil(bytes / 1024) + ' KB';
+            var mb = bytes / (1024 * 1024);
+            return (Math.round(mb * 10) / 10).toFixed(1) + ' MB';
+        };
+
+        var initialText = totalFiles > 1
+            ? ('Uploading ' + totalFiles + ' files' + (totalBytes > 0 ? ' (' + formatBytes(totalBytes) + ')' : '') + '…')
+            : ('Uploading' + (totalBytes > 0 ? ' (' + formatBytes(totalBytes) + ')' : '') + '…');
+
+        if (statusEl) statusEl.textContent = initialText;
+        if (percentEl) percentEl.textContent = '0%';
+        if (progressBar) progressBar.value = 0;
+
+        var xhr = new XMLHttpRequest();
+        xhr.open(form.method || 'POST', form.action, true);
+
+        xhr.upload.addEventListener('progress', function (e) {
+            if (!e.lengthComputable) return;
+            var pct = Math.min(99, Math.round((e.loaded / e.total) * 100));
+            if (progressBar) progressBar.value = pct;
+            if (percentEl) percentEl.textContent = pct + '%';
+            if (statusEl) {
+                statusEl.textContent = 'Uploading… ' + formatBytes(e.loaded) + ' / ' + formatBytes(e.total) + ' (' + pct + '%)';
+            }
+        });
+
+        xhr.upload.addEventListener('load', function () {
+            if (progressBar) {
+                progressBar.value = 100;
+                // Switch to indeterminate animation while server parses/digests
+                progressBar.removeAttribute('value');
+            }
+            if (percentEl) percentEl.textContent = '100%';
+            if (statusEl) statusEl.textContent = 'Uploaded. Processing and fingerprinting documents…';
+            if (submitBtn) {
+                submitBtn.innerHTML = '<span class="pt-spinner pt-spinner--inverse pt-spinner--sm" aria-hidden="true"></span><span>Processing…</span>';
+            }
+        });
+
+        var resetState = function (errorMsg) {
+            form._isUploading = false;
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('is-loading');
+                if (submitBtn._originalHtml) submitBtn.innerHTML = submitBtn._originalHtml;
+            }
+            if (modal) {
+                modal.removeAttribute('data-modal-locked');
+                modal.querySelectorAll('[data-modal-close]').forEach(function (el) {
+                    el.removeAttribute('disabled');
+                    el.classList.remove('is-disabled');
+                });
+            }
+            if (indicator) {
+                indicator.classList.add('pt-upload-indicator--error');
+            }
+            if (progressBar) {
+                progressBar.value = 0;
+            }
+            if (statusEl) {
+                statusEl.textContent = errorMsg;
+            }
+            if (percentEl) {
+                percentEl.textContent = 'Error';
+            }
+        };
+
+        xhr.addEventListener('load', function () {
+            if (xhr.status >= 200 && xhr.status < 400) {
+                if (statusEl) statusEl.textContent = 'Upload complete! Redirecting…';
+                if (xhr.responseURL) {
+                    window.location.href = xhr.responseURL;
+                } else {
+                    window.location.reload();
+                }
+            } else {
+                var detail = 'Upload failed (' + xhr.status + ').';
+                try {
+                    var data = JSON.parse(xhr.responseText);
+                    if (data && data.detail) detail = data.detail;
+                } catch (e) {}
+                resetState(detail);
+            }
+        });
+
+        xhr.addEventListener('error', function () {
+            resetState('Network error during upload. Please check your connection and try again.');
+        });
+
+        xhr.addEventListener('timeout', function () {
+            resetState('Upload timed out. Please try again.');
+        });
+
+        xhr.send(new FormData(form));
+    });
+
+    if (window.location.search && window.location.search.indexOf('test_upload_active=1') !== -1) {
+        var testForm = document.querySelector('form[data-upload-form]');
+        if (testForm) {
+            var testInd = testForm.querySelector('[data-upload-indicator]');
+            var testStatus = testInd ? testInd.querySelector('[data-upload-status]') : null;
+            var testPercent = testInd ? testInd.querySelector('[data-upload-percent]') : null;
+            var testBar = testInd ? testInd.querySelector('progress, .pt-progress') : null;
+            var testBtn = testForm.querySelector('[data-upload-submit]') || testForm.querySelector('button[type="submit"]');
+            if (testInd) testInd.hidden = false;
+            if (testStatus) testStatus.textContent = 'Uploading… 4.2 of 8.4 MB (50%)';
+            if (testPercent) testPercent.textContent = '50%';
+            if (testBar) testBar.value = 50;
+            if (testBtn) {
+                testBtn.disabled = true;
+                testBtn.classList.add('is-loading');
+                testBtn.innerHTML = '<span class="pt-spinner pt-spinner--inverse pt-spinner--sm" aria-hidden="true"></span><span>Uploading 3 files…</span>';
+            }
+        }
+    }
 })();
 </script>
 {%- endmacro %}

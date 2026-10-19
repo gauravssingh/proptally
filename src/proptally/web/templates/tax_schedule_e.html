@@ -11,10 +11,10 @@
 
 {% set year_switcher %}
     <nav class="pt-segmented" aria-label="Tax year">
-        <a class="pt-segmented__item{% if tax_year == 2025 %} is-active{% endif %}"
-           href="/tax/schedule-e?year=2025"{% if tax_year == 2025 %} aria-current="page"{% endif %}>2025</a>
-        <a class="pt-segmented__item{% if tax_year == 2026 %} is-active{% endif %}"
-           href="/tax/schedule-e?year=2026"{% if tax_year == 2026 %} aria-current="page"{% endif %}>2026</a>
+        {% for option_year in years %}
+        <a class="pt-segmented__item{% if tax_year == option_year %} is-active{% endif %}"
+           href="/tax/schedule-e?year={{ option_year }}"{% if tax_year == option_year %} aria-current="page"{% endif %}>{{ option_year }}</a>
+        {% endfor %}
     </nav>
 {% endset %}
 
@@ -50,6 +50,13 @@
     "Every deductible line mapped to its IRS Schedule E line number, per property.",
     flush=true
 ) }}
+{% if workpaper.unposted_split_count %}
+{{ ui.alert(
+    variant="warning",
+    title="Unposted allocations are excluded",
+    text=workpaper.unposted_split_count ~ " unposted split(s) totalling " ~ ui.amount(workpaper.unposted_provisional_cents, mode="plain") ~ " in this tax year are provisional. They are not part of the official posted-ledger Schedule E figures above."
+) }}
+{% endif %}
 {{ ui.table_open(label="Schedule E workpaper by property and IRS line") }}
 <thead>
     <tr>
@@ -63,17 +70,65 @@
     </tr>
 </thead>
 <tbody>
-    {# Line 3a — rental income. #}
+    {# Line 3 — rents received. #}
     <tr class="pt-table__row--income">
-        <td>Line 3a</td>
+        <td>Line 3</td>
         <td>Rents Received</td>
         {% for col in workpaper.columns %}
-        <td class="pt-table__num">{{ ui.amount(col.line_3_rents, mode="income") }}</td>
+        <td class="pt-table__num">{{ ui.amount(col.line_3_rents_received, mode="income") }}</td>
         {% endfor %}
         <td class="pt-table__num pt-table__total-col">{{ ui.amount(workpaper.total_rents, mode="income") }}</td>
     </tr>
 
     {{ ui.th_row("Schedule E Deductible Expenses", 3 + (workpaper.columns | length)) }}
+
+    {# Line 5. #}
+    <tr>
+        <td>Line 5</td>
+        <td>Advertising</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_5_advertising, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_5_advertising') | sum, mode="expense") }}
+        </td>
+    </tr>
+
+    {# Line 6. #}
+    <tr>
+        <td>Line 6</td>
+        <td>Auto and Travel</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_6_auto, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_6_auto') | sum, mode="expense") }}
+        </td>
+    </tr>
+
+    {# Line 7. #}
+    <tr>
+        <td>Line 7</td>
+        <td>Cleaning and Maintenance</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_7_cleaning_maintenance, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_7_cleaning_maintenance') | sum, mode="expense") }}
+        </td>
+    </tr>
+
+    {# Line 8. #}
+    <tr>
+        <td>Line 8</td>
+        <td>Commissions</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_8_commissions, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_8_commissions') | sum, mode="expense") }}
+        </td>
+    </tr>
 
     {# Line 9. #}
     <tr>
@@ -84,6 +139,30 @@
         {% endfor %}
         <td class="pt-table__num pt-table__total-col">
             {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_9_insurance') | sum, mode="expense") }}
+        </td>
+    </tr>
+
+    {# Line 10. #}
+    <tr>
+        <td>Line 10</td>
+        <td>Legal and Professional Fees</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_10_legal, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_10_legal') | sum, mode="expense") }}
+        </td>
+    </tr>
+
+    {# Line 11. #}
+    <tr>
+        <td>Line 11</td>
+        <td>Management Fees</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_11_management, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_11_management') | sum, mode="expense") }}
         </td>
     </tr>
 
@@ -147,34 +226,46 @@
         </td>
     </tr>
 
-    {# Line 20 — MACRS depreciation. #}
+    {# Line 18 — MACRS depreciation. #}
     <tr class="pt-table__row--depreciation">
-        <td>Line 20</td>
+        <td>Line 18</td>
         <td>Depreciation Expense (27.5-Yr MACRS)</td>
         {% for col in workpaper.columns %}
-        <td class="pt-table__num">{{ ui.amount(col.line_20_depreciation, mode="expense") }}</td>
+        <td class="pt-table__num">{{ ui.amount(col.line_18_depreciation, mode="expense") }}</td>
         {% endfor %}
         <td class="pt-table__num pt-table__total-col">
-            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_20_depreciation') | sum, mode="expense") }}
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_18_depreciation') | sum, mode="expense") }}
         </td>
     </tr>
 
-    {# Line 21 — total deductible expenses. #}
+    {# Line 19. #}
+    <tr>
+        <td>Line 19</td>
+        <td>Other (HOA, bank fees)</td>
+        {% for col in workpaper.columns %}
+        <td class="pt-table__num">{{ ui.amount(col.line_19_other, mode="expense") }}</td>
+        {% endfor %}
+        <td class="pt-table__num pt-table__total-col">
+            {{ ui.amount(workpaper.columns | selectattr('is_rental') | map(attribute='line_19_other') | sum, mode="expense") }}
+        </td>
+    </tr>
+
+    {# Line 20 — total deductible expenses. #}
     <tr class="pt-table__row--subtotal">
-        <td>Line 21</td>
+        <td>Line 20</td>
         <td>Total Expenses</td>
         {% for col in workpaper.columns %}
-        <td class="pt-table__num">{{ ui.amount(col.line_21_total_expenses, mode="expense") }}</td>
+        <td class="pt-table__num">{{ ui.amount(col.line_20_total_expenses, mode="expense") }}</td>
         {% endfor %}
         <td class="pt-table__num pt-table__total-col">{{ ui.amount(workpaper.total_expenses, mode="expense") }}</td>
     </tr>
 
-    {# Line 22 — net rental income or (loss). #}
+    {# Line 21 — net rental income or (loss). #}
     <tr class="pt-table__row--total">
-        <td>Line 22</td>
+        <td>Line 21</td>
         <td>Net Rental Income or (Loss)</td>
         {% for col in workpaper.columns %}
-        <td class="pt-table__num">{{ ui.amount(col.line_22_net_income_or_loss, mode="signed") }}</td>
+        <td class="pt-table__num">{{ ui.amount(col.line_21_net_income_or_loss, mode="signed") }}</td>
         {% endfor %}
         <td class="pt-table__num pt-table__total-col">{{ ui.amount(workpaper.total_net_income, mode="signed") }}</td>
     </tr>
@@ -207,7 +298,7 @@
         </div>
         {{ ui.stat(
             "Annual Depreciation",
-            ui.amount(col.line_20_depreciation, mode="expense"),
+            ui.amount(col.line_18_depreciation, mode="expense"),
             sub=ui.provenance("27.5-year straight line · IRC §168")
         ) }}
         <p class="pt-text-muted pt-fs-caption">{{ col.depreciation_detail.notes }}</p>

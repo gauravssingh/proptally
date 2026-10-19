@@ -146,7 +146,19 @@ verify_integrity() {
     echo "✓ Database integrity verified ($label): $integrity"
 }
 
+# require_stopped PATH
+# Refuses to overwrite a database a running process still has open.
+require_stopped() {
+    local target="$1"
+    if command -v lsof >/dev/null 2>&1 && lsof -- "$target" >/dev/null 2>&1; then
+        echo "ERROR: '$target' is open by a running process. Stop the service first." >&2
+        exit 7
+    fi
+}
+
 # backup_existing PATH
+# A consistent copy, including committed WAL transactions (a plain cp of the
+# main file silently omits them and is not a usable rollback point).
 backup_existing() {
     local target="$1"
     if [ "$FORCE" = true ] || [ ! -f "$target" ]; then
@@ -154,7 +166,22 @@ backup_existing() {
     fi
     local bak="${target}.bak.$(date +"%Y%m%d_%H%M%S")"
     echo "Backing up existing database to '$bak'..."
-    cp "$target" "$bak"
+    sqlite3 "$target" "VACUUM INTO '$bak';"
+    rm -f "${bak}-wal" "${bak}-shm"
+}
+
+# restore_database STAGED TARGET
+# Swaps in a fully written copy and clears stale sidecars so SQLite cannot replay
+# an old WAL over the restored file.
+restore_database() {
+    local staged="$1"
+    local target="$2"
+    require_stopped "$target"
+    rm -f "${target}-wal" "${target}-shm"
+    local staged_target="${target}.restore.$$"
+    cp "$staged" "$staged_target"
+    mv -f "$staged_target" "$target"
+    chmod 600 "$target"
 }
 
 MULTI=false
@@ -208,7 +235,7 @@ if [ "$MULTI" = true ]; then
         mkdir -p "$TARGET_STORAGE"
         backup_existing "$TARGET_STORAGE/system.db"
         echo "Restoring control plane to '$TARGET_STORAGE/system.db'..."
-        cp "$TEMP_STAGE/system/database.sqlite" "$TARGET_STORAGE/system.db"
+        restore_database "$TEMP_STAGE/system/database.sqlite" "$TARGET_STORAGE/system.db"
     fi
 
     while IFS= read -r tenant_dir; do
@@ -218,10 +245,14 @@ if [ "$MULTI" = true ]; then
         mkdir -p "$target_tenant"
         backup_existing "$target_tenant/proptally.db"
         echo "Restoring portfolio '$tenant_id' to '$target_tenant/proptally.db'..."
-        cp "$tenant_dir/proptally.db" "$target_tenant/proptally.db"
+        restore_database "$tenant_dir/proptally.db" "$target_tenant/proptally.db"
         if [ -d "$tenant_dir/vault" ]; then
             mkdir -p "$target_tenant/vault"
-            cp -R "$tenant_dir/vault/." "$target_tenant/vault/" 2>/dev/null || true
+            cp -R "$tenant_dir/vault/." "$target_tenant/vault/"
+        fi
+        if [ -d "$tenant_dir/photos" ]; then
+            mkdir -p "$target_tenant/photos"
+            cp -R "$tenant_dir/photos/." "$target_tenant/photos/"
         fi
     done <<< "$TENANT_LIST"
 
@@ -270,11 +301,17 @@ backup_existing "$TARGET_DB"
 
 # 5. Restore Database & Vault
 echo "Restoring database to '$TARGET_DB'..."
-cp "$TEMP_STAGE/database.sqlite" "$TARGET_DB"
+restore_database "$TEMP_STAGE/database.sqlite" "$TARGET_DB"
 
 if [ -d "$TEMP_STAGE/vault" ]; then
     echo "Restoring vault documents to '$TARGET_VAULT'..."
-    cp -R "$TEMP_STAGE/vault/." "$TARGET_VAULT/" 2>/dev/null || true
+    cp -R "$TEMP_STAGE/vault/." "$TARGET_VAULT/"
+fi
+if [ -d "$TEMP_STAGE/photos" ]; then
+    LEGACY_PHOTOS="$(dirname "$TARGET_DB")/photos"
+    echo "Restoring photos to '$LEGACY_PHOTOS'..."
+    mkdir -p "$LEGACY_PHOTOS"
+    cp -R "$TEMP_STAGE/photos/." "$LEGACY_PHOTOS/"
 fi
 
 # 6. Post-restore Verification

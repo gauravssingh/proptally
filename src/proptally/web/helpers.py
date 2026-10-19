@@ -5,6 +5,41 @@ import re
 from datetime import date
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
+
+
+def safe_local_path(url: str | None, fallback: str = "/") -> str:
+    """A same-host absolute path, or ``fallback``.
+
+    Browsers treat a backslash as a slash, so ``/\\evil.example`` is an
+    off-host navigation even though it starts with ``/``. Any scheme or netloc
+    is rejected for the same reason.
+    """
+    if not url:
+        return fallback
+    candidate = url.strip()
+    if not candidate.startswith("/") or candidate.startswith("//") or "\\" in candidate:
+        return fallback
+    parts = urlsplit(candidate)
+    if parts.scheme or parts.netloc:
+        return fallback
+    return candidate
+
+
+def safe_referer(request, fallback: str = "/") -> str:
+    """The request's Referer when it names this host, otherwise ``fallback``.
+
+    An absolute same-host URL is preserved (the browser sent it and redirecting
+    back to it is normal); anything off-host or containing a backslash is
+    reduced to a local path or the fallback.
+    """
+    referer = request.headers.get("referer")
+    if not referer:
+        return fallback
+    parts = urlsplit(referer)
+    if parts.scheme in {"http", "https"} and parts.netloc == request.url.netloc:
+        return referer
+    return safe_local_path(referer, fallback)
 
 
 def period_label(financials) -> str:

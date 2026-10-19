@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
+from uuid import uuid4
+
 from sqlmodel import Session, select
 
 from proptally.db.models import Document
@@ -29,6 +30,21 @@ class WatcherFileResult:
     details: Optional[str] = None
 
 
+def _move_into(source: Path, target_dir: Optional[Path]) -> None:
+    """Archive a file without ever overwriting an earlier one.
+
+    Two statements exported as ``statement.pdf`` must both survive; the second
+    gets a short suffix rather than destroying the first.
+    """
+    if target_dir is None:
+        return
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / source.name
+    if target.exists():
+        target = target_dir / f"{source.stem}-{uuid4().hex[:8]}{source.suffix}"
+    shutil.move(str(source), str(target))
+
+
 def process_inbox_file(
     file_path: Path,
     session: Session,
@@ -36,22 +52,19 @@ def process_inbox_file(
     processed_dir: Optional[Path] = None,
     review_dir: Optional[Path] = None,
     quarantine_dir: Optional[Path] = None,
-    auto_import: bool = True,
+    auto_import: bool = False,
 ) -> WatcherFileResult:
     """Processes a single incoming statement file from inbox."""
     if not file_path.is_file() or file_path.suffix.lower() != ".pdf":
         if quarantine_dir and file_path.is_file():
-            quarantine_dir.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(file_path), str(quarantine_dir / file_path.name))
+            _move_into(file_path, quarantine_dir)
         return WatcherFileResult(filename=file_path.name, status="UNSUPPORTED", details="Not a PDF file")
 
     try:
         digest = _sha256(file_path)
         existing_doc = session.exec(select(Document).where(Document.file_sha256 == digest)).first()
         if existing_doc:
-            if processed_dir:
-                processed_dir.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(file_path), str(processed_dir / file_path.name))
+            _move_into(file_path, processed_dir)
             return WatcherFileResult(
                 filename=file_path.name,
                 status="DUPLICATE",
@@ -63,9 +76,7 @@ def process_inbox_file(
         extraction = extract_and_resolve(file_path, session)
 
         if extraction is None:
-            if quarantine_dir:
-                quarantine_dir.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(file_path), str(quarantine_dir / file_path.name))
+            _move_into(file_path, quarantine_dir)
             return WatcherFileResult(
                 filename=file_path.name,
                 status="UNSUPPORTED",
@@ -86,16 +97,12 @@ def process_inbox_file(
             final_status = "NEEDS_REVIEW"
 
         # 4. Move file to target directory
-        if final_status == "PROCESSED" and processed_dir:
-            processed_dir.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(file_path), str(processed_dir / file_path.name))
-        elif final_status == "NEEDS_REVIEW" and (review_dir or quarantine_dir):
-            target = review_dir or quarantine_dir
-            target.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(file_path), str(target / file_path.name))
-        elif quarantine_dir:
-            quarantine_dir.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(file_path), str(quarantine_dir / file_path.name))
+        if final_status == "PROCESSED":
+            _move_into(file_path, processed_dir)
+        elif final_status == "NEEDS_REVIEW":
+            _move_into(file_path, review_dir or quarantine_dir)
+        else:
+            _move_into(file_path, quarantine_dir)
 
         return WatcherFileResult(
             filename=file_path.name,
@@ -107,9 +114,8 @@ def process_inbox_file(
 
     except Exception as exc:
         session.rollback()
-        if quarantine_dir and file_path.exists():
-            quarantine_dir.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(file_path), str(quarantine_dir / file_path.name))
+        if file_path.exists():
+            _move_into(file_path, quarantine_dir)
         return WatcherFileResult(
             filename=file_path.name,
             status="ERROR",
@@ -122,7 +128,7 @@ def process_inbox_once(
     session: Session,
     vault_dir: Path,
     archive_subfolders: bool = True,
-    auto_import: bool = True,
+    auto_import: bool = False,
 ) -> List[WatcherFileResult]:
     """Scans inbox folder once and processes all pending statements."""
     inbox_dir.mkdir(parents=True, exist_ok=True)
@@ -157,6 +163,7 @@ def watch_inbox_loop(
     vault_dir: Path,
     poll_interval_seconds: float = 3.0,
     stop_event: Optional[Callable[[], bool]] = None,
+    auto_import: bool = False,
 ) -> None:
     """Continuously watches inbox folder until stopped."""
     while True:
@@ -164,7 +171,7 @@ def watch_inbox_loop(
             break
         try:
             with get_session() as session:
-                results = process_inbox_once(inbox_dir, session, vault_dir)
+                results = process_inbox_once(inbox_dir, session, vault_dir, auto_import=auto_import)
                 for r in results:
                     print(f"[{r.status}] {r.filename} -> Doc: {r.document_id} Stmt: {r.statement_id} ({r.details})")
         except Exception as exc:

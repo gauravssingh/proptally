@@ -68,6 +68,12 @@ def _seed_alice_data(app, tenant_id: str) -> str:
     engine = app.state.tenant_manager.engine_for(tenant_id)
     from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
 
+    # A real file: a path that exists for nobody would make the owner's 404
+    # indistinguishable from a cross-tenant denial.
+    vault_path = app.state.tenant_manager.paths(tenant_id).vault / "alice-secret.pdf"
+    vault_path.parent.mkdir(parents=True, exist_ok=True)
+    vault_path.write_bytes(b"%PDF-1.4 alice private statement")
+
     with Session(engine) as session:
         session.add(FinancialInstitution(id="inst_alice", name="Alice Bank"))
         session.flush()
@@ -83,7 +89,7 @@ def _seed_alice_data(app, tenant_id: str) -> str:
         session.add(Document(
             id="doc_alice_secret", file_sha256="sha_alice_secret",
             original_filename="alice-secret-statement.pdf",
-            storage_path="/vault/alice/secret.pdf", file_size_bytes=10,
+            storage_path=str(vault_path), file_size_bytes=vault_path.stat().st_size,
         ))
         session.commit()
 
@@ -116,7 +122,7 @@ def test_each_portfolio_gets_its_own_database_file(instance, monkeypatch):
             triggers = session.execute(
                 text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
             ).all()
-            assert len(triggers) == 7, "every portfolio database gets the immutability triggers"
+            assert len(triggers) == 9, "every portfolio database gets the immutability triggers"
 
 
 def test_endpoints_show_nothing_of_another_portfolio(instance, monkeypatch):
@@ -132,6 +138,8 @@ def test_endpoints_show_nothing_of_another_portfolio(instance, monkeypatch):
         # Alice sees her own property; Bob does not.
         assert alice.get(f"/properties/{alice_property}").status_code == 200
         assert bob.get(f"/properties/{alice_property}").status_code == 404
+        # Alice can fetch her own document, so Bob's 404 below is about ownership.
+        assert alice.get("/documents/doc_alice_secret/view").status_code == 200
         assert bob.get("/documents/doc_alice_secret/view").status_code == 404
         assert bob.get(f"/photos/{alice_property}/cover.jpg").status_code == 404
         # Alice can fetch her own photo, so the 404 above is about ownership.

@@ -2,21 +2,22 @@
 
 from datetime import date
 from uuid import uuid4
+
 import pytest
 from pydantic import ValidationError
 from sqlmodel import Session, select
+
+from proptally.core.exceptions import InvalidSplitSumError
 from proptally.db.models import (
     Document,
-    FinancialInstitution,
     FinancialAccount,
-    Statement,
+    FinancialInstitution,
     Property,
+    Statement,
     Transaction,
     TransactionSplit,
-    TransactionProcessingState,
 )
-from proptally.domain.transactions.splits import apply_transaction_splits, SplitItem
-from proptally.core.exceptions import InvalidSplitSumError
+from proptally.domain.transactions.splits import SplitItem, apply_transaction_splits
 
 
 @pytest.fixture(name="sample_context")

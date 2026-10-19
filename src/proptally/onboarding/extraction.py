@@ -25,6 +25,7 @@ from html import unescape
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+from proptally.onboarding.archive import MAX_EXTRACTED_BYTES, MAX_FILE_BYTES
 from proptally.onboarding.providers import ProviderError, ocr_provider
 
 #: Below this many characters a PDF is treated as scanned rather than native.
@@ -82,9 +83,26 @@ class TextDocument:
 
 
 def _page_geometry(page) -> dict:
-    """Words and page geometry, captured while the PDF is already open."""
+    """Words and page geometry, captured while the PDF is already open.
+
+    PyMuPDF reports text in the *unrotated* page space, while ``page.rect`` is
+    the visible (rotated) rectangle. Storing unrotated rectangles alongside
+    rotated dimensions makes every highlight on a /Rotate 90 or 270 page land in
+    the wrong place, so the rotation matrix is applied here, once.
+    """
+    rotation = int(page.rotation or 0)
+    matrix = page.rotation_matrix
+    a, b, c, d, e, f = matrix
+
+    def transform(x, y):
+        return (a * x + c * y + e, b * x + d * y + f)
+
     words = []
     for x0, y0, x1, y1, text, block, line, word_no in page.get_text("words"):
+        if rotation:
+            tx0, ty0 = transform(x0, y0)
+            tx1, ty1 = transform(x1, y1)
+            x0, y0, x1, y1 = min(tx0, tx1), min(ty0, ty1), max(tx0, tx1), max(ty0, ty1)
         words.append({
             "text": text,
             "x0": float(x0), "y0": float(y0),
@@ -166,10 +184,27 @@ def _ocr_image(path: Path) -> TextDocument:
     return TextDocument(pages=[text], method=f"ocr:{provider.name}")
 
 
+def _read_ooxml_member(archive: zipfile.ZipFile, name: str, budget: list[int]) -> str:
+    """Read one inner XML stream with a hard per-file and cumulative ceiling.
+
+    Outer archive limits do not apply to a member of an already-extracted .docx
+    or .xlsx; a small file can still expand to gigabytes inside.
+    """
+    with archive.open(name) as stream:
+        data = stream.read(MAX_FILE_BYTES + 1)
+    if len(data) > MAX_FILE_BYTES:
+        raise DocumentUnreadable("An embedded document stream exceeds the size limit.")
+    budget[0] += len(data)
+    if budget[0] > MAX_EXTRACTED_BYTES:
+        raise DocumentUnreadable("The document expands beyond the extraction size limit.")
+    return data.decode("utf-8", errors="replace")
+
+
 def _docx_text(path: Path) -> TextDocument:
+    budget = [0]
     try:
         with zipfile.ZipFile(path) as archive:
-            xml = archive.read("word/document.xml").decode("utf-8", errors="replace")
+            xml = _read_ooxml_member(archive, "word/document.xml", budget)
     except (KeyError, zipfile.BadZipFile, OSError) as exc:
         raise DocumentUnreadable("The Word document could not be read.") from exc
     text = re.sub(r"</w:p\s*>", "\n", xml)
@@ -179,18 +214,19 @@ def _docx_text(path: Path) -> TextDocument:
 
 
 def _xlsx_text(path: Path) -> TextDocument:
+    budget = [0]
     try:
         with zipfile.ZipFile(path) as archive:
             names = archive.namelist()
             shared = ""
             if "xl/sharedStrings.xml" in names:
-                raw = archive.read("xl/sharedStrings.xml").decode("utf-8", errors="replace")
+                raw = _read_ooxml_member(archive, "xl/sharedStrings.xml", budget)
                 shared = "\n".join(unescape(item) for item in re.findall(r"<t[^>]*>(.*?)</t>", raw, re.DOTALL))
             sheets = []
             for name in sorted(names):
                 if not name.startswith("xl/worksheets/") or not name.endswith(".xml"):
                     continue
-                raw = archive.read(name).decode("utf-8", errors="replace")
+                raw = _read_ooxml_member(archive, name, budget)
                 rows = []
                 for row in re.findall(r"<row[^>]*>(.*?)</row>", raw, re.DOTALL):
                     values = [
@@ -962,7 +998,7 @@ def _extract_bank(result: ExtractionResult, pages: list[str], *, filename: str) 
         _add(result, "account_type", value, page, line, 0.7)
     else:
         text = "\n".join(pages).casefold()
-        if "credit card" in text:
+        if "credit card" in text or "apple card" in text:
             _add(result, "account_type", "CREDIT_CARD", 1, "credit card", 0.5)
         elif "savings account" in text:
             _add(result, "account_type", "SAVINGS", 1, "savings account", 0.5)

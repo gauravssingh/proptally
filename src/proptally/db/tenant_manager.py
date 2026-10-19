@@ -35,7 +35,7 @@ class TenantStorageError(RuntimeError):
 DEFAULT_STORAGE_ROOT = Path(__file__).resolve().parents[3] / "storage"
 
 #: Per-portfolio directories created for every tenant.
-TENANT_SUBDIRS = ("vault", "photos", "inbox", "processed", "quarantine")
+TENANT_SUBDIRS = ("vault", "photos", "staging", "inbox", "processed", "quarantine")
 
 #: How many portfolio engines to keep open per process.
 ENGINE_CACHE_SIZE = 64
@@ -79,16 +79,25 @@ def init_system_schema(engine: Engine) -> None:
     a widened role constraint, say -- is applied by ``run_control_migrations``.
     """
     from proptally.db.control_migrations import run_control_migrations
+    from proptally.db.schema import initialization_lock
 
-    SQLModel.metadata.create_all(engine, tables=list(SYSTEM_TABLES))
-    run_control_migrations(engine)
+    with initialization_lock(engine):
+        SQLModel.metadata.create_all(engine, tables=list(SYSTEM_TABLES))
+        run_control_migrations(engine)
+        database = getattr(engine.url, "database", None)
+        if database and database != ":memory:":
+            for suffix in ("", "-wal", "-shm"):
+                candidate = Path(f"{database}{suffix}")
+                if candidate.exists():
+                    os.chmod(candidate, 0o600)
 
 
 def get_system_engine(db_url: Optional[str] = None) -> Engine:
     """Engine for the control-plane database, creating its directory if needed."""
     if db_url is None:
         path = system_db_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(path.parent, 0o700)
         db_url = f"sqlite:///{path}"
     elif db_url.startswith("sqlite:///"):
         Path(db_url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
@@ -243,11 +252,18 @@ class TenantManager:
     def provision_tenant_storage(self, tenant_id: str) -> TenantPaths:
         """Explicitly create or resume provisioning a tenant's own storage."""
         paths = self.paths(tenant_id)
-        paths.root.mkdir(parents=True, exist_ok=True)
+        paths.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(paths.root, 0o700)
         for subdir in TENANT_SUBDIRS:
-            (paths.root / subdir).mkdir(parents=True, exist_ok=True)
+            directory = paths.root / subdir
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(directory, 0o700)
         engine = self._provisioning_engine(tenant_id)
         init_schema(engine)
+        for suffix in ("", "-wal", "-shm"):
+            database_file = Path(f"{paths.database}{suffix}")
+            if database_file.exists():
+                os.chmod(database_file, 0o600)
         with engine.connect() as connection:
             integrity = connection.exec_driver_sql("PRAGMA integrity_check").scalar_one()
             if integrity != "ok":

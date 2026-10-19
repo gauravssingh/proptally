@@ -1,7 +1,11 @@
 """Schema initialization, versioned migrations and DDL triggers for PropTally."""
 
+import fcntl
 import logging
+import os
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import CheckConstraint, MetaData, text
 from sqlalchemy.schema import CreateIndex, CreateTable
@@ -26,12 +30,14 @@ SQL_TRIGGERS = [
     END;
     """,
 
-    # 2. Prevent updating lines of a POSTED journal entry
+    # 2. Prevent updating lines of a POSTED journal entry, including a line being
+    #    moved *into* a posted entry (NEW side).
     """
     CREATE TRIGGER IF NOT EXISTS prevent_posted_lines_update
     BEFORE UPDATE ON journal_entry_lines
     FOR EACH ROW
     WHEN (SELECT status FROM journal_entries WHERE id = OLD.journal_entry_id) = 'POSTED'
+      OR (SELECT status FROM journal_entries WHERE id = NEW.journal_entry_id) = 'POSTED'
     BEGIN
         SELECT RAISE(ABORT, 'ImmutableLedgerError: Cannot update lines of a POSTED journal entry.');
     END;
@@ -90,7 +96,42 @@ SQL_TRIGGERS = [
         SELECT RAISE(ABORT, 'ImmutableLedgerError: Posting authorization records are immutable.');
     END;
     """,
+
+    # 8. A journal entry may never be born POSTED. Posting is a state transition
+    #    that the balance trigger below must see.
+    """
+    CREATE TRIGGER IF NOT EXISTS prevent_posted_entry_insert
+    BEFORE INSERT ON journal_entries
+    FOR EACH ROW
+    WHEN NEW.status = 'POSTED'
+    BEGIN
+        SELECT RAISE(ABORT, 'ImmutableLedgerError: A journal entry must be created as DRAFT.');
+    END;
+    """,
+
+    # 9. Enforce double-entry equilibrium at the database boundary: a DRAFT entry
+    #    may only become POSTED when it has lines and debits equal credits.
+    """
+    CREATE TRIGGER IF NOT EXISTS enforce_balanced_entry_on_post
+    BEFORE UPDATE OF status ON journal_entries
+    FOR EACH ROW
+    WHEN NEW.status = 'POSTED' AND OLD.status != 'POSTED'
+    BEGIN
+        SELECT RAISE(ABORT, 'UnbalancedJournalEntryError: Cannot post an empty or unbalanced journal entry.')
+        WHERE (SELECT COUNT(*) FROM journal_entry_lines WHERE journal_entry_id = NEW.id) = 0
+           OR (SELECT TOTAL(debit_cents) - TOTAL(credit_cents)
+               FROM journal_entry_lines WHERE journal_entry_id = NEW.id) != 0
+           OR (SELECT TOTAL(debit_cents) FROM journal_entry_lines WHERE journal_entry_id = NEW.id) <= 0;
+    END;
+    """,
 ]
+
+#: The triggers this module owns. Only these may be dropped by a migration;
+#: anything else in sqlite_master belongs to the operator or another code line.
+TRIGGER_NAMES = tuple(
+    part.split("CREATE TRIGGER IF NOT EXISTS", 1)[1].split()[0]
+    for part in SQL_TRIGGERS
+)
 
 
 def _sql(body: str) -> str:
@@ -365,11 +406,41 @@ def _rebuild_table_for_constraints(engine, table) -> None:
             other.to_metadata(staging)
     rebuilt = table.to_metadata(staging, name=temp_name)
     create_sql = str(CreateTable(rebuilt).compile(dialect=engine.dialect))
+
+    # Never copy a model subset over a live table: a column added out-of-band
+    # would silently vanish. Refuse the rebuild and let an operator decide.
+    with engine.connect() as inspect_conn:
+        live_columns = [
+            row[1]
+            for row in inspect_conn.exec_driver_sql(f'PRAGMA table_info("{table.name}")').fetchall()
+        ]
+        model_columns = {column.name for column in table.columns}
+        untracked = [name for name in live_columns if name not in model_columns]
+        if untracked:
+            raise RuntimeError(
+                f"Refusing to rebuild {table.name}: live column(s) {untracked!r} are "
+                "not declared by the current models. Preserve or migrate them first."
+            )
+        live_indexes = [
+            (row[0], row[1])
+            for row in inspect_conn.exec_driver_sql(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL",
+                (table.name,),
+            ).fetchall()
+        ]
+
     columns = ", ".join(f'"{c.name}"' for c in table.columns)
     copy_sql = f'INSERT INTO "{temp_name}" ({columns}) SELECT {columns} FROM "{table.name}"'
-    # Indexes are created after the rename, so they must be compiled against the
-    # original table name (the staged copies are named for the temporary table).
-    index_sql = [str(CreateIndex(ix).compile(dialect=engine.dialect)) for ix in table.indexes]
+    # Indexes are created after the rename. Replay every live index, including
+    # ones this model does not declare, then any model index not already live.
+    live_index_names = {name for name, _sql_text in live_indexes}
+    index_sql = [sql_text for _name, sql_text in live_indexes]
+    index_sql.extend(
+        str(CreateIndex(ix).compile(dialect=engine.dialect))
+        for ix in table.indexes
+        if ix.name not in live_index_names
+    )
 
     # AUTOCOMMIT gives explicit control: PRAGMA foreign_keys is a no-op inside a
     # transaction, and it must be toggled outside one.
@@ -397,6 +468,30 @@ def _rebuild_table_for_constraints(engine, table) -> None:
             conn.exec_driver_sql("PRAGMA foreign_keys = ON")
 
 
+def _migrate_split_category_values(engine) -> int:
+    """Rebuilds transaction_splits when its category CHECK is out of date.
+
+    The generic constraint migration only notices a missing constraint *name*.
+    Adding an allowed category keeps the name, so it needs an explicit rebuild.
+    The table is normally small (one row per allocated transaction); the rebuild
+    preserves every row and foreign key.
+    """
+    with engine.connect() as conn:
+        if not _table_exists(conn, "transaction_splits"):
+            return 0
+        live_sql = _live_table_sql(conn, "transaction_splits")
+    if "SECURITY_DEPOSIT" in live_sql:
+        return 0
+    table = next(
+        (item for item in SQLModel.metadata.sorted_tables if item.name == "transaction_splits"),
+        None,
+    )
+    if table is None:
+        return 0
+    _rebuild_table_for_constraints(engine, table)
+    return 1
+
+
 def _migrate_constraints(engine) -> int:
     """Installs missing CHECK constraints by rebuilding affected tables.
 
@@ -411,15 +506,20 @@ def _migrate_constraints(engine) -> int:
         return 0
 
     with engine.begin() as conn:
-        for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type = 'trigger'")).all():
-            conn.execute(text(f'DROP TRIGGER IF EXISTS "{row[0]}"'))
+        # Drop only the triggers this module owns; a custom operator trigger is
+        # never collateral damage of a constraint migration.
+        for name in TRIGGER_NAMES:
+            conn.execute(text(f'DROP TRIGGER IF EXISTS "{name}"'))
 
-    for table in needing:
-        _rebuild_table_for_constraints(engine, table)
-
-    with engine.begin() as conn:
-        for trigger_sql in SQL_TRIGGERS:
-            conn.execute(text(trigger_sql.strip()))
+    try:
+        for table in needing:
+            _rebuild_table_for_constraints(engine, table)
+    finally:
+        # Reinstall even if a rebuild failed: a tenant database must never be
+        # left without its ledger immutability triggers.
+        with engine.begin() as conn:
+            for trigger_sql in SQL_TRIGGERS:
+                conn.execute(text(trigger_sql.strip()))
     return len(needing)
 
 
@@ -510,6 +610,7 @@ SCHEMA_MIGRATIONS = (
     (105, "add property location columns", lambda engine: _apply(engine, _migrate_columns)),
     (106, "add portfolio setup publish state", lambda engine: _apply(engine, _migrate_columns)),
     (107, "add acquisition costs and loan rate type", lambda engine: _apply(engine, _migrate_columns)),
+    (108, "add security deposit split category", _migrate_split_category_values),
 )
 
 
@@ -591,16 +692,44 @@ def run_migrations(engine) -> list:
     return applied_log
 
 
+@contextmanager
+def initialization_lock(engine):
+    """Serialize schema initialization across processes.
+
+    Several Gunicorn workers may start at once. ``create_all`` and the
+    check-then-insert migration ledger are not concurrency-safe on their own, so
+    every initializer takes an exclusive file lock next to the database.
+    """
+    database = getattr(engine.url, "database", None)
+    if not database or database == ":memory:":
+        yield
+        return
+    lock_path = Path(database).parent / f"{Path(database).name}.init.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
 def init_schema(engine) -> None:
     """Creates all relational tables, migrates, and installs immutability triggers."""
-    # Create tables that do not exist yet. This never alters existing tables.
-    SQLModel.metadata.create_all(engine)
+    with initialization_lock(engine):
+        # Create tables that do not exist yet. This never alters existing tables.
+        SQLModel.metadata.create_all(engine)
 
-    # Bring a pre-existing database up to the current columns, constraints and
-    # indexes before the triggers are (re)installed: rebuilding a table drops any
-    # triggers attached to it.
-    run_migrations(engine)
+        # Bring a pre-existing database up to the current columns, constraints and
+        # indexes before the triggers are (re)installed: rebuilding a table drops any
+        # triggers attached to it.
+        run_migrations(engine)
 
-    with engine.begin() as conn:
-        for trigger_sql in SQL_TRIGGERS:
-            conn.execute(text(trigger_sql.strip()))
+        with engine.begin() as conn:
+            # Recreate, not just CREATE IF NOT EXISTS: an older definition with the
+            # same name must be replaced by the current invariant.
+            for name in TRIGGER_NAMES:
+                conn.execute(text(f'DROP TRIGGER IF EXISTS "{name}"'))
+            for trigger_sql in SQL_TRIGGERS:
+                conn.execute(text(trigger_sql.strip()))

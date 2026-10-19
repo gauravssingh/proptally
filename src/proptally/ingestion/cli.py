@@ -7,12 +7,12 @@ import json
 import os
 import socket
 from contextlib import contextmanager, nullcontext
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import Engine, text
 from sqlmodel import Session, select
-from datetime import datetime, timezone
 
 from proptally.db.connection import get_engine
 from proptally.db.system_models import TENANT_ACTIVE, Tenant
@@ -128,6 +128,11 @@ def main() -> None:
     parser.add_argument("--inbox-dir", type=Path, default=Path("inbox"), help="Inbox directory for watcher (default: inbox)")
     parser.add_argument("--poll-interval", type=float, default=3.0, help="Polling interval in seconds (default: 3.0)")
     parser.add_argument("--once", action="store_true", help="Process inbox once and exit without running continuous loop")
+    parser.add_argument(
+        "--auto-import",
+        action="store_true",
+        help="Approve and import VALIDATED statements without human review (unattended deployments only)",
+    )
     parser.add_argument("--vault-dir", type=Path, default=None, help="Standalone vault path; --tenant always uses its own vault and rejects this override")
     parser.add_argument("--db", type=Path, default=None, help="Explicit standalone database path; never inferred from PROPTALLY_DB_PATH and not allowed with --watch")
     parser.add_argument("--tenant", metavar="ID_OR_SLUG", default=None, help="Target one portfolio by tenant id or slug, using its own database and vault")
@@ -154,9 +159,11 @@ def main() -> None:
         from proptally.ingestion.watcher import process_inbox_once, watch_inbox_loop
 
         if args.once:
-            with _tenant_session(engine, job_scope) as session:
+            with _tenant_session(engine, job_scope, initialize=False) as session:
                 vault_dir.mkdir(parents=True, exist_ok=True)
-                results = process_inbox_once(inbox_path, session, vault_dir)
+                results = process_inbox_once(
+                    inbox_path, session, vault_dir, auto_import=args.auto_import
+                )
                 out = [
                     {
                         "filename": r.filename,
@@ -169,7 +176,7 @@ def main() -> None:
                 ]
                 print(json.dumps({"processed_count": len(out), "results": out}, indent=2))
         else:
-            with _tenant_session(engine, job_scope) as _session:
+            with _tenant_session(engine, job_scope, initialize=False) as _session:
                 vault_dir.mkdir(parents=True, exist_ok=True)
             print(f"PropTally Hot-Folder Watcher starting on: {inbox_path}")
             print(f"Vault: {vault_dir}")
@@ -180,6 +187,7 @@ def main() -> None:
                 vault_dir=vault_dir,
                 poll_interval_seconds=args.poll_interval,
                 stop_event=(lambda: not tenant_is_active()) if tenant_is_active else None,
+                auto_import=args.auto_import,
             )
         return
 
@@ -187,7 +195,7 @@ def main() -> None:
         if args.commit:
             parser.error("--commit applies only to folder ingestion; approval/import/update operations persist directly.")
         engine, _portfolio_vault, _portfolio_inbox, job_scope, _tenant_is_active = _resolve_target(parser, args)
-        with _tenant_session(engine, job_scope) as session:
+        with _tenant_session(engine, job_scope, initialize=args.tenant is None) as session:
             if args.update_extraction:
                 if not args.set:
                     parser.error("--set KEY=VALUE [KEY=VALUE ...] is required with --update-extraction")
@@ -232,7 +240,7 @@ def main() -> None:
         job_scope = None
     db_file = args.db.resolve() if args.db else Path(engine.url.database or ".")
     vault_dir = args.vault_dir.resolve() if args.vault_dir else (portfolio_vault or db_file.parent / "documents")
-    with _tenant_session(engine, job_scope) as session:
+    with _tenant_session(engine, job_scope, initialize=args.tenant is None) as session:
         report = ingest_folder(args.folder, session, vault_dir, commit=args.commit)
     print(json.dumps({"mode": "commit" if args.commit else "dry-run", **report}, indent=2))
 

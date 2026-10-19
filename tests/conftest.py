@@ -26,6 +26,34 @@ from proptally.domain.accounting.coa import ensure_entity_ledger_accounts
 from proptally.web.app import create_app
 
 
+def create_test_app(*, db_url=None, system_db_url=None, storage_root=None):
+    """Build an app for a test, optionally over a pre-seeded shared database.
+
+    Production ``create_app`` has no shared-database parameter at all. This
+    harness substitutes a ``TenantManager`` that points every portfolio at the
+    supplied file, and only for the duration of the factory call.
+    """
+    if db_url is None:
+        return create_app(system_db_url=system_db_url, storage_root=storage_root)
+
+    import proptally.web.app as web_app
+    from proptally.db.tenant_manager import TenantManager
+
+    shared_db = db_url
+
+    class _SharedTenantManager(TenantManager):
+        def __init__(self, *args, **kwargs):
+            kwargs["db_url"] = shared_db
+            super().__init__(*args, **kwargs)
+
+    original = web_app.TenantManager
+    web_app.TenantManager = _SharedTenantManager
+    try:
+        return create_app(system_db_url=system_db_url, storage_root=storage_root)
+    finally:
+        web_app.TenantManager = original
+
+
 @pytest.fixture(name="engine")
 def engine_fixture():
     """Provides an isolated in-memory SQLite database with WAL and triggers configured."""
@@ -121,11 +149,11 @@ def owner_fixture(tmp_path, monkeypatch) -> Iterator[Callable[..., SignedInOwner
         if app is None:
             created["count"] += 1
             storage = tmp_path / f"storage-{created['count']}"
-            app = create_app(
+            app = create_test_app(
                 db_url=db_url,
                 system_db_url=f"sqlite:///{storage / 'system.db'}",
                 storage_root=str(storage),
-                )
+            )
         client = TestClient(app)
         client.__enter__()
         started.append(client)

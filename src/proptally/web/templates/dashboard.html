@@ -133,7 +133,7 @@
                 {{ ui.stat(
                     "Debt service rate",
                     (loan.current_interest_rate_bps | format_bps) if loan else "Debt free",
-                    sub=('Loan <span class="pt-num">···' ~ loan.loan_number[-4:] ~ '</span>') if loan else None
+                    sub=('Loan <span class="pt-num">···' ~ loan.loan_number[-4:] ~ '</span>') if loan else '<span class="pt-text-muted">No active mortgage</span>'
                 ) }}
             </div>
         </div>
