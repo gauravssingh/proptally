@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -60,6 +61,8 @@ PDF_MAGIC = b"%PDF-"
 #: The opt-in flag itself is ``DOC_INTEL_ENV_FLAG`` in the ingestion service, so the
 #: admin console and this route can never disagree about whether the engine is on.
 DOC_INTEL_UPLOAD_TIMEOUT = 300.0
+
+logger = logging.getLogger(__name__)
 
 
 def _doc_intel_service() -> StatementIngestionService | None:
@@ -280,6 +283,10 @@ def _store_single_statement(payload: bytes, filename: str, session: Session, con
             profile = DOC_INTEL_PROFILE_FOR_TYPE.get(extraction.statement_type)
             if profile:
                 try:
+                    logger.info(
+                        "Submitting statement '%s' to Document Intelligence (profile: %s)",
+                        filename, profile,
+                    )
                     staged = service.extract_and_stage(
                         session,
                         context.paths.vault,
@@ -290,6 +297,10 @@ def _store_single_statement(payload: bytes, filename: str, session: Session, con
                         commit=True,
                     )
                 except Exception as exc:  # noqa: BLE001 - the built-in parser is the fallback
+                    logger.warning(
+                        "Document Intelligence extraction failed for '%s'; falling back to built-in parser: %s",
+                        filename, exc, exc_info=True,
+                    )
                     note = (
                         f" The local language model could not read it ({exc}), "
                         "so the built-in parser did."

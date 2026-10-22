@@ -1,45 +1,21 @@
 """Lightweight, standalone Python client for Document Intelligence Lab API.
 
-Zero internal dependencies other than httpx.
-Copy this file directly into any downstream application (e.g. proptally-mt).
-
-Usage Example:
---------------
-from doc_intel_client import DocumentIntelligenceClient
-
-client = DocumentIntelligenceClient(base_url="http://localhost:8765")
-
-# 1. Health & profile check
-print("Supported profiles:", client.list_profiles())
-
-# 2. Async extraction (with progress callback)
-job = client.extract_file(
-    file="path/to/bank_statement.pdf",
-    profile_name="bank_statement",
-    wait=True,
-    on_progress=lambda msg: print(f"Progress: {msg}")
-)
-
-if job.is_success:
-    result = job.result
-    print("Document ID:", result["document_id"])
-    print("Cross-field valid:", result["cross_field_valid"])
-    
-    # PropTally Prisma models
-    pt_payload = result["proptally_payload"]
-    statement = pt_payload["statement"]
-    print("Status:", statement["ingestion_status"])  # 'VALIDATED_READY'
-    print("Period:", statement["period_start_date"], "to", statement["period_end_date"])
+Can be imported directly from document_lab or dropped as a standalone module
+into downstream consumers like PropTally (proptally-mt) with zero dependencies other than httpx.
 """
 
 from __future__ import annotations
 
+import logging
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Union
 
 import httpx
+
+logger = logging.getLogger("doc_intel.client")
 
 
 @dataclass
@@ -102,12 +78,8 @@ class DocumentIntelligenceClient:
         self.close()
 
     def health(self, timeout: Optional[float] = None) -> dict[str, Any]:
-        """Check if the service is healthy.
-
-        ``timeout`` overrides the client's default for this one call, so a probe
-        can fail fast instead of waiting out a 180-second inference budget.
-        """
-        resp = self._client.get("/health", timeout=timeout)
+        """Check if Document Intelligence service is healthy and list loaded models."""
+        resp = self._client.get("/health", timeout=timeout or self.timeout)
         resp.raise_for_status()
         return resp.json()
 
@@ -116,18 +88,6 @@ class DocumentIntelligenceClient:
         resp = self._client.get("/api/v1/profiles")
         resp.raise_for_status()
         return list(resp.json().get("profiles", {}).keys())
-
-    def profile_details(self) -> dict[str, Any]:
-        """Every profile with its display name, version and field schema."""
-        resp = self._client.get("/api/v1/profiles")
-        resp.raise_for_status()
-        return dict(resp.json().get("profiles", {}))
-
-    def profile_detail(self, profile_id: str) -> dict[str, Any]:
-        """One profile: full field schema, and the YAML it was loaded from."""
-        resp = self._client.get(f"/api/v1/profiles/{profile_id}")
-        resp.raise_for_status()
-        return dict(resp.json())
 
     def submit_extraction(
         self,
@@ -139,6 +99,7 @@ class DocumentIntelligenceClient:
         strategy: str = "text_only",
         property_id: str = "",
         map_to_proptally: bool = True,
+        correlation_id: Optional[str] = None,
     ) -> DocIntelJob:
         """Submit a document extraction job asynchronously. Returns immediately with JobInfo."""
         file_bytes: bytes
@@ -156,6 +117,7 @@ class DocumentIntelligenceClient:
         else:
             raise TypeError("file must be a filepath (str/Path) or raw bytes")
 
+        cid = correlation_id or f"cid_{uuid.uuid4().hex[:8]}"
         files = {"file": (orig_filename, file_bytes, "application/pdf")}
         data: dict[str, Any] = {
             "profile_name": profile_name,
@@ -167,9 +129,23 @@ class DocumentIntelligenceClient:
         if model_id:
             data["model_id"] = model_id
 
-        resp = self._client.post("/api/v1/jobs/extract/upload", files=files, data=data)
-        resp.raise_for_status()
-        return DocIntelJob.from_dict(resp.json())
+        headers = {"X-Correlation-ID": cid}
+        logger.info(
+            f"[{cid}] Submitting '{orig_filename}' ({len(file_bytes)/1024:.1f} KB) "
+            f"to {self.base_url} (profile: {profile_name}, provider: {provider})"
+        )
+        try:
+            resp = self._client.post("/api/v1/jobs/extract/upload", files=files, data=data, headers=headers)
+            resp.raise_for_status()
+            job = DocIntelJob.from_dict(resp.json())
+            logger.info(f"[{cid}] Enqueued job {job.job_id} (initial status: {job.status})")
+            return job
+        except httpx.HTTPStatusError as e:
+            logger.error(f"[{cid}] HTTP {e.response.status_code} submitting job to {e.request.url}: {e.response.text}")
+            raise
+        except Exception as e:
+            logger.error(f"[{cid}] Connection error submitting job to {self.base_url}: {e}")
+            raise
 
     def get_job(self, job_id: str) -> DocIntelJob:
         """Fetch the current execution status and result of a job."""
@@ -194,19 +170,28 @@ class DocumentIntelligenceClient:
         max_time = timeout or self.timeout
         t0 = time.time()
         last_msg = ""
+        logger.info(f"[{job_id}] Waiting for job completion (timeout: {max_time}s, poll: {poll_interval}s)...")
 
         while True:
             job = self.get_job(job_id)
 
             if job.progress_message and job.progress_message != last_msg:
                 last_msg = job.progress_message
+                logger.info(f"[{job_id}] Progress: {last_msg}")
                 if on_progress:
                     on_progress(last_msg)
 
             if job.is_done:
+                elapsed = time.time() - t0
+                if job.is_success:
+                    logger.info(f"[{job_id}] Job COMPLETED successfully in {elapsed:.2f}s")
+                else:
+                    logger.error(f"[{job_id}] Job {job.status.upper()} in {elapsed:.2f}s: {job.error_message}")
                 return job
 
             if time.time() - t0 > max_time:
+                elapsed = time.time() - t0
+                logger.error(f"[{job_id}] Job TIMED OUT after {elapsed:.2f}s (last status: {job.status})")
                 raise TimeoutError(f"Job {job_id} did not complete within {max_time} seconds (status: {job.status}).")
 
             time.sleep(poll_interval)

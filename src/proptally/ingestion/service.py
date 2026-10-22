@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -1224,6 +1225,9 @@ def _doc_intel_review_reasons(data: dict, result: dict) -> list[str]:
     return reasons
 
 
+logger = logging.getLogger("proptally.ingestion.doc_intel")
+
+
 class StatementIngestionService:
     """Submits statements to the Document Intelligence sidecar and stages the result.
 
@@ -1366,9 +1370,10 @@ class StatementIngestionService:
             .order_by(desc(DocumentExtraction.created_at))
         ).first()
         if existing is not None:
-            # The same document already came back from this extractor. A local
-            # parser's extraction of the same bytes is superseded instead, which
-            # is what the review queue shows anyway (the most recent wins).
+            logger.info(
+                "DocIntel job %s already staged as extraction %s (document %s)",
+                job.job_id, existing.id, stored.document.id,
+            )
             return DocIntelStaged(
                 job=job, document=stored.document, extraction=existing, created=False, data=data
             )
@@ -1386,6 +1391,10 @@ class StatementIngestionService:
         session.flush()
         if commit:
             session.commit()
+        logger.info(
+            "Staged DocIntel job %s as extraction %s (status: %s, file: %s)",
+            job.job_id, extraction.id, data["status"], original_filename,
+        )
         return DocIntelStaged(
             job=job, document=stored.document, extraction=extraction, created=True, data=data
         )
@@ -1404,6 +1413,10 @@ class StatementIngestionService:
         commit: bool = False,
     ) -> DocIntelStaged:
         """Submit, wait, and stage in one call. The file is stored only on success."""
+        logger.info(
+            "Extracting and staging '%s' (%s bytes) via Document Intelligence (profile: %s)",
+            original_filename, len(payload), profile_name,
+        )
         job = self.extract(
             payload=payload,
             original_filename=original_filename,
