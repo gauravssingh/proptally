@@ -20,6 +20,7 @@ to the tenants on this platform.
 
 from __future__ import annotations
 
+import os
 import urllib.parse
 from collections import Counter
 from pathlib import Path
@@ -29,10 +30,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+from proptally.db.models import Document, DocumentExtraction, Statement
 from proptally.db.portfolio_lifecycle import portfolio_status
 from proptally.db.system_models import (
     INVITABLE_ROLES,
     ROLES,
+    TENANT_ACTIVE,
     TENANT_STATES,
     LegacyMigration,
     Tenant,
@@ -43,6 +46,13 @@ from proptally.db.system_models import (
     UserSession,
 )
 from proptally.db.tenant_manager import TenantManager
+from proptally.ingestion.doc_intel import DocumentIntelligenceClient
+from proptally.ingestion.service import (
+    DOC_INTEL_DEFAULT_URL,
+    DOC_INTEL_ENV_FLAG,
+    DOC_INTEL_PARSER_NAME,
+    DOC_INTEL_PROFILES,
+)
 from proptally.web.auth import (
     ROLE_PICKER_LABELS,
     MembershipError,
@@ -120,6 +130,161 @@ def _instance_overview(control_engine) -> dict:
         "memberships": memberships,
         "invites_waiting": invites_waiting,
     }
+
+
+def _doc_intel_engine_status(*, timeout: float = 2.0) -> dict:
+    """Probe the extraction sidecar and report it. An unreachable service is a state.
+
+    Nothing here raises: the console's job is to say what is wrong, so a refused
+    connection, a timeout or an unhealthy body is rendered rather than thrown. The
+    probe is bounded by ``timeout`` so a hung daemon cannot hang the console.
+    """
+    base_url = os.environ.get("PROPTALLY_DOC_INTEL_URL", DOC_INTEL_DEFAULT_URL).rstrip("/")
+    enabled = os.environ.get(DOC_INTEL_ENV_FLAG, "").strip().lower() in {"1", "true", "yes"}
+    status: dict = {
+        "enabled": enabled,
+        "base_url": base_url,
+        "reachable": False,
+        "error": None,
+        "health": {},
+        "profiles": [],
+        "jobs": [],
+        "job_counts": [],
+    }
+    client = DocumentIntelligenceClient(base_url=base_url, timeout=timeout)
+    try:
+        health = client.health(timeout=timeout)
+        status["health"] = health
+        status["reachable"] = str(health.get("status", "")).lower() in ("ok", "healthy")
+        for profile_id, profile in sorted(client.profile_details().items()):
+            fields = profile.get("fields") or {}
+            status["profiles"].append({
+                "id": profile_id,
+                "name": profile.get("display_name") or profile_id,
+                "version": profile.get("version"),
+                "fields": len(fields),
+                "required": sum(1 for field in fields.values() if field.get("required")),
+                # None means this application never asks for this profile.
+                "statement_type": DOC_INTEL_PROFILES.get(profile_id),
+            })
+        jobs = client.list_jobs(limit=15)
+        status["jobs"] = [
+            {
+                "id": job.job_id,
+                "status": job.status,
+                "profile": job.profile_name,
+                "filename": job.filename,
+                "duration": job.duration_seconds,
+                "document": job.document_id,
+                "error": job.error_message,
+            }
+            for job in jobs
+        ]
+        status["job_counts"] = sorted(Counter(job.status for job in jobs).items())
+    except Exception as exc:  # noqa: BLE001 - reported on the page, not raised
+        status["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        client.close()
+    return status
+
+
+def _doc_intel_profile(profile_id: str, *, timeout: float = 3.0) -> dict:
+    """One profile, as the daemon loaded it. Read-only: the YAML is the source of truth."""
+    base_url = os.environ.get("PROPTALLY_DOC_INTEL_URL", DOC_INTEL_DEFAULT_URL).rstrip("/")
+    client = DocumentIntelligenceClient(base_url=base_url, timeout=timeout)
+    try:
+        detail = client.profile_detail(profile_id)
+        detail["statement_type"] = DOC_INTEL_PROFILES.get(detail.get("profile_id", profile_id))
+        return detail
+    except Exception as exc:  # noqa: BLE001 - rendered as the page's state
+        return {
+            "profile_id": profile_id,
+            "path": None,
+            "source": "",
+            "profile": None,
+            "statement_type": DOC_INTEL_PROFILES.get(profile_id),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    finally:
+        client.close()
+
+
+def _doc_intel_portfolios(control_engine, tenant_manager: TenantManager) -> list[dict]:
+    """Count-only engine mix per active portfolio.
+
+    Documents and extraction versions, never an amount: the console reports what the
+    extractor has staged, not what the portfolio is worth. A portfolio whose database
+    cannot be opened is reported as unreadable instead of hiding the page.
+    """
+    with Session(control_engine) as session:
+        tenants = list(
+            session.exec(
+                select(Tenant).where(Tenant.status == TENANT_ACTIVE).order_by(Tenant.created_at)
+            ).all()
+        )
+    rows = []
+    for tenant in tenants:
+        row = {
+            "id": tenant.id,
+            "name": tenant.name,
+            "slug": tenant.slug,
+            "readable": True,
+            "error": None,
+            "documents": 0,
+            "local": 0,
+            "sidecar": 0,
+            "validated": 0,
+            "needs_review": 0,
+            "other": 0,
+            "approved": 0,
+            "committed": 0,
+            "last_sidecar_at": None,
+        }
+        try:
+            with Session(tenant_manager.engine_for(tenant.id)) as session:
+                row["documents"] = session.exec(
+                    select(func.count()).select_from(Document)
+                ).one()
+                grouped = session.exec(
+                    select(
+                        DocumentExtraction.parser_name,
+                        DocumentExtraction.validation_status,
+                        DocumentExtraction.approval_status,
+                        func.count(),
+                    ).group_by(
+                        DocumentExtraction.parser_name,
+                        DocumentExtraction.validation_status,
+                        DocumentExtraction.approval_status,
+                    )
+                ).all()
+                for parser_name, validation, approval, count in grouped:
+                    if parser_name != DOC_INTEL_PARSER_NAME:
+                        row["local"] += count
+                        continue
+                    row["sidecar"] += count
+                    if validation == "VALIDATED":
+                        row["validated"] += count
+                    elif validation == "NEEDS_REVIEW":
+                        row["needs_review"] += count
+                    else:
+                        row["other"] += count
+                    if approval == "APPROVED":
+                        row["approved"] += count
+                row["committed"] = session.exec(
+                    select(func.count())
+                    .select_from(Statement)
+                    .where(Statement.ingestion_status == "COMMITTED")
+                ).one()
+                row["last_sidecar_at"] = session.exec(
+                    select(func.max(DocumentExtraction.created_at)).where(
+                        DocumentExtraction.parser_name == DOC_INTEL_PARSER_NAME
+                    )
+                ).one()
+        except Exception as exc:  # noqa: BLE001 - an unreadable portfolio is reported
+            row["readable"] = False
+            row["error"] = type(exc).__name__
+        rows.append(row)
+    return rows
 
 
 def _tenant_rows(control_engine, tenant_manager: TenantManager) -> list[dict]:
@@ -282,6 +447,11 @@ def get_admin_router(
             {"key": "overview", "label": "Overview", "href": "/admin"},
             {"key": "tenants", "label": "Portfolios", "href": "/admin/tenants"},
             {"key": "people", "label": "People", "href": "/admin/people"},
+            {
+                "key": "document_intelligence",
+                "label": "Document intelligence",
+                "href": "/admin/document-intelligence",
+            },
         ]
 
     def _render(request, name, context, active):
@@ -388,6 +558,39 @@ def get_admin_router(
                 "storage_root": tenant_manager.root,
             },
             "overview",
+        )
+
+    # --- Document intelligence -------------------------------------------
+
+    @router.get("/document-intelligence", response_class=HTMLResponse)
+    def document_intelligence(request: Request, admin=Depends(admin_dep)):
+        """The extraction pipeline: is the sidecar up, what can it read, what has it staged."""
+        return _render(
+            request,
+            "admin/document_intelligence.html",
+            {
+                "admin": admin,
+                "csrf_token": admin.csrf_token,
+                "engine": _doc_intel_engine_status(),
+                "portfolios": _doc_intel_portfolios(control_engine, tenant_manager),
+            },
+            "document_intelligence",
+        )
+
+    @router.get("/document-intelligence/profiles/{profile_id}", response_class=HTMLResponse)
+    def document_intelligence_profile(
+        request: Request, profile_id: str, admin=Depends(admin_dep)
+    ):
+        """One extraction profile: its field contract and the YAML behind it."""
+        return _render(
+            request,
+            "admin/document_intelligence_profile.html",
+            {
+                "admin": admin,
+                "csrf_token": admin.csrf_token,
+                "profile": _doc_intel_profile(profile_id),
+            },
+            "document_intelligence",
         )
 
     # --- Portfolios ------------------------------------------------------

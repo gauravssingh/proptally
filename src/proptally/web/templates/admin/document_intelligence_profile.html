@@ -1,0 +1,131 @@
+{% extends "admin_base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}
+{% if profile.profile %}{{ profile.profile.display_name }}{% else %}{{ profile.profile_id }}{% endif %} — Extraction profile
+{% endblock %}
+
+{% block content %}
+{% set header_meta %}
+    {{ ui.badge("PROFILE", variant="rule", upper=true) }}
+{% endset %}
+
+{% if profile.profile %}
+    {{ ui.page_header(
+        profile.profile.display_name,
+        profile.profile.description or "An extraction profile: the fields this document family promises to fill.",
+        meta=header_meta
+    ) }}
+{% else %}
+    {{ ui.page_header(profile.profile_id, "An extraction profile the daemon could not parse.", meta=header_meta) }}
+{% endif %}
+
+<div class="pt-stack pt-gap-4">
+    <a class="pt-link pt-fs-caption" href="/admin/document-intelligence">&larr; Document intelligence</a>
+
+    {% if profile.error %}
+        {{ ui.alert("warning", title="This profile could not be read", text=profile.error) }}
+    {% endif %}
+
+    {{ ui.section_open("Profile", "Identity, and the file the daemon loaded it from.") }}
+        <div class="pt-stack pt-gap-3">
+            <div class="pt-kv">
+                <span class="pt-kv__key">Profile</span>
+                <span class="pt-kv__value"><code class="pt-num">{{ profile.profile_id }}</code></span>
+            </div>
+            <div class="pt-kv">
+                <span class="pt-kv__key">Version</span>
+                <span class="pt-kv__value">{{ profile.profile.version if profile.profile else "—" }}</span>
+            </div>
+            <div class="pt-kv">
+                <span class="pt-kv__key">Requested by this app</span>
+                <span class="pt-kv__value">
+                    {% if profile.statement_type %}
+                        {{ ui.badge(profile.statement_type, variant="info", upper=true) }}
+                    {% else %}
+                        {{ ui.badge("NO", variant="neutral", upper=true, title="No upload in this application asks for this profile.") }}
+                    {% endif %}
+                </span>
+            </div>
+            <div class="pt-kv">
+                <span class="pt-kv__key">File</span>
+                <span class="pt-kv__value">
+                    {% if profile.path %}<code class="pt-num" style="word-break: break-all;">{{ profile.path }}</code>{% else %}—{% endif %}
+                </span>
+            </div>
+            <div class="pt-kv">
+                <span class="pt-kv__key">Fields</span>
+                <span class="pt-kv__value">
+                    {% if profile.profile %}
+                        {{ profile.profile.fields | length }}
+                        ({{ profile.profile.fields | selectattr("required") | list | length }} required)
+                    {% else %}—{% endif %}
+                </span>
+            </div>
+        </div>
+    {{ ui.section_close() }}
+
+    {% if profile.profile %}
+        {% set criticality_variants = {"critical": "error", "high": "warning", "medium": "neutral", "low": "neutral"} %}
+        {{ ui.section_open(
+            "Field contract",
+            "Every field the model is asked for, in the order the profile declares them. Aliases are the labels the extractor looks for in the document."
+        ) }}
+            {{ ui.table_open(compact=true, label="Profile fields") }}
+                <thead>
+                    <tr>
+                        {{ ui.th("Key") }}
+                        {{ ui.th("Label") }}
+                        {{ ui.th("Type") }}
+                        {{ ui.th("Required") }}
+                        {{ ui.th("Normalisation") }}
+                        {{ ui.th("Criticality") }}
+                    </tr>
+                </thead>
+                <tbody>
+                {% for field in profile.profile.fields %}
+                    <tr>
+                        <td><code class="pt-num">{{ field.key }}</code></td>
+                        <td>
+                            {{ field.label }}
+                            {% if field.aliases %}
+                                <div class="pt-fs-caption pt-text-secondary">also: {{ field.aliases | join(", ") }}</div>
+                            {% endif %}
+                            {% if field.description %}
+                                <div class="pt-fs-caption pt-text-secondary">{{ field.description }}</div>
+                            {% endif %}
+                        </td>
+                        <td class="pt-fs-caption">{{ field.type }}</td>
+                        <td>
+                            {% if field.required %}
+                                {{ ui.badge("REQUIRED", variant="warning", upper=true) }}
+                            {% else %}
+                                {{ ui.badge("OPTIONAL", variant="neutral", upper=true) }}
+                            {% endif %}
+                        </td>
+                        <td class="pt-fs-caption">{{ field.normalization }}</td>
+                        <td>{{ ui.badge(field.criticality, variant=criticality_variants.get(field.criticality, "neutral"), upper=true) }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            {{ ui.table_close() }}
+        {{ ui.section_close() }}
+    {% endif %}
+
+    {{ ui.section_open(
+        "Source",
+        "The YAML the daemon loaded. The file is the source of truth: the daemon re-reads it on the next request, so an edit on disk takes effect without a restart."
+    ) }}
+        {% if profile.source %}
+            <pre class="pt-fs-caption" style="white-space: pre-wrap; word-break: break-word; font-family: var(--pt-font-mono); background: var(--pt-surface); border: 1px solid var(--pt-border-subtle); border-radius: var(--pt-radius-md); padding: var(--pt-space-4); max-height: 34rem; overflow: auto; margin: 0;">{{ profile.source }}</pre>
+        {% else %}
+            <p class="pt-fs-caption pt-text-secondary">No source available: the daemon did not answer, or has no such profile.</p>
+        {% endif %}
+        <p class="pt-fs-caption pt-text-secondary" style="margin-top: var(--pt-space-3);">
+            This page is read-only. Editing a profile changes what every future extraction of that
+            document family asks for, so it is not wired to a form here: the daemon exposes no write
+            endpoint, and a change needs a version bump and a review of the schema.
+        </p>
+    {{ ui.section_close() }}
+</div>
+{% endblock %}

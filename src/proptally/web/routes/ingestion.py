@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -22,6 +23,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import desc
 from sqlmodel import Session, select
+from starlette.concurrency import run_in_threadpool
 
 from proptally.db.models import (
     Document,
@@ -34,7 +36,10 @@ from proptally.db.models import (
 )
 from proptally.ingestion.service import (
     BANK_STATEMENT_TYPES,
+    DOC_INTEL_ENV_FLAG,
+    DOC_INTEL_PROFILE_FOR_TYPE,
     MAX_UPLOAD_BYTES,
+    StatementIngestionService,
     _persist_document,
     approve_extraction,
     extract_and_resolve,
@@ -50,6 +55,19 @@ from proptally.web.auth import current_context
 
 #: A statement is a PDF; the size limit is shared with the document vault.
 PDF_MAGIC = b"%PDF-"
+
+#: How long one upload may wait for the sidecar before the built-in parser is used.
+#: The opt-in flag itself is ``DOC_INTEL_ENV_FLAG`` in the ingestion service, so the
+#: admin console and this route can never disagree about whether the engine is on.
+DOC_INTEL_UPLOAD_TIMEOUT = 300.0
+
+
+def _doc_intel_service() -> StatementIngestionService | None:
+    """The Document Intelligence client, when this instance opted in."""
+    if os.environ.get(DOC_INTEL_ENV_FLAG, "").strip().lower() not in {"1", "true", "yes"}:
+        return None
+    return StatementIngestionService()
+
 
 #: Fields an operator may correct. Amounts are entered in dollars and rates in
 #: percent, and are stored the way the ledger stores them: cents and
@@ -246,12 +264,49 @@ def _store_single_statement(payload: bytes, filename: str, session: Session, con
     staging = context.paths.root / "staging" / f"upload-{uuid4().hex}.pdf"
     staging.parent.mkdir(parents=True, exist_ok=True)
     staging.write_bytes(payload)
+    service = _doc_intel_service()
+    note = ""
     try:
         try:
             extraction = extract_and_resolve(staging, session)
         except Exception as exc:
             # A malformed PDF is the uploader's problem, not a server fault.
             raise HTTPException(status_code=400, detail=f"The statement could not be read: {exc}") from exc
+
+        # The built-in parser still classifies the document: it is what tells this
+        # path which sidecar profile to use, and it is the fallback. Only a document
+        # it recognises is sent to the language model.
+        if service is not None and extraction is not None and service.available():
+            profile = DOC_INTEL_PROFILE_FOR_TYPE.get(extraction.statement_type)
+            if profile:
+                try:
+                    staged = service.extract_and_stage(
+                        session,
+                        context.paths.vault,
+                        payload=payload,
+                        original_filename=Path(filename or "statement.pdf").name,
+                        profile_name=profile,
+                        timeout=DOC_INTEL_UPLOAD_TIMEOUT,
+                        commit=True,
+                    )
+                except Exception as exc:  # noqa: BLE001 - the built-in parser is the fallback
+                    note = (
+                        f" The local language model could not read it ({exc}), "
+                        "so the built-in parser did."
+                    )
+                else:
+                    data = staged.data
+                    if data.get("status") == "VALIDATED":
+                        return _redirect(
+                            "Statement extracted by the local language model and matched to a "
+                            "registered account; approve and import it below."
+                        )
+                    reasons = " ".join(
+                        list(data.get("review_reasons") or [])
+                        + list(data.get("resolution_reasons") or [])
+                    ).strip()
+                    return _redirect(f"Statement extracted by the local language model; review it below. {reasons}")
+
         _persist_document(
             staging, digest, context.paths.vault, session, extraction,
             original_filename=Path(filename or "statement.pdf").name,
@@ -259,15 +314,21 @@ def _store_single_statement(payload: bytes, filename: str, session: Session, con
         )
     finally:
         staging.unlink(missing_ok=True)
+        if service is not None:
+            service.close()
 
     if extraction is None:
         return _redirect(
             "The document is stored in the vault, but it is not a statement format this "
-            "instance recognises, so nothing was extracted."
+            "instance recognises, so nothing was extracted." + note
         )
     if extraction.status == "VALIDATED":
-        return _redirect("Statement extracted and matched to a registered account; approve and import it below.")
-    return _redirect("Statement retained for review: " + " ".join(extraction.review_reasons + extraction.resolution_reasons))
+        return _redirect(
+            "Statement extracted and matched to a registered account; approve and import it below." + note
+        )
+    return _redirect(
+        "Statement retained for review: " + " ".join(extraction.review_reasons + extraction.resolution_reasons) + note
+    )
 
 
 def _store_statement_archive(payload: bytes, session: Session, context) -> RedirectResponse:
@@ -811,8 +872,14 @@ def get_ingestion_router(templates, get_session_dep):
 
         context = current_context()
         if payload.startswith(PDF_MAGIC):
-            return _store_single_statement(
-                payload, Path(file.filename or "statement.pdf").name, session, context
+            # The sidecar can take tens of seconds; keep the event loop serving
+            # other requests while this one waits for it.
+            return await run_in_threadpool(
+                _store_single_statement,
+                payload,
+                Path(file.filename or "statement.pdf").name,
+                session,
+                context,
             )
         if payload.startswith(b"PK\x03\x04"):
             return _store_statement_archive(payload, session, context)

@@ -564,3 +564,207 @@ def test_a_host_nobody_has_claimed_asks_for_no_code(tmp_path):
         assert session.execute(
             text("SELECT is_super_admin FROM users WHERE email = 'first@example.com'")
         ).scalar() == 0
+
+
+# --- Document intelligence: the pipeline console -----------------------------
+
+def test_the_pipeline_page_is_console_only(console):
+    assert console.tenant.client.get("/admin/document-intelligence").status_code == 404
+
+
+def test_the_pipeline_page_reports_an_unreachable_engine(console, monkeypatch):
+    """A dead daemon is a state to render, never a 500."""
+    monkeypatch.delenv("PROPTALLY_DOC_INTEL", raising=False)
+    monkeypatch.setenv("PROPTALLY_DOC_INTEL_URL", "http://127.0.0.1:9")  # discard port
+
+    page = console.admin().get("/admin/document-intelligence")
+
+    assert page.status_code == 200
+    assert "Document intelligence" in page.text
+    assert "Unreachable" in page.text
+    assert "PROPTALLY_DOC_INTEL OFF" in page.text
+    assert "did not answer" in page.text
+
+
+def test_the_pipeline_page_reports_profiles_jobs_and_staged_counts(console, monkeypatch):
+    from proptally.db.models import Document, DocumentExtraction
+    from proptally.ingestion.service import DOC_INTEL_PARSER_NAME
+    from proptally.web.routes import admin as admin_routes
+
+    monkeypatch.setattr(
+        admin_routes,
+        "_doc_intel_engine_status",
+        lambda **kwargs: {
+            "enabled": True,
+            "base_url": "http://127.0.0.1:8765",
+            "reachable": True,
+            "error": None,
+            "health": {
+                "status": "healthy",
+                "version": "0.1.0",
+                "default_local_model": "qwen2.5:7b",
+                "local_endpoint": "http://localhost:11434/v1",
+                "corpus_documents_indexed": 311,
+            },
+            "profiles": [
+                {
+                    "id": "bank_statement",
+                    "name": "Bank Account Statement",
+                    "version": 1,
+                    "fields": 9,
+                    "required": 3,
+                    "statement_type": "CHECKING",
+                },
+                {
+                    "id": "rental_agreement",
+                    "name": "Rental Agreement",
+                    "version": 1,
+                    "fields": 12,
+                    "required": 4,
+                    "statement_type": None,
+                },
+            ],
+            "jobs": [
+                {
+                    "id": "job_090089433853",
+                    "status": "completed",
+                    "profile": "bank_statement",
+                    "filename": "eStmt_2021-09-16.pdf",
+                    "duration": 28.14,
+                    "document": "doc_4e87cffefcd9caf6",
+                    "error": None,
+                },
+                {
+                    "id": "job_failed01",
+                    "status": "failed",
+                    "profile": "bank_statement",
+                    "filename": "encrypted.pdf",
+                    "duration": None,
+                    "document": None,
+                    "error": "PDF is encrypted",
+                },
+            ],
+            "job_counts": [("completed", 1), ("failed", 1)],
+        },
+    )
+
+    with Session(console.tenant.engine) as session:
+        session.add(
+            Document(
+                id="doc_sidecar",
+                file_sha256="a" * 64,
+                original_filename="eStmt_2021-09-16.pdf",
+                storage_path="/vault/a",
+                file_size_bytes=1024,
+            )
+        )
+        session.flush()
+        session.add(
+            DocumentExtraction(
+                id="ext_sidecar",
+                document_id="doc_sidecar",
+                parser_name=DOC_INTEL_PARSER_NAME,
+                parser_version="0.1.0",
+                validation_status="NEEDS_REVIEW",
+                approval_status="PENDING",
+                extracted_data_json="{}",
+            )
+        )
+        session.commit()
+
+    page = console.admin().get("/admin/document-intelligence")
+
+    assert page.status_code == 200
+    assert "PROPTALLY_DOC_INTEL ON" in page.text
+    assert "bank_statement" in page.text
+    assert "CHECKING" in page.text
+    assert "NOT USED HERE" in page.text
+    assert "eStmt_2021-09-16.pdf" in page.text
+    assert "28.1s" in page.text
+    assert "PDF is encrypted" in page.text
+    assert "Tenant Portfolio" in page.text
+
+
+def test_the_profile_detail_page_is_console_only(console):
+    assert console.tenant.client.get(
+        "/admin/document-intelligence/profiles/bank_statement"
+    ).status_code == 404
+
+
+def test_the_profile_detail_page_shows_the_field_contract_and_source(console, monkeypatch):
+    from proptally.web.routes import admin as admin_routes
+
+    monkeypatch.setattr(
+        admin_routes,
+        "_doc_intel_profile",
+        lambda profile_id, **kwargs: {
+            "profile_id": profile_id,
+            "path": "/srv/document-intelligence-lab/config/profiles/bank_statement.yaml",
+            "source": "profile_id: bank_statement\nversion: 1\nfields:\n  - key: institution_name\n",
+            "statement_type": "CHECKING",
+            "error": None,
+            "profile": {
+                "profile_id": profile_id,
+                "version": 1,
+                "display_name": "Bank Account Statement",
+                "description": "Bank and card statements.",
+                "fields": [
+                    {
+                        "key": "institution_name",
+                        "label": "Financial Institution",
+                        "type": "string",
+                        "required": True,
+                        "normalization": "trim_and_preserve_name",
+                        "criticality": "critical",
+                        "description": "Name of the bank issuing the statement.",
+                        "aliases": ["bank", "institution"],
+                    },
+                    {
+                        "key": "currency",
+                        "label": "Currency",
+                        "type": "string",
+                        "required": False,
+                        "normalization": "enum",
+                        "criticality": "medium",
+                        "description": None,
+                        "aliases": [],
+                    },
+                ],
+            },
+        },
+    )
+
+    page = console.admin().get("/admin/document-intelligence/profiles/bank_statement")
+
+    assert page.status_code == 200
+    assert "Bank Account Statement" in page.text
+    assert "institution_name" in page.text
+    assert "trim_and_preserve_name" in page.text
+    assert "REQUIRED" in page.text
+    assert "also: bank, institution" in page.text
+    # The YAML is shown verbatim, escaped.
+    assert "profile_id: bank_statement" in page.text
+    assert "read-only" in page.text.lower()
+
+
+def test_the_profile_detail_page_reports_an_unreachable_daemon(console, monkeypatch):
+    from proptally.web.routes import admin as admin_routes
+
+    monkeypatch.setattr(
+        admin_routes,
+        "_doc_intel_profile",
+        lambda profile_id, **kwargs: {
+            "profile_id": profile_id,
+            "path": None,
+            "source": "",
+            "profile": None,
+            "statement_type": None,
+            "error": "ConnectError: [Errno 61] Connection refused",
+        },
+    )
+
+    page = console.admin().get("/admin/document-intelligence/profiles/bank_statement")
+
+    assert page.status_code == 200
+    assert "could not be read" in page.text
+    assert "Connection refused" in page.text

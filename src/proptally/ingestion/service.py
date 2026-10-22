@@ -8,7 +8,7 @@ import os
 import re
 import shutil
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -38,6 +38,7 @@ from proptally.ingestion.bank_parsers import (
     BankTransaction,
     extract_bank_or_card_pdf,
 )
+from proptally.ingestion.doc_intel import DocIntelJob, DocumentIntelligenceClient
 from proptally.ingestion.parsers import (
     PARSER_VERSION,
     MortgageExtraction,
@@ -1015,3 +1016,408 @@ def import_approved_extraction(session: Session, extraction_id: str, *, commit: 
 
 def initialize_database(engine) -> None:
     init_schema(engine)
+
+
+# --- Document Intelligence sidecar -----------------------------------------
+#
+# The sidecar (``document-intelligence-lab``) reads a PDF and returns structured
+# fields plus a ``proptally_payload`` of proposed rows. It is an *extractor*, not
+# a writer: nothing here trusts its account ids. Its payload is converted into the
+# same extraction dictionary the local parsers produce, resolved against this
+# portfolio's own accounts, and staged as a ``DocumentExtraction`` -- the existing
+# review queue. Only ``approve_extraction`` + ``import_approved_extraction``, both
+# driven by a person, ever create a ``Statement``.
+
+#: Where the sidecar daemon is expected to listen. Override with
+#: ``PROPTALLY_DOC_INTEL_URL`` when it runs elsewhere.
+DOC_INTEL_DEFAULT_URL = "http://127.0.0.1:8765"
+
+#: Set to ``1``/``true``/``yes`` to extract uploads with the sidecar. Off by
+#: default: it runs a local language model and takes tens of seconds per file.
+DOC_INTEL_ENV_FLAG = "PROPTALLY_DOC_INTEL"
+
+#: ``DocumentExtraction.parser_name`` recorded for every sidecar extraction, and
+#: the value the admin console counts to report what the extractor has staged.
+DOC_INTEL_PARSER_NAME = "document_intelligence_lab"
+
+#: Sidecar profile -> the statement type this portfolio records for it.
+DOC_INTEL_PROFILES = {
+    "bank_statement": "CHECKING",
+    "credit_card_statement": "CREDIT_CARD",
+    "mortgage_statement": "MORTGAGE",
+}
+
+#: Statement type -> the sidecar profile that extracts it, for an already
+#: classified document (see ``DOC_INTEL_PROFILES`` for the reverse).
+DOC_INTEL_PROFILE_FOR_TYPE = {value: key for key, value in DOC_INTEL_PROFILES.items()}
+
+_DOC_INTEL_DOCUMENT_TYPES = {
+    "CHECKING": "CHECKING_STATEMENT",
+    "CREDIT_CARD": "CREDIT_CARD_STATEMENT",
+    "MORTGAGE": "MORTGAGE_STATEMENT",
+}
+
+#: The fields ``import_approved_extraction`` needs before a mortgage statement can
+#: be imported. The sidecar returns an amount due and a principal balance but not
+#: the payment's principal/interest/escrow split, so a mortgage extraction is
+#: staged for review and completed by a person.
+_MORTGAGE_REVIEW_FIELDS = (
+    ("principal_cents", "principal billed"),
+    ("interest_cents", "interest billed"),
+    ("escrow_cents", "escrow billed"),
+    ("total_due_cents", "total amount due"),
+    ("outstanding_principal_cents", "outstanding principal"),
+    ("reported_interest_rate_milli_percent", "interest rate"),
+)
+
+
+class DocIntelStagingError(RuntimeError):
+    """The sidecar returned a job this portfolio cannot stage as an extraction."""
+
+
+@dataclass
+class DocIntelStaged:
+    """The outcome of staging one completed sidecar job for review."""
+
+    job: DocIntelJob
+    document: Document
+    extraction: DocumentExtraction
+    created: bool
+    data: dict
+
+
+def _iso_date(value: object) -> str | None:
+    """An ISO date string, from either ISO or a US-style printed date."""
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError:
+        pass
+    for pattern in ("%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(text, pattern).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _cents(value: object) -> int | None:
+    """Integer cents from the sidecar's normalized money value, or None."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _field_value(val: object) -> object:
+    """Unwraps a FieldPrediction dictionary if present, returning its normalized or raw value."""
+    if isinstance(val, dict) and ("normalized_value" in val or "raw_value" in val):
+        nv = val.get("normalized_value")
+        return nv if nv is not None else val.get("raw_value")
+    return val
+
+
+def doc_intel_extraction_data(profile_name: str, fields: dict, payload: dict) -> dict:
+    """Convert a sidecar payload into this portfolio's extraction dictionary.
+
+    The result has the same shape ``BankStatementExtraction.to_dict()`` and
+    ``MortgageExtraction.to_dict()`` produce, so the review screen, the correction
+    form and the import path treat a sidecar extraction exactly like a parsed one.
+    Identity fields are left unresolved: ``resolve_extraction_data`` attaches them
+    to accounts this portfolio already holds.
+    """
+    fields = {k: _field_value(v) for k, v in (fields or {}).items()}
+    profile = (profile_name or "").strip().lower()
+    if profile not in DOC_INTEL_PROFILES:
+        raise DocIntelStagingError(
+            f"Unsupported extraction profile {profile_name!r}; expected one of "
+            f"{', '.join(sorted(DOC_INTEL_PROFILES))}."
+        )
+    statement = payload.get("statement") or {}
+    account = payload.get("financial_account") or {}
+    metadata = payload.get("metadata") or {}
+    statement_type = DOC_INTEL_PROFILES[profile]
+
+    statement_date = _iso_date(
+        statement.get("statement_date") or fields.get("statement_date")
+        or statement.get("period_end_date") or fields.get("statement_period_end")
+    )
+    if statement_date is None:
+        raise DocIntelStagingError(
+            "The extraction returned no usable statement date; the document cannot be "
+            "staged against a period."
+        )
+
+    masked = fields.get("account_number_masked") or account.get("account_number_masked")
+    institution_name = str(fields.get("institution_name") or "").strip() or None
+    servicer_name = str(
+        fields.get("servicer_name") or fields.get("lender") or fields.get("institution_name") or ""
+    ).strip() or None
+
+    data: dict = {
+        "statement_type": statement_type,
+        "statement_date": statement_date,
+        "period_start_date": _iso_date(
+            statement.get("period_start_date") or fields.get("statement_period_start")
+        ),
+        "period_end_date": _iso_date(
+            statement.get("period_end_date") or fields.get("statement_period_end")
+        ),
+        "opening_balance_cents": _cents(statement.get("opening_balance_cents")),
+        "closing_balance_cents": _cents(statement.get("closing_balance_cents")),
+        "institution_name": institution_name,
+        "servicer_name": servicer_name,
+        "account_last4": _digits(masked) or None,
+        "institution_id": None,
+        "financial_account_id": None,
+        "transactions": [],
+        "field_ambiguities": [],
+        "review_reasons": [],
+        "resolution_reasons": [],
+    }
+
+    if statement_type == "MORTGAGE":
+        data.update({
+            "loan_number": _digits(fields.get("loan_number")) or None,
+            "loan_account_id": None,
+            "property_id": None,
+            "principal_cents": _cents(fields.get("principal_cents")),
+            "interest_cents": _cents(fields.get("interest_cents")),
+            "escrow_cents": _cents(fields.get("escrow_cents")),
+            "fees_cents": _cents(fields.get("fees_cents")),
+            "total_due_cents": _cents(
+                fields.get("total_due_cents") or fields.get("emi_amount_cents")
+                or metadata.get("total_amount_due_cents")
+            ),
+            "outstanding_principal_cents": _cents(fields.get("outstanding_principal_cents")),
+            "reported_interest_rate_milli_percent": _cents(
+                fields.get("interest_rate_bps") or metadata.get("rate_bps")
+            ),
+            "escrow_balance_cents": _cents(
+                fields.get("escrow_balance_cents") or metadata.get("escrow_balance_cents")
+            ),
+            "payment_due_date": _iso_date(fields.get("payment_due_date")),
+        })
+        if data["account_last4"] is None:
+            data["account_last4"] = _digits(fields.get("loan_number")) or None
+
+    return data
+
+
+def _doc_intel_review_reasons(data: dict, result: dict) -> list[str]:
+    """Everything that keeps an extraction out of VALIDATED, in review-screen words."""
+    reasons: list[str] = []
+    for issue in result.get("cross_field_issues") or []:
+        message = str(issue.get("message") or issue.get("reason") or "").strip()
+        if message:
+            reasons.append(message)
+    if data["statement_type"] == "MORTGAGE":
+        for key, label in _MORTGAGE_REVIEW_FIELDS:
+            if data.get(key) is None:
+                reasons.append(f"The statement does not state its {label}; enter it to import.")
+    return reasons
+
+
+class StatementIngestionService:
+    """Submits statements to the Document Intelligence sidecar and stages the result.
+
+    ``submit`` returns a job immediately; ``extract`` waits for one; ``stage`` turns
+    a completed job into a reviewable ``DocumentExtraction``. Staging never writes a
+    ``Statement``, so no ingested document can move a balance without a person
+    approving and importing it.
+    """
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        client: DocumentIntelligenceClient | None = None,
+    ):
+        self.base_url = base_url or os.environ.get("PROPTALLY_DOC_INTEL_URL", DOC_INTEL_DEFAULT_URL)
+        self._client = client
+
+    @property
+    def client(self) -> DocumentIntelligenceClient:
+        if self._client is None:
+            self._client = DocumentIntelligenceClient(base_url=self.base_url)
+        return self._client
+
+    def close(self) -> None:
+        if self._client is not None:
+            self._client.close()
+
+    def __enter__(self) -> StatementIngestionService:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def healthy(self) -> bool:
+        """Whether the sidecar answers its own health endpoint."""
+        return bool(self.client.health().get("status") in ("ok", "healthy"))
+
+    def available(self, timeout: float = 2.0) -> bool:
+        """Whether the sidecar can be reached right now, without waiting out a call.
+
+        A caller that has another way to extract uses this to choose between engines;
+        a refused connection, a timeout or an unhealthy body all mean "not available"
+        rather than an error.
+        """
+        try:
+            return bool(self.client.health(timeout=timeout).get("status") in ("ok", "healthy"))
+        except Exception:  # noqa: BLE001 - an unreachable sidecar is a fallback, not a fault
+            return False
+
+    def submit(
+        self,
+        *,
+        payload: bytes,
+        original_filename: str,
+        profile_name: str,
+        property_id: str = "",
+    ) -> DocIntelJob:
+        """Queue an extraction and return at once, with the job the daemon assigned."""
+        return self.client.submit_extraction(
+            file=payload,
+            filename=original_filename,
+            profile_name=profile_name,
+            property_id=property_id,
+            map_to_proptally=True,
+        )
+
+    def extract(
+        self,
+        *,
+        payload: bytes,
+        original_filename: str,
+        profile_name: str,
+        property_id: str = "",
+        timeout: float = 180.0,
+        on_progress=None,
+    ) -> DocIntelJob:
+        """Queue an extraction and wait for the completed job."""
+        job = self.submit(
+            payload=payload,
+            original_filename=original_filename,
+            profile_name=profile_name,
+            property_id=property_id,
+        )
+        return self.client.wait_for_job(job.job_id, timeout=timeout, on_progress=on_progress)
+
+    def stage(
+        self,
+        session: Session,
+        vault_dir: Path,
+        *,
+        job: DocIntelJob,
+        payload: bytes,
+        original_filename: str,
+        profile_name: str,
+        commit: bool = False,
+    ) -> DocIntelStaged:
+        """Store the file and stage its extraction for review.
+
+        The bytes go into this portfolio's vault under their SHA-256, so submitting
+        the same statement twice returns the extraction already staged for it
+        instead of creating a second one. Nothing is written to the ledger.
+        """
+        if not job.is_success or not job.result:
+            raise DocIntelStagingError(
+                f"Extraction job {job.job_id} did not complete successfully "
+                f"({job.status}): {job.error_message or 'no detail returned'}."
+            )
+        result = job.result
+        proptally_payload = result.get("proptally_payload")
+        if not isinstance(proptally_payload, dict):
+            raise DocIntelStagingError(
+                "The extraction job returned no proptally_payload; submit it with "
+                "map_to_proptally=True."
+            )
+
+        data = doc_intel_extraction_data(profile_name, result.get("fields") or {}, proptally_payload)
+        review_reasons = _doc_intel_review_reasons(data, result)
+        resolution_reasons = list(resolve_extraction_data(session, data))
+        data["review_reasons"] = review_reasons
+        data["resolution_reasons"] = resolution_reasons
+        data["status"] = "NEEDS_REVIEW" if (review_reasons or resolution_reasons) else "VALIDATED"
+        data["source_document_id"] = result.get("document_id")
+        data["source_job_id"] = job.job_id
+
+        stored = store_document(
+            session,
+            vault_dir,
+            payload=payload,
+            original_filename=original_filename,
+            document_type=_DOC_INTEL_DOCUMENT_TYPES[data["statement_type"]],
+            property_id=data.get("property_id"),
+            parse=False,
+        )
+        statement = proptally_payload.get("statement") or {}
+        parser_name = str(statement.get("active_parser_name") or DOC_INTEL_PARSER_NAME)
+        existing = session.exec(
+            select(DocumentExtraction)
+            .where(DocumentExtraction.document_id == stored.document.id)
+            .where(DocumentExtraction.parser_name == parser_name)
+            .order_by(desc(DocumentExtraction.created_at))
+        ).first()
+        if existing is not None:
+            # The same document already came back from this extractor. A local
+            # parser's extraction of the same bytes is superseded instead, which
+            # is what the review queue shows anyway (the most recent wins).
+            return DocIntelStaged(
+                job=job, document=stored.document, extraction=existing, created=False, data=data
+            )
+
+        extraction = DocumentExtraction(
+            id=str(uuid4()),
+            document_id=stored.document.id,
+            parser_name=parser_name,
+            parser_version=str(statement.get("active_parser_version") or "unknown"),
+            validation_status=data["status"],
+            approval_status="PENDING",
+            extracted_data_json=json.dumps(data, sort_keys=True),
+        )
+        session.add(extraction)
+        session.flush()
+        if commit:
+            session.commit()
+        return DocIntelStaged(
+            job=job, document=stored.document, extraction=extraction, created=True, data=data
+        )
+
+    def extract_and_stage(
+        self,
+        session: Session,
+        vault_dir: Path,
+        *,
+        payload: bytes,
+        original_filename: str,
+        profile_name: str,
+        property_id: str = "",
+        timeout: float = 180.0,
+        on_progress=None,
+        commit: bool = False,
+    ) -> DocIntelStaged:
+        """Submit, wait, and stage in one call. The file is stored only on success."""
+        job = self.extract(
+            payload=payload,
+            original_filename=original_filename,
+            profile_name=profile_name,
+            property_id=property_id,
+            timeout=timeout,
+            on_progress=on_progress,
+        )
+        return self.stage(
+            session,
+            vault_dir,
+            job=job,
+            payload=payload,
+            original_filename=original_filename,
+            profile_name=profile_name,
+            commit=commit,
+        )

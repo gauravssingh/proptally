@@ -1,0 +1,260 @@
+{% extends "admin_base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Document intelligence — Super admin{% endblock %}
+
+{% block content %}
+{% set header_meta %}
+    {{ ui.badge("PIPELINE", variant="rule", upper=true) }}
+{% endset %}
+
+{{ ui.page_header(
+    "Document intelligence",
+    "The local extraction sidecar: whether it is reachable, which document profiles it can read, what it has extracted recently, and how much of it each portfolio has staged. Counts only: no balance is shown here and nothing on this page can approve or import.",
+    meta=header_meta
+) }}
+
+{% set job_counts = dict(engine.job_counts) %}
+<div class="pt-grid pt-sm-grid-cols-2 pt-lg-grid-cols-4 pt-gap-4">
+    {{ ui.kpi(
+        "Engine",
+        "Enabled" if engine.enabled else "Off",
+        sub=("Uploads use the sidecar" if engine.enabled else "Uploads use the built-in parsers")
+    ) }}
+    {{ ui.kpi(
+        "Service",
+        "Reachable" if engine.reachable else "Unreachable",
+        sub=engine.base_url
+    ) }}
+    {{ ui.kpi(
+        "Profiles",
+        engine.profiles | length,
+        sub=("of which " ~ (engine.profiles | selectattr("statement_type") | list | length) ~ " used by this app")
+    ) }}
+    {{ ui.kpi(
+        "Recent jobs",
+        (job_counts.get("completed", 0) if engine.reachable else "—"),
+        sub=((job_counts.get("failed", 0) ~ " failed in the last 15") if engine.reachable else "No job history while the daemon is unreachable")
+    ) }}
+</div>
+
+{% if engine.error %}
+    {{ ui.alert(
+        "warning",
+        title="The sidecar did not answer",
+        text="The application falls back to its built-in parsers while this is true. Last error: " ~ engine.error
+    ) }}
+{% elif not engine.reachable %}
+    {{ ui.alert(
+        "warning",
+        title="The sidecar answered, but not as healthy",
+        text="Status: " ~ (engine.health.status or "unknown") ~ ". Uploads fall back to the built-in parsers."
+    ) }}
+{% endif %}
+{% if not engine.enabled %}
+    {{ ui.alert(
+        "info",
+        title="Not enabled on this instance",
+        text="The sidecar may be running, but uploads do not use it. Set PROPTALLY_DOC_INTEL=1 in this instance's environment (launchd plist for the live service) and restart the app."
+    ) }}
+{% endif %}
+
+{{ ui.section_open(
+    "Connection",
+    "Where the application looks for the extractor, and what the daemon says about itself."
+) }}
+    <div class="pt-stack pt-gap-3">
+        <div class="pt-kv">
+            <span class="pt-kv__key">Endpoint</span>
+            <span class="pt-kv__value"><code class="pt-num">{{ engine.base_url }}</code></span>
+        </div>
+        <div class="pt-kv">
+            <span class="pt-kv__key">Opt-in flag</span>
+            <span class="pt-kv__value">
+                {% if engine.enabled %}
+                    {{ ui.badge("PROPTALLY_DOC_INTEL ON", variant="success", upper=true) }}
+                {% else %}
+                    {{ ui.badge("PROPTALLY_DOC_INTEL OFF", variant="neutral", upper=true) }}
+                {% endif %}
+            </span>
+        </div>
+        <div class="pt-kv">
+            <span class="pt-kv__key">Daemon status</span>
+            <span class="pt-kv__value">
+                {% if engine.reachable %}
+                    {{ ui.badge(engine.health.status | default("healthy"), variant="success", upper=true) }}
+                    <span class="pt-fs-caption pt-text-secondary">version {{ engine.health.version | default("—") }}</span>
+                {% else %}
+                    {{ ui.badge("UNREACHABLE", variant="error", upper=true) }}
+                    <span class="pt-fs-caption pt-text-secondary">expected at {{ engine.base_url }}/health</span>
+                {% endif %}
+            </span>
+        </div>
+        <div class="pt-kv">
+            <span class="pt-kv__key">Model</span>
+            <span class="pt-kv__value">
+                <code class="pt-num">{{ engine.health.default_local_model | default("—") }}</code>
+                <span class="pt-fs-caption pt-text-secondary">{{ engine.health.local_endpoint | default("") }}</span>
+            </span>
+        </div>
+        <div class="pt-kv">
+            <span class="pt-kv__key">Corpus indexed</span>
+            <span class="pt-kv__value">{{ engine.health.corpus_documents_indexed | default("—") }} document(s)</span>
+        </div>
+        <p class="pt-fs-caption pt-text-secondary">
+            The extractor is a separate local process. Start it with
+            <code class="pt-num">scripts/start_service.sh 8765</code> from the
+            <code class="pt-num">document-intelligence-lab</code> checkout; it needs Ollama on
+            <code class="pt-num">localhost:11434</code>.
+        </p>
+    </div>
+{{ ui.section_close() }}
+{{ ui.section_open(
+    "Extraction profiles",
+    "The schemas the extractor can read. A profile this application does not map is available to other callers but is never requested by an upload."
+) }}
+    {{ ui.table_open(label="Extraction profiles") }}
+        <thead>
+            <tr>
+                {{ ui.th("Profile") }}
+                {{ ui.th("Reads as") }}
+                {{ ui.th("Version", num=true) }}
+                {{ ui.th("Fields", num=true) }}
+                {{ ui.th("Required", num=true) }}
+            </tr>
+        </thead>
+        <tbody>
+        {% for profile in engine.profiles %}
+            <tr>
+                <td>
+                    <a class="pt-link" href="/admin/document-intelligence/profiles/{{ profile.id }}"><code class="pt-num">{{ profile.id }}</code></a>
+                    <div class="pt-fs-caption pt-text-secondary">{{ profile.name }}</div>
+                </td>
+                <td>
+                    {% if profile.statement_type %}
+                        {{ ui.badge(profile.statement_type, variant="info", upper=true) }}
+                    {% else %}
+                        {{ ui.badge("NOT USED HERE", variant="neutral", upper=true) }}
+                    {% endif %}
+                </td>
+                <td class="pt-table__num">{{ profile.version }}</td>
+                <td class="pt-table__num">{{ profile.fields }}</td>
+                <td class="pt-table__num">{{ profile.required }}</td>
+            </tr>
+        {% else %}
+            <tr>
+                <td colspan="5">
+                    {% if engine.reachable %}
+                        The daemon listed no profiles.
+                    {% else %}
+                        Profiles cannot be listed while the daemon is unreachable.
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    {{ ui.table_close() }}
+{{ ui.section_close() }}
+
+{% set job_variants = {"completed": "success", "failed": "error", "cancelled": "neutral", "processing": "info", "queued": "neutral"} %}
+{{ ui.section_open(
+    "Recent jobs",
+    "The last 15 extraction jobs the daemon recorded, newest first. A job here is one document sent to the model, not one document in a portfolio."
+) }}
+    {{ ui.table_open(compact=true, label="Recent extraction jobs") }}
+        <thead>
+            <tr>
+                {{ ui.th("Job") }}
+                {{ ui.th("Status") }}
+                {{ ui.th("Profile") }}
+                {{ ui.th("File") }}
+                {{ ui.th("Duration", num=true) }}
+            </tr>
+        </thead>
+        <tbody>
+        {% for job in engine.jobs %}
+            <tr>
+                <td><code class="pt-num">{{ job.id }}</code></td>
+                <td>{{ ui.badge(job.status, variant=job_variants.get(job.status, "neutral"), upper=true) }}</td>
+                <td class="pt-fs-caption">{{ job.profile or "—" }}</td>
+                <td class="pt-fs-caption">
+                    {{ job.filename or "—" }}
+                    {% if job.error %}
+                        <div class="pt-text-secondary">{{ job.error }}</div>
+                    {% endif %}
+                </td>
+                <td class="pt-table__num">
+                    {% if job.duration is not none %}{{ "%.1f"|format(job.duration) }}s{% else %}—{% endif %}
+                </td>
+            </tr>
+        {% else %}
+            <tr>
+                <td colspan="5">
+                    {% if engine.reachable %}No jobs recorded yet.{% else %}Job history is unavailable while the daemon is unreachable.{% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    {{ ui.table_close() }}
+{{ ui.section_close() }}
+{{ ui.section_open(
+    "Staged by portfolio",
+    "Counts per portfolio. A staged extraction is a proposal in that portfolio's review queue; only a person's approval and import writes a statement."
+) }}
+    {{ ui.table_open(compact=true, label="Document intelligence by portfolio") }}
+        <thead>
+            <tr>
+                {{ ui.th("Portfolio") }}
+                {{ ui.th("Documents", num=true) }}
+                {{ ui.th("Extractor", num=true) }}
+                {{ ui.th("Built-in", num=true) }}
+                {{ ui.th("Needs review", num=true) }}
+                {{ ui.th("Validated", num=true) }}
+                {{ ui.th("Approved", num=true) }}
+                {{ ui.th("Committed", num=true) }}
+                {{ ui.th("Last staged") }}
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in portfolios %}
+            <tr>
+                <td>
+                    <a class="pt-link" href="/admin/tenants/{{ row.id }}">{{ row.name }}</a>
+                    <div class="pt-fs-caption pt-text-secondary">{{ row.slug }}</div>
+                </td>
+                {% if row.readable %}
+                    <td class="pt-table__num">{{ row.documents }}</td>
+                    <td class="pt-table__num">{{ row.sidecar }}</td>
+                    <td class="pt-table__num">{{ row.local }}</td>
+                    <td class="pt-table__num">{{ row.needs_review }}</td>
+                    <td class="pt-table__num">{{ row.validated }}</td>
+                    <td class="pt-table__num">{{ row.approved }}</td>
+                    <td class="pt-table__num">{{ row.committed }}</td>
+                    <td class="pt-fs-caption pt-text-secondary">
+                        {% if row.last_sidecar_at %}{{ row.last_sidecar_at.strftime("%Y-%m-%d %H:%M") }}{% else %}—{% endif %}
+                    </td>
+                {% else %}
+                    <td colspan="8">
+                        {{ ui.badge("UNREADABLE", variant="warning", upper=true) }}
+                        <span class="pt-fs-caption pt-text-secondary">{{ row.error or "database could not be opened" }}</span>
+                    </td>
+                {% endif %}
+            </tr>
+        {% else %}
+            <tr><td colspan="9">No active portfolio on this instance.</td></tr>
+        {% endfor %}
+        </tbody>
+    {{ ui.table_close() }}
+{{ ui.section_close() }}
+
+{{ ui.section_open(
+    "What this page does not do",
+    "Read-only by design, so the console cannot change a portfolio's books."
+) }}
+    <ul class="pt-fs-caption pt-text-secondary pt-stack pt-gap-2">
+        <li>Profiles are YAML files in the extractor's checkout (<code class="pt-num">config/profiles/*.yaml</code>). Editing them here would write into another repository, so this page only reports what the daemon loaded. The daemon re-reads a profile on the next request; no restart is needed after an edit on disk.</li>
+        <li>Nothing here approves, imports, retries or cancels an extraction. Those decisions stay on the portfolio's Statements screen and require its owner.</li>
+        <li>“Extractor” counts include every version of an extraction; “Documents” counts files. A document re-extracted twice shows one document and two extractor rows.</li>
+    </ul>
+{{ ui.section_close() }}
+{% endblock %}

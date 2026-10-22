@@ -370,6 +370,13 @@ def console_sections() -> list[NavSection]:
                     icon="tag",
                     page="onboarding",
                 ),
+                NavItem(
+                    label="Document intelligence",
+                    short="Doc intelligence",
+                    href="/admin/document-intelligence",
+                    icon="sparkline",
+                    page="document_intelligence",
+                ),
             ],
         ),
     ]
