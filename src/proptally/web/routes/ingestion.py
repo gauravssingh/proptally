@@ -17,7 +17,8 @@ import os
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from urllib.parse import quote, urlencode
+from typing import Any
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -1139,7 +1140,7 @@ def get_ingestion_router(templates, get_session_dep):
                             original_filename=document.original_filename or "statement.pdf",
                             profile_name=profile,
                         )
-                        pending = service.stage_pending(
+                        service.stage_pending(
                             session,
                             context.paths.vault,
                             job=job,

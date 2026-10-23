@@ -1956,6 +1956,32 @@
     }
 }
 
+/* A filter row whose Apply action is part of the row rather than a second strip
+   below it. The action column is sized to its buttons, so the inputs keep their
+   widths; under the desktop breakpoint the action spans the row and stays right. */
+.pt-filterbar__grid--actions {
+    align-items: end;
+}
+
+.pt-filterbar__submit {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--pt-space-2);
+}
+
+@media (max-width: 1023px) {
+    .pt-filterbar__submit {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (min-width: 1024px) {
+    .pt-filterbar__grid--actions {
+        grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+    }
+}
+
 .pt-filterbar__actions {
     display: flex;
     flex-wrap: wrap;

@@ -39,6 +39,7 @@ from proptally.db.models import (
     LoanAccount,
     Property,
     PropertyValuation,
+    Statement,
     TransactionProcessingState,
     VendorRule,
 )
@@ -248,6 +249,46 @@ def _opening_balance_targets(session: Session) -> list[dict]:
     return targets
 
 
+def opening_balance_suggestions(session: Session, targets: list[dict]) -> dict[str, dict]:
+    """Balances already stated by this portfolio's imported statements.
+
+    The opening entry is one dated snapshot, so nothing here is applied
+    automatically: each suggestion carries the date its figure belongs to, and the
+    form offers it per account. A property's cost basis is not on a statement, so
+    only account targets produce suggestions.
+    """
+    suggestions: dict[str, dict] = {}
+    for target in targets:
+        field = target.get("field", "")
+        if not field.startswith("amount_"):
+            continue
+        account_id = field.removeprefix("amount_")
+        statements = session.exec(
+            select(Statement)
+            .where(
+                Statement.financial_account_id == account_id,
+                Statement.ingestion_status == "COMMITTED",
+            )
+            .order_by(Statement.statement_date)
+        ).all()
+        if not statements:
+            continue
+        first = statements[0]
+        if first.opening_balance_cents is None:
+            continue
+        latest = statements[-1]
+        suggestions[field] = {
+            "field": field,
+            "label": target["label"],
+            "amount": f"{first.opening_balance_cents // 100}.{first.opening_balance_cents % 100:02d}",
+            "as_of": first.period_start_date or first.statement_date,
+            "latest_closing_cents": latest.closing_balance_cents,
+            "latest_closing_date": latest.statement_date,
+            "statement_count": len(statements),
+        }
+    return suggestions
+
+
 # --- Router ----------------------------------------------------------------
 
 def get_settings_router(templates, get_session_dep, auth_dep=None):
@@ -312,6 +353,8 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
             )
         ).all())
 
+        opening_targets = _opening_balance_targets(session)
+
         return templates.TemplateResponse(
             request=request,
             name="settings.html",
@@ -324,7 +367,8 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
                 "loans": loans,
                 "vendor_rules": vendor_rules,
                 "institution_names": sorted(set(institutions.values())),
-                "opening_targets": _opening_balance_targets(session),
+                "opening_targets": opening_targets,
+                "opening_suggestions": opening_balance_suggestions(session, opening_targets),
                 "opening_entry": opening_entry,
                 "property_type_options": PROPERTY_TYPE_OPTIONS,
                 "account_type_options": ACCOUNT_TYPE_OPTIONS,

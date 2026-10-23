@@ -269,3 +269,58 @@ def test_a_rule_requiring_confirmation_stages_instead_of_authorising(queue_env):
             assert session.exec(
                 select(TransactionSplit).where(TransactionSplit.transaction_id == txn_id)
             ).all()
+
+
+def test_batch_vendor_rule_by_vendor_display_name_and_truncated_raw_desc(queue_env):
+    """Batch action succeeds when vendor_pattern is the vendor display name,
+    the rule pattern is a prefix, and the raw description is truncated bank text.
+    """
+    signed_in, db_uri = queue_env
+    engine = get_engine(db_uri)
+    with Session(engine) as session:
+        for i in range(3):
+            tx = Transaction(
+                id=f"tx_hughes_{i}",
+                statement_id="stmt_1",
+                financial_account_id="acct_bofa_chk",
+                transaction_date=date(2026, 1, 15 + i),
+                amount_cents=461442,
+                direction="INFLOW",
+                raw_description=f"HUGHES NETWORK S DES:PAYRLL DEP ID:000031127{i}",
+            )
+            session.add(tx)
+            st = TransactionProcessingState(
+                transaction_id=tx.id,
+                allocation_status="UNALLOCATED",
+                allocated_cents=0,
+                residual_cents=461442,
+                posting_status="UNPOSTED",
+            )
+            session.add(st)
+        session.commit()
+
+    # 1. Reconciliation view matches on vendor display name
+    res = signed_in.client.get("/reconciliation?vendor_pattern=Hughes Network Systems")
+    assert res.status_code == 200
+    assert "Found 3 unallocated transactions" in res.text
+
+    # 2. Batch post using the vendor display name
+    res_batch = signed_in.post(
+        "/reconciliation/batch-apply-rule",
+        data={
+            "vendor_pattern": "Hughes Network Systems",
+            "category": "PERSONAL",
+            "property_id": "",
+        },
+        follow_redirects=True,
+    )
+    assert res_batch.status_code == 200
+    assert "applied=3" in res_batch.text or "3" in res_batch.text
+
+    # 3. Verify all 3 are fully allocated and posted to the ledger
+    with Session(engine) as session:
+        for i in range(3):
+            st = session.get(TransactionProcessingState, f"tx_hughes_{i}")
+            assert st.allocation_status == "FULLY_ALLOCATED"
+            assert st.posting_status == "POSTED"
+

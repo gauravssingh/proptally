@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Review before publishing — PropTally{% endblock %}
+
+{% block content %}
+{{ ui.page_header(
+    "Review before publishing",
+    "The portfolio data is complete. These controls found issues that will carry into the live ledger.",
+    meta=ui.badge((report.warning_checks | length) ~ (" warning" if (report.warning_checks | length) == 1 else " warnings"), variant="warning", upper=true)
+) }}
+
+{{ ui.alert(
+    variant="warning",
+    title="Publishing does not fix these findings",
+    text="The ledger and statements stay exactly as they are. Review each item, then continue if the portfolio should go live with these known gaps."
+) }}
+
+{{ ui.table_open(compact=true, label="Controls with warnings") }}
+<thead>
+    <tr>
+        {{ ui.th("Control") }}
+        {{ ui.th("Count", num=true) }}
+        {{ ui.th("Finding") }}
+    </tr>
+</thead>
+<tbody>
+    {% for check in report.warning_checks %}
+    <tr>
+        <td><strong>{{ check.label }}</strong></td>
+        <td class="pt-table__th-num">{{ check.count }}</td>
+        <td>
+            {{ check.summary }}
+            {% if check.samples %}
+            <div class="pt-fs-caption pt-text-muted">{{ check.samples[:4] | join(" · ") }}</div>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</tbody>
+{{ ui.table_close() }}
+
+<div class="pt-inline-flex pt-gap-3 pt-mt-4">
+    <form method="post" action="/setup/publish" class="pt-inline-flex">
+        {{ csrf_field() }}
+        <input type="hidden" name="acknowledge_gaps" value="1">
+        {{ ui.btn("Publish with these findings", variant="primary", type="submit", icon_name="check_circle") }}
+    </form>
+    {{ ui.btn("Back to setup", variant="ghost", href="/setup") }}
+</div>
+{% endblock %}

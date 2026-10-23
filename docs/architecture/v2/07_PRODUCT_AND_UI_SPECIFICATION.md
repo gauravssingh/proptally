@@ -118,6 +118,33 @@ new sign-in presents a portfolio chooser rather than silently opening the oldest
   * **Right Pane:** Embedded native PDF viewer displaying the actual statement page with extracted coordinates highlighted in yellow.
   * **Action Controls:** `[Confirm Match]`, `[Reject / Unlink]`, `[Edit Allocation]`.
 
+#### 3.5.1 Controls & Reconciliation report (`/reconciliation/report`)
+* **Purpose:** a read-only detective control over the posted ledger, reachable from
+  *Settings → Controls & Reconciliation*. It never writes; it names drift instead.
+* **Header:** portfolio totals (`Assets`, `Liabilities`, `Equity`) from posted journal
+  lines, plus the number of transactions still unposted.
+* **Integrity controls table:** every check states severity (`BLOCKING`, `WARNING`,
+  `INFO`), `PASS`/`FAIL`, a count and a sample of the offending rows.
+  * `BLOCKING`: ledger debits ≠ credits; statement arithmetic (checking uses
+    `opening + net = closing`, cards use `opening − net = closing` because card
+    amounts are holder-signed); split allocation ≠ transaction amount.
+  * `WARNING`: property cost basis missing; account ledger ≠ latest statement
+    closing; unposted transactions; statements that start after their opening
+    entry; mortgage periods without a `MORTGAGE_BILLING` entry; unapproved
+    statements.
+  * `INFO`: duplicate extraction rows for the same parser version; statement
+    documents with no extraction.
+* **Account reconciliation table:** per account, posted ledger, latest statement
+  balance normalised to ledger sign, the difference, and the unposted count.
+* **Property basis table:** acquisition date, purchase price, basis and the
+  property's ledger asset balance.
+
+* **Publish gate:** `POST /setup/publish` evaluates the same checks. Any
+  `BLOCKING` failure refuses the publish and redirects back to setup with the
+  failing labels. Any `WARNING` diverts to `/setup/publish/review`, which lists
+  the findings and requires an explicit *Publish with these findings*
+  acknowledgement (`acknowledge_gaps=1`) before the portfolio goes live.
+
 ---
 
 ### 3.6 Document Vault (`/documents`)

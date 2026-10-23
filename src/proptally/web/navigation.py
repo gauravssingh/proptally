@@ -320,6 +320,13 @@ def financial_sections(state: NavState | None = None) -> list[NavSection]:
             page="settings",
         ),
         NavItem(
+            label="Controls & Reconciliation",
+            short="Controls",
+            href="/reconciliation/report",
+            icon="scale",
+            page="report",
+        ),
+        NavItem(
             label="Administration",
             short="Admin",
             href="/account",

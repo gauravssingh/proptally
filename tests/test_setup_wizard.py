@@ -131,7 +131,19 @@ def test_completion_is_derived_from_the_portfolio(owner):
     assert "Portfolio essentials complete" in home.text
     assert "Publish portfolio" in home.text
 
-    published = signed_in.post("/setup/publish", data={}, follow_redirects=False)
+    review = signed_in.post("/setup/publish", data={}, follow_redirects=False)
+    assert review.status_code == 303
+    assert review.headers["location"] == "/setup/publish/review"
+    assert _progress(signed_in).published is False
+
+    page = signed_in.client.get("/setup/publish/review")
+    assert page.status_code == 200
+    assert "Review before publishing" in page.text
+    assert "Property cost basis" in page.text
+
+    published = signed_in.post(
+        "/setup/publish", data={"acknowledge_gaps": "1"}, follow_redirects=False
+    )
     assert published.status_code == 303
     assert published.headers["location"] == "/setup/done"
     assert _progress(signed_in).published is True
@@ -286,3 +298,38 @@ def test_deleting_data_reopens_the_checklist(owner):
     progress = _progress(signed_in)
     assert progress.percent == 20
     assert progress.next_step == "accounts"
+
+
+def test_opening_balances_offer_statement_figures(owner):
+    """A statement's opening balance is offered per account, with its own date."""
+    from datetime import date
+
+    from proptally.db.models import Document, FinancialAccount, Statement
+
+    signed_in = owner()
+    signed_in.post("/accounts/create", data=ACCOUNT_FORM, follow_redirects=False)
+    with Session(signed_in.engine) as session:
+        account = session.exec(select(FinancialAccount)).one()
+        account_id = account.id
+        session.add(Document(
+            id="doc_open", file_sha256="o" * 64, original_filename="stmt.pdf",
+            storage_path="/vault/stmt.pdf", file_size_bytes=10, mime_type="application/pdf",
+        ))
+        session.add(Statement(
+            id="stmt_open", document_id="doc_open", financial_account_id=account_id,
+            statement_type="CHECKING", active_parser_name="test", active_parser_version="1",
+            period_start_date=date(2021, 8, 18), period_end_date=date(2021, 9, 16),
+            statement_date=date(2021, 9, 16),
+            opening_balance_cents=334473, closing_balance_cents=602828,
+            ingestion_status="COMMITTED",
+        ))
+        session.commit()
+
+    page = signed_in.client.get("/setup/opening-balances")
+    assert page.status_code == 200
+    assert "From your imported statements" in page.text
+    assert f'data-opening-fill="amount_{account_id}"' in page.text
+    assert 'data-opening-amount="3344.73"' in page.text
+    assert 'data-opening-date="2021-08-18"' in page.text
+    # Cost basis has no statement source.
+    assert "data-opening-fill=\"asset_" not in page.text

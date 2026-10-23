@@ -262,6 +262,18 @@ def get_transactions_router(templates, get_session_dep):
                 "active_page": "transactions",
                 "transactions_data": transactions_data,
                 "accounts": accounts,
+                # Picklist options are built here, not in the template: a Jinja
+                # "set" inside a for loop is scoped to that loop, so accumulating
+                # them there silently produced empty picklists.
+                "account_options": [
+                    {"value": account.id, "label": account.account_name}
+                    for account in accounts
+                ],
+                "card_options": [
+                    {"value": account.id, "label": account.account_name}
+                    for account in accounts
+                    if account.account_type == "CREDIT_CARD"
+                ],
                 "properties": properties,
                 "review_count": global_unallocated,
                 "total_recorded": total_recorded,

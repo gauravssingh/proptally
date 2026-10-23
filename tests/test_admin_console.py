@@ -772,8 +772,9 @@ def test_the_profile_detail_page_reports_an_unreachable_daemon(console, monkeypa
 
 def test_doc_intel_engine_status_integrates_with_client_methods(monkeypatch):
     import httpx
-    from proptally.web.routes import admin as admin_routes
+
     from proptally.ingestion.doc_intel import DocumentIntelligenceClient
+    from proptally.web.routes import admin as admin_routes
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/health":

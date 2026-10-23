@@ -275,16 +275,8 @@
 <form class="pt-modal__form" action="/transactions/manual" method="POST">
         {{ csrf_field() }}
     <div class="pt-modal__body">
-        {% set account_options = [] %}
-        {% for a in accounts %}
-            {% set account_options = account_options + [{"value": a.id, "label": a.account_name}] %}
-        {% endfor %}
-        {% set card_options = [] %}
-        {% for a in accounts %}
-            {% if a.account_type == 'CREDIT_CARD' %}
-                {% set card_options = card_options + [{"value": a.id, "label": a.account_name}] %}
-            {% endif %}
-        {% endfor %}
+        {# Picklists come from the route: accumulating options with {% set %} inside a
+           for loop is loop-scoped in Jinja and would leave both lists empty. #}
         {{ ui.select_field(
             "account_id",
             "Financial Account",

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
 
@@ -23,6 +23,7 @@ from proptally.db.models import (
     Statement,
     Transaction,
 )
+from proptally.domain.accounting.controls import build_reconciliation_report
 from proptally.domain.setup_progress import STEP_BY_KEY, evaluate
 from proptally.domain.setup_state import ensure, publish, skip_step, unskip_step
 from proptally.web.auth import AuthorizationError, current_context
@@ -32,6 +33,7 @@ from proptally.web.routes.settings import (
     MIXED_USE_OPTIONS,
     PROPERTY_TYPE_OPTIONS,
     _opening_balance_targets,
+    opening_balance_suggestions,
 )
 
 
@@ -89,8 +91,10 @@ def get_setup_router(templates, get_session_dep, auth_dep=None):
                 "loan_rate_type_options": LOAN_RATE_TYPE_OPTIONS,
             }
         if step_key == "opening-balances":
+            opening_targets = _opening_balance_targets(session)
             return {
-                "opening_targets": _opening_balance_targets(session),
+                "opening_targets": opening_targets,
+                "opening_suggestions": opening_balance_suggestions(session, opening_targets),
                 "opening_entry": session.exec(
                     select(JournalEntry)
                     .where(JournalEntry.entry_type == "OPENING_BALANCE")
@@ -191,8 +195,27 @@ def get_setup_router(templates, get_session_dep, auth_dep=None):
             session.commit()
         return _render_step(request, session, step_key)
 
+    @router.get("/setup/publish/review", response_class=HTMLResponse, dependencies=mounted)
+    def publish_review(request: Request, session: Session = Depends(get_session_dep)):
+        progress = evaluate(session)
+        if not progress.publishable:
+            return RedirectResponse(url="/setup", status_code=303)
+        report = build_reconciliation_report(session)
+        return templates.TemplateResponse(
+            request=request,
+            name="setup/publish_review.html",
+            context={
+                "active_page": "settings",
+                "progress": progress,
+                "report": report,
+            },
+        )
+
     @router.post("/setup/publish", dependencies=mounted)
-    def publish_portfolio(session: Session = Depends(get_session_dep)):
+    def publish_portfolio(
+        acknowledge_gaps: str = Form(default=""),
+        session: Session = Depends(get_session_dep),
+    ):
         _require_mutation()
         progress = evaluate(session)
         if not progress.publishable:
@@ -200,6 +223,15 @@ def get_setup_router(templates, get_session_dep, auth_dep=None):
                 "error": "Finish the property, account, mortgage and opening balance steps first."
             })
             return RedirectResponse(url=f"/setup?{query}", status_code=303)
+        report = build_reconciliation_report(session)
+        if report.blocking_checks:
+            labels = ", ".join(check.label for check in report.blocking_checks)
+            query = urlencode({
+                "error": f"Integrity controls failed: {labels}. Resolve them before publishing."
+            })
+            return RedirectResponse(url=f"/setup?{query}", status_code=303)
+        if report.warning_checks and acknowledge_gaps != "1":
+            return RedirectResponse(url="/setup/publish/review", status_code=303)
         publish(session)
         session.commit()
         return RedirectResponse(url="/setup/done", status_code=303)

@@ -425,8 +425,9 @@ def test_upload_uses_the_sidecar_when_enabled_and_stages_for_review(owner, monke
 
 def test_hybrid_approved_extraction_imports_transactions_into_ledger(owner, monkeypatch, tmp_path):
     from synthetic_statements import bofa_checking_pdf
-    from proptally.ingestion.service import approve_extraction, import_approved_extraction
+
     from proptally.db.models import Transaction, TransactionProcessingState
+    from proptally.ingestion.service import approve_extraction, import_approved_extraction
 
     signed_in = owner()
     _seed_checking(signed_in.engine)
@@ -463,6 +464,7 @@ def test_hybrid_upload_detects_transaction_balance_mismatch_and_requires_review(
     owner, monkeypatch, tmp_path
 ):
     from urllib.parse import unquote_plus
+
     from synthetic_statements import bofa_checking_pdf
 
     signed_in = owner()
@@ -511,6 +513,7 @@ def test_hybrid_upload_detects_transaction_balance_mismatch_and_requires_review(
 
 def test_hybrid_upload_extracts_unrecognised_pdf_via_sidecar(owner, monkeypatch, tmp_path):
     from urllib.parse import unquote_plus
+
     import pymupdf
 
     signed_in = owner()
@@ -745,8 +748,9 @@ def test_client_wait_for_job_retries_transient_polling_errors_and_cancels_on_tim
 
 
 def test_finalize_stale_extraction_with_local_fallback(session, tmp_path):
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
     from uuid import uuid4
+
     from proptally.ingestion.service import finalize_stale_extraction
 
     doc = Document(
@@ -789,8 +793,9 @@ def test_finalize_stale_extraction_with_local_fallback(session, tmp_path):
 
 
 def test_finalize_stale_extraction_without_local_fallback(session):
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
     from uuid import uuid4
+
     from proptally.ingestion.service import finalize_stale_extraction
 
     doc = Document(
@@ -829,6 +834,7 @@ def test_finalize_stale_extraction_without_local_fallback(session):
 
 def test_reupload_unimported_document_requeues_for_sidecar(owner, monkeypatch, tmp_path):
     from urllib.parse import unquote_plus
+
     from sqlalchemy import desc
     from synthetic_statements import bofa_checking_pdf
 
@@ -886,8 +892,9 @@ def test_reupload_unimported_document_requeues_for_sidecar(owner, monkeypatch, t
 
 
 def test_restaged_old_row_does_not_timeout_prematurely(session, tmp_path):
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
     from uuid import uuid4
+
     from proptally.ingestion.doc_intel import DocIntelJob
     from proptally.ingestion.service import StatementIngestionService
 
@@ -1045,7 +1052,6 @@ def test_extraction_evidence_location_endpoint(owner, tmp_path):
         session.add(ext)
         session.commit()
         ext_id = ext.id
-        doc_id = doc.id
 
     # 1. Fetch evidence location by exact field name
     resp = signed_in.client.get(f"/statements/extractions/{ext_id}/evidence/opening_balance_cents/location")

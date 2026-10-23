@@ -304,6 +304,7 @@
                 {{ ui.date_field("as_of", "Balance date", required=true,
                                  help="The date the portfolio's books start.") }}
             </div>
+            {% include "components/opening_balance_suggestions.html" %}
             <div class="pt-form-grid pt-form-grid--2">
                 {% for target in opening_targets %}
                 {{ ui.number_field(

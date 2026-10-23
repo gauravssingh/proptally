@@ -345,6 +345,25 @@
             event.preventDefault();
             window.PT.openModal(modalOpener.getAttribute('data-modal-open'));
         }
+
+        /* --- Opening-balance suggestions ------------------------------- */
+        /* A statement figure is copied into its field only when the operator asks;
+           the date is set only when it is still empty. */
+        var openingFill = event.target.closest('[data-opening-fill]');
+        if (openingFill) {
+            var openingField = openingFill.getAttribute('data-opening-fill');
+            var openingInput = document.querySelector('input[name="' + openingField + '"]');
+            if (openingInput) {
+                openingInput.value = openingFill.getAttribute('data-opening-amount') || '';
+                openingInput.dispatchEvent(new Event('input', { bubbles: true }));
+                var openingDate = document.querySelector('input[name="as_of"]');
+                var suggestionDate = openingFill.getAttribute('data-opening-date');
+                if (openingDate && !openingDate.value && suggestionDate) {
+                    openingDate.value = suggestionDate;
+                }
+                openingInput.focus();
+            }
+        }
     });
 
     /* --- Modal controller --------------------------------------------- */

@@ -71,3 +71,21 @@ def test_transactions_pagination_and_filtering(owner):
     assert resp_create.status_code == 303
     assert resp_create.headers["location"] == "http://testserver/transactions?per_page=10&page=2"
 
+
+
+def test_manual_transaction_picklists_offer_accounts(owner):
+    """Both picklists carry options; Jinja loop-scoped set left them empty once."""
+    import re
+
+    signed_in = owner(reference_portfolio=True)
+    html = signed_in.client.get("/transactions").text
+
+    modal = html.split('id="manual-modal"', 1)[1].split("</form>", 1)[0]
+    assert 'value="acct_bofa_chk_9456"' in modal, "Financial Account picklist is empty"
+    assert "BoA Core Checking" in modal
+
+    transfer = re.search(r'name="counter_account_id".*?</select>', modal, re.S)
+    assert transfer, "Transfer picklist missing"
+    transfer_html = transfer.group(0)
+    assert 'value="acct_bofa_visa_9306"' in transfer_html
+    assert 'value="acct_bofa_chk_9456"' not in transfer_html, "only cards settle a transfer"

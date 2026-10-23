@@ -1,0 +1,42 @@
+{% import "components/ui.html" as ui with context %}
+{#- Balances the portfolio's own statements already state, offered per account.
+
+    The opening entry is a single dated snapshot, so nothing here is filled
+    automatically: each row names the date its figure belongs to, and the operator
+    chooses what to use. Property cost basis is not on a statement. -#}
+{% if opening_suggestions %}
+<div class="pt-stack pt-gap-2" data-opening-suggestions>
+    <div class="pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-2">
+        <span class="pt-fs-caption pt-text-muted">From your imported statements</span>
+        <span class="pt-fs-caption pt-text-muted">Opening balance of each account's first statement</span>
+    </div>
+    {% for suggestion in opening_suggestions.values() %}
+    <div class="pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-3">
+        <span class="pt-fs-caption">
+            <strong>{{ suggestion.label }}</strong>
+            <span class="pt-num">${{ suggestion.amount }}</span>
+            <span class="pt-text-secondary">as at {{ suggestion.as_of | format_date }}</span>
+        </span>
+        {{ ui.btn(
+            "Use",
+            variant="secondary",
+            size="xs",
+            type="button",
+            attrs='data-opening-fill="' ~ suggestion.field ~ '"'
+                  ~ ' data-opening-amount="' ~ suggestion.amount ~ '"'
+                  ~ ' data-opening-date="' ~ suggestion.as_of.isoformat() ~ '"'
+        ) }}
+    </div>
+    {% endfor %}
+    {% set suggestion_dates = opening_suggestions.values() | map(attribute='as_of') | unique | list %}
+    {% if suggestion_dates | length > 1 %}
+    <p class="pt-fs-caption pt-text-secondary">
+        These accounts' first statements start on different dates. The entry below is one
+        dated snapshot, so use only the figures stated at the balance date you choose.
+    </p>
+    {% endif %}
+    <p class="pt-fs-caption pt-text-secondary">
+        A cost basis is not stated on a statement, so properties are left for you to enter.
+    </p>
+</div>
+{% endif %}

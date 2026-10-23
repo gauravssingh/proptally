@@ -279,6 +279,7 @@
         {{ ui.date_field("as_of", "Balance date", required=true,
                          help="The baseline date these balances are stated at. One entry per date.") }}
     </div>
+    {% include "components/opening_balance_suggestions.html" %}
     <div class="pt-form-grid pt-form-grid--2">
         {% for target in opening_targets %}
         {{ ui.number_field(

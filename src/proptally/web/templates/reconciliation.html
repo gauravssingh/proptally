@@ -117,7 +117,7 @@
 {# --- Filter bar + repeat-vendor chips (server-side filtering, URL-backed) -- #}
 <div class="pt-filterbar">
     <form method="GET" action="/reconciliation" id="reconciliationFilterForm">
-        <div class="pt-filterbar__grid">
+        <div class="pt-filterbar__grid pt-filterbar__grid--actions">
             {{ ui.search_field(
                 "q", "Search merchant / description", value=active_filters.q,
                 placeholder="e.g. Apple, Hertz, Amazon, ComEd, Millbrook…"
@@ -135,20 +135,19 @@
             {{ ui.select_field("per_page", "Per page", per_page_options,
                                selected=active_filters.per_page, cls="pt-field--sm",
                                extra="data-per-page-submit") }}
+
+            {# Apply sits on the filter row, level with the controls it applies. #}
+            <div class="pt-filterbar__submit">
+                {% if has_active_filters %}
+                {{ ui.btn("Reset all filters", variant="secondary", size="sm", href="/reconciliation") }}
+                {% endif %}
+                {{ ui.btn("Apply Filters", variant="neutral", size="sm", type="submit") }}
+            </div>
         </div>
 
         {# Backend contract: the vendor chip filter, and reset to the first page. #}
         <input type="hidden" name="vendor_pattern" value="{{ active_filters.vendor_pattern }}">
         <input type="hidden" name="page" value="1">
-
-        <div class="pt-filterbar__actions">
-            <div>
-                {% if has_active_filters %}
-                {{ ui.btn("Reset all filters", variant="secondary", size="sm", href="/reconciliation") }}
-                {% endif %}
-            </div>
-            {{ ui.btn("Apply Filters", variant="neutral", size="sm", type="submit") }}
-        </div>
     </form>
 
     <div class="pt-filterbar__actions">
@@ -258,6 +257,9 @@
               class="pt-flex pt-flex-wrap pt-items-end pt-gap-3">
         {{ csrf_field() }}
             <input type="hidden" name="vendor_pattern" value="{{ batch_action_info.pattern }}">
+            {% if batch_action_info.rule %}
+            <input type="hidden" name="rule_id" value="{{ batch_action_info.rule.id }}">
+            {% endif %}
 
             {{ ui.select_field("category", "Category", batch_category_options,
                                selected=batch_action_info.suggested_category, cls="pt-field--sm") }}

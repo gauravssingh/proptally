@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from proptally.core.exceptions import GovernanceAuthorizationError, InvalidSplitSumError
@@ -23,6 +24,7 @@ from proptally.db.models import (
     TransactionSplit,
     VendorRule,
 )
+from proptally.domain.accounting.controls import build_reconciliation_report
 from proptally.domain.transactions.policy import (
     assert_posting_authorized,
     classification_status_for,
@@ -38,8 +40,69 @@ from proptally.domain.transactions.suggest import suggest_split_for_transaction
 from proptally.web.auth import posting_actor_kwargs, validate_authorizations
 
 
+def find_matching_vendor_rule(rules: list[VendorRule], pattern_or_name: Optional[str]) -> Optional[VendorRule]:
+    """Finds the most specific active vendor rule matching a query string.
+
+    Lookup precedence:
+    1. Exact match on rule.pattern (case-insensitive)
+    2. Exact match on rule.vendor_name (case-insensitive)
+    3. Substring match on rule.pattern (longest pattern first)
+    4. Substring match on rule.vendor_name (longest name first)
+    """
+    if not pattern_or_name or not pattern_or_name.strip():
+        return None
+    clean = pattern_or_name.strip().upper()
+
+    # 1. Exact match on pattern
+    for r in rules:
+        if r.pattern.strip().upper() == clean:
+            return r
+
+    # 2. Exact match on vendor_name
+    for r in rules:
+        if (r.vendor_name or "").strip().upper() == clean:
+            return r
+
+    # 3. Substring match on pattern: query contains pattern or pattern contains query
+    sorted_by_pat = sorted(rules, key=lambda r: len(r.pattern), reverse=True)
+    for r in sorted_by_pat:
+        r_pat = r.pattern.strip().upper()
+        if r_pat in clean or clean in r_pat:
+            return r
+
+    # 4. Substring match on vendor_name
+    sorted_by_vnd = sorted(rules, key=lambda r: len(r.vendor_name or ""), reverse=True)
+    for r in sorted_by_vnd:
+        r_vnd = (r.vendor_name or "").strip().upper()
+        if r_vnd and (r_vnd in clean or clean in r_vnd):
+            return r
+
+    return None
+
+
 def get_reconciliation_router(templates, get_session_dep):
     router = APIRouter()
+
+    @router.get("/reconciliation/report", response_class=HTMLResponse)
+    def view_reconciliation_report(
+        request: Request,
+        session: Session = Depends(get_session_dep),
+    ):
+        report = build_reconciliation_report(session)
+        review_count = session.exec(
+            select(func.count(TransactionProcessingState.transaction_id)).where(
+                TransactionProcessingState.allocation_status == "UNALLOCATED"
+            )
+        ).one()
+        return templates.TemplateResponse(
+            request=request,
+            name="reconciliation_report.html",
+            context={
+                "active_page": "report",
+                "report": report,
+                "review_count": int(review_count or 0),
+            },
+        )
 
     @router.get("/reconciliation", response_class=HTMLResponse)
     def view_reconciliation(
@@ -208,8 +271,7 @@ def get_reconciliation_router(templates, get_session_dep):
         # 7. Batch Action Metadata (if vendor pattern is active and matching items exist)
         batch_action_info = None
         if vendor_pattern_upper and filtered_items:
-            # Find matching vendor rule
-            matching_rule = next((r for r in vendor_rules if r.pattern.upper() == vendor_pattern_upper or vendor_pattern_upper in r.pattern.upper()), None)
+            matching_rule = find_matching_vendor_rule(vendor_rules, vendor_pattern)
             batch_action_info = {
                 "pattern": vendor_pattern,
                 "count": filtered_count,
@@ -430,6 +492,7 @@ def get_reconciliation_router(templates, get_session_dep):
         property_id: Optional[str] = Form(None),
         client_confirmed: bool = Form(False),
         user_attested_cpa_review: bool = Form(False),
+        rule_id: Optional[str] = Form(None),
         session: Session = Depends(get_session_dep),
     ):
         """Classifies matching transactions; posts only when no gate is required.
@@ -438,12 +501,15 @@ def get_reconciliation_router(templates, get_session_dep):
         needs CBD-1/CBD-2 allocates the transaction and leaves it UNPOSTED so a
         human can supply the actual confirmation.
         """
-        rule = session.exec(
-            select(VendorRule).where(
-                VendorRule.pattern == vendor_pattern.strip().upper(),
-                VendorRule.is_active == True,  # noqa: E712
-            )
-        ).first()
+        clean_pattern = vendor_pattern.strip().upper()
+        rule = None
+        if rule_id and rule_id.strip():
+            rule = session.get(VendorRule, rule_id.strip())
+
+        all_rules = session.exec(select(VendorRule).where(VendorRule.is_active == True)).all()
+        if rule is None:
+            rule = find_matching_vendor_rule(all_rules, vendor_pattern)
+
         required_client = bool(rule.requires_client_confirmation) if rule else False
         required_cpa = bool(rule.requires_cpa_review) if rule else False
 
@@ -455,16 +521,48 @@ def get_reconciliation_router(templates, get_session_dep):
             )
         ).all()
 
-        pattern_upper = vendor_pattern.strip().upper()
         prop_target = property_id if property_id and property_id.strip() else None
         applied_count = 0
+
+        patterns_to_check = [clean_pattern]
+        if rule:
+            patterns_to_check.append(rule.pattern.strip().upper())
+            if rule.vendor_name:
+                patterns_to_check.append(rule.vendor_name.strip().upper())
 
         for state in unallocated_states:
             txn = session.get(Transaction, state.transaction_id)
             if not txn:
                 continue
 
-            if pattern_upper in txn.raw_description.upper():
+            desc_upper = txn.raw_description.upper()
+            matches = any(p and p in desc_upper for p in patterns_to_check)
+            sugg = None
+            if not matches:
+                sugg = suggest_split_for_transaction(txn.raw_description, txn.amount_cents, rules_cache=all_rules)
+                if sugg:
+                    if rule and sugg.rule_id == rule.id:
+                        matches = True
+                    elif sugg.vendor_name and (
+                        sugg.vendor_name.upper() == clean_pattern
+                        or sugg.vendor_name.upper() in clean_pattern
+                        or clean_pattern in sugg.vendor_name.upper()
+                    ):
+                        matches = True
+                    elif clean_pattern in sugg.rule_name.upper():
+                        matches = True
+
+            if matches:
+                # Requirement flags are policy, never authorization.
+                txn_req_client = required_client
+                txn_req_cpa = required_cpa
+                if not (txn_req_client and txn_req_cpa):
+                    if not sugg:
+                        sugg = suggest_split_for_transaction(txn.raw_description, txn.amount_cents, rules_cache=all_rules)
+                    if sugg and (rule is None or sugg.rule_id == rule.id):
+                        txn_req_client = txn_req_client or bool(sugg.requires_client_confirmation)
+                        txn_req_cpa = txn_req_cpa or bool(sugg.requires_cpa_review)
+
                 splits = [
                     SplitItem(
                         property_id=prop_target,
@@ -473,17 +571,17 @@ def get_reconciliation_router(templates, get_session_dep):
                         tax_review_status=classification_status_for(
                             client_confirmed, user_attested_cpa_review
                         ),
-                        notes=f"Batch Vendor Rule: {vendor_pattern}",
+                        notes=f"Batch Vendor Rule: {rule.vendor_name if rule else vendor_pattern}",
                     )
                 ]
 
-                if required_client or required_cpa:
+                if txn_req_client or txn_req_cpa:
                     # Apply the allocation, record the gates, and leave posting
                     # to an explicit, attributable human action.
                     txn.requires_client_confirmation = (
-                        txn.requires_client_confirmation or required_client
+                        txn.requires_client_confirmation or txn_req_client
                     )
-                    txn.requires_cpa_review = txn.requires_cpa_review or required_cpa
+                    txn.requires_cpa_review = txn.requires_cpa_review or txn_req_cpa
                     session.add(txn)
                     apply_transaction_splits(session, txn.id, splits)
                     applied_count += 1

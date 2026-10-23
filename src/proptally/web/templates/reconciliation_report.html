@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Controls & reconciliation — PropTally{% endblock %}
+
+{% block content %}
+{% set blocker_count = report.blocking_checks | length %}
+{% set warning_count = report.warning_checks | length %}
+{% set header_meta %}
+    {% if blocker_count %}
+        {{ ui.badge(blocker_count ~ " blocking", variant="error", upper=true) }}
+    {% elif warning_count %}
+        {{ ui.badge(warning_count ~ (" warning" if warning_count == 1 else " warnings"), variant="warning", upper=true) }}
+    {% else %}
+        {{ ui.badge("clear", variant="success", upper=true) }}
+    {% endif %}
+{% endset %}
+{{ ui.page_header(
+    "Controls & reconciliation",
+    "Read-only integrity checks over the published ledger, account balances and property basis.",
+    meta=header_meta
+) }}
+
+{% if blocker_count %}
+    {% set names = report.blocking_checks | map(attribute="label") | join(", ") %}
+    {{ ui.alert(
+        variant="error",
+        title="Blocking integrity failure",
+        text=("<strong>" ~ names ~ "</strong> must be resolved before the portfolio can be published.")
+    ) }}
+{% endif %}
+
+<div class="pt-grid pt-sm-grid-cols-2 pt-lg-grid-cols-4 pt-gap-4">
+    {{ ui.kpi("Assets", ui.amount(report.totals.assets, mode="plain", strong=true), sub="Posted ledger") }}
+    {{ ui.kpi("Liabilities", ui.amount(report.totals.liabilities, mode="plain", strong=true), sub="Posted ledger") }}
+    {{ ui.kpi("Equity", ui.amount(report.totals.equity, mode="plain", strong=true), sub="Assets less liabilities") }}
+    {{ ui.kpi("Unposted", report.counts.unposted_transactions | string, sub="Transactions awaiting posting") }}
+</div>
+
+{{ ui.section_open("Integrity controls", "Each check reads posted journal lines and imported statements. Nothing here writes.") }}
+{{ ui.table_open(compact=true, label="Integrity controls") }}
+<thead>
+    <tr>
+        {{ ui.th("Control") }}
+        {{ ui.th("Severity") }}
+        {{ ui.th("Status", center=true) }}
+        {{ ui.th("Count", num=true) }}
+        {{ ui.th("Result") }}
+    </tr>
+</thead>
+<tbody>
+    {% for check in report.checks %}
+    <tr>
+        <td>
+            <strong>{{ check.label }}</strong>
+            {% if check.detail %}<div class="pt-fs-caption pt-text-muted">{{ check.detail }}</div>{% endif %}
+        </td>
+        <td>
+            {% if check.severity == "blocking" %}
+                {{ ui.badge("BLOCKING", variant="error", upper=true) }}
+            {% elif check.severity == "warning" %}
+                {{ ui.badge("WARNING", variant="warning", upper=true) }}
+            {% else %}
+                {{ ui.badge("INFO", variant="neutral", upper=true) }}
+            {% endif %}
+        </td>
+        <td class="pt-table__th-center">
+            {% if check.passed %}
+                {{ ui.badge("PASS", variant="success", upper=true) }}
+            {% else %}
+                {{ ui.badge("FAIL", variant="error", upper=true) }}
+            {% endif %}
+        </td>
+        <td class="pt-table__th-num">{{ check.count }}</td>
+        <td>
+            {{ check.summary }}
+            {% if check.samples %}
+            <div class="pt-fs-caption pt-text-muted">{{ check.samples[:4] | join(" · ") }}</div>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</tbody>
+{{ ui.table_close() }}
+{{ ui.section_close() }}
+
+{{ ui.section_open("Account reconciliation", "Ledger balance versus the latest statement, plus any transactions not yet posted.") }}
+{% if report.accounts %}
+{{ ui.table_open(compact=true, label="Account reconciliation") }}
+<thead>
+    <tr>
+        {{ ui.th("Account") }}
+        {{ ui.th("Type") }}
+        {{ ui.th("Ledger", num=true) }}
+        {{ ui.th("Statement", num=true) }}
+        {{ ui.th("Difference", num=true) }}
+        {{ ui.th("Unposted", num=true) }}
+        {{ ui.th("Latest statement") }}
+        {{ ui.th("Status", center=true) }}
+    </tr>
+</thead>
+<tbody>
+    {% for account in report.accounts %}
+    <tr>
+        <td><strong>{{ account.name }}</strong></td>
+        <td>{{ account.account_type | replace("_", " ") | title }}</td>
+        <td class="pt-table__th-num">{{ ui.amount(account.ledger_cents, mode="plain") }}</td>
+        <td class="pt-table__th-num">{{ ui.amount(account.statement_cents, mode="plain") }}</td>
+        <td class="pt-table__th-num">{{ ui.amount(account.difference_cents) }}</td>
+        <td class="pt-table__th-num">
+            {% if account.unposted_count %}
+            <strong>{{ account.unposted_count }}</strong>
+            <div class="pt-fs-caption pt-text-muted">{{ ui.amount(account.unposted_cents) }}</div>
+            {% else %}
+            <span class="pt-text-muted">0</span>
+            {% endif %}
+        </td>
+        <td>{{ account.latest_statement_date | format_date }}</td>
+        <td class="pt-table__th-center">
+            {% if account.status == "RECONCILED" %}
+                {{ ui.badge("RECONCILED", variant="success", upper=true) }}
+            {% elif account.status == "DRIFT" %}
+                {{ ui.badge("DRIFT", variant="warning", upper=true) }}
+            {% else %}
+                {{ ui.badge("NO STATEMENT", variant="neutral", upper=true) }}
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</tbody>
+{{ ui.table_close() }}
+{% else %}
+{{ ui.empty_state("No accounts to reconcile", "Add a bank or card account with a ledger code.") }}
+{% endif %}
+{{ ui.section_close() }}
+
+{{ ui.section_open("Property basis", "Cost basis is the largest asset on the balance sheet; it cannot be derived from statements.") }}
+{% if report.properties %}
+{{ ui.table_open(compact=true, label="Property basis") }}
+<thead>
+    <tr>
+        {{ ui.th("Property") }}
+        {{ ui.th("Acquired") }}
+        {{ ui.th("Purchase price", num=true) }}
+        {{ ui.th("Basis", num=true) }}
+        {{ ui.th("Ledger asset", num=true) }}
+        {{ ui.th("Status", center=true) }}
+    </tr>
+</thead>
+<tbody>
+    {% for prop in report.properties %}
+    <tr>
+        <td><strong>{{ prop.name }}</strong></td>
+        <td>{{ prop.acquisition_date | format_date }}</td>
+        <td class="pt-table__th-num">{{ ui.amount(prop.purchase_price_cents, mode="plain") }}</td>
+        <td class="pt-table__th-num">{{ ui.amount(prop.basis_cents, mode="plain") }}</td>
+        <td class="pt-table__th-num">{{ ui.amount(prop.ledger_asset_cents, mode="plain") }}</td>
+        <td class="pt-table__th-center">
+            {% if prop.missing_basis %}
+                {{ ui.badge("MISSING BASIS", variant="warning", upper=true) }}
+            {% else %}
+                {{ ui.badge("RECORDED", variant="success", upper=true) }}
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</tbody>
+{{ ui.table_close() }}
+{% else %}
+{{ ui.empty_state("No active properties") }}
+{% endif %}
+{{ ui.section_close() }}
+
+<p class="pt-fs-caption pt-text-muted">
+    Generated {{ report.generated_at | format_date }}. Unposted transactions can be classified in the
+    <a href="/reconciliation">review queue</a>. Basis and acquisition dates can be completed in
+    <a href="/settings">portfolio data</a>.
+</p>
+{% endblock %}
