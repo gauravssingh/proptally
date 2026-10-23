@@ -492,6 +492,30 @@ def _migrate_split_category_values(engine) -> int:
     return 1
 
 
+def _migrate_document_extraction_status(engine) -> int:
+    """Rebuilds document_extractions so validation_status accepts PROCESSING.
+
+    Same shape as the split-category migration above, for the same reason: adding an
+    allowed value keeps the semantic CHECK, and version 2 only looks for missing
+    constraint *names*. The model renames the constraint, and this step installs it
+    on databases that already ran version 2. Scoped to one table — the generic step
+    also reinstalls ledger triggers, which a partial database may not have.
+    """
+    with engine.connect() as conn:
+        if not _table_exists(conn, "document_extractions"):
+            return 0
+        if "check_document_extraction_validation_status_v2" in _live_table_sql(conn, "document_extractions"):
+            return 0
+    table = next(
+        (item for item in SQLModel.metadata.sorted_tables if item.name == "document_extractions"),
+        None,
+    )
+    if table is None:
+        return 0
+    _rebuild_table_for_constraints(engine, table)
+    return 1
+
+
 def _migrate_constraints(engine) -> int:
     """Installs missing CHECK constraints by rebuilding affected tables.
 
@@ -611,6 +635,14 @@ SCHEMA_MIGRATIONS = (
     (106, "add portfolio setup publish state", lambda engine: _apply(engine, _migrate_columns)),
     (107, "add acquisition costs and loan rate type", lambda engine: _apply(engine, _migrate_columns)),
     (108, "add security deposit split category", _migrate_split_category_values),
+    # A changed CHECK is invisible to version 2: it looks for a constraint *name*,
+    # and a database that already ran version 2 never looks again. When an allowed
+    # value changes (document_extractions.validation_status gained PROCESSING), the
+    # constraint is renamed and a fresh numbered step is required to rebuild it on
+    # databases that already exist. Scoped to that one table: a partial database
+    # written by another code line may not have the ledger tables the generic
+    # constraint step reinstalls triggers for.
+    (109, "allow PROCESSING document extraction status", _migrate_document_extraction_status),
 )
 
 

@@ -336,3 +336,73 @@ _CHECK_NAMES = tuple(sorted(
     for constraint in table.constraints
     if isinstance(constraint, CheckConstraint) and constraint.name
 ))
+
+
+def test_changed_check_values_rebuild_on_an_existing_database(tmp_path):
+    """A renamed CHECK must reach databases that already ran the generic migration.
+
+    ``_tables_missing_constraints`` matches constraint *names*, and a database that
+    recorded version 2 never re-runs it. Changing an allowed value therefore needs
+    its own numbered step (109) or existing portfolios keep the old CHECK and reject
+    the new value.
+    """
+    engine = get_engine(f"sqlite:///{tmp_path / 'existing.db'}")
+    init_schema(engine)
+
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO documents (id, file_sha256, original_filename, "
+                          "storage_path, file_size_bytes, mime_type, uploaded_at) "
+                          "VALUES ('doc_probe', 'sha_probe', 'f.pdf', '/v', 1, "
+                          "'application/pdf', '2026-01-01')"))
+        # Roll the table back to the pre-PROCESSING constraint, as a 2026-10 database has it.
+        conn.execute(text("DROP TABLE document_extractions"))
+        conn.execute(text("""
+            CREATE TABLE document_extractions (
+                id VARCHAR NOT NULL PRIMARY KEY,
+                document_id VARCHAR NOT NULL,
+                parser_name VARCHAR NOT NULL,
+                parser_version VARCHAR NOT NULL,
+                validation_status VARCHAR NOT NULL DEFAULT 'EXTRACTED',
+                approval_status VARCHAR NOT NULL DEFAULT 'PENDING',
+                extracted_data_json VARCHAR NOT NULL,
+                approved_at DATETIME,
+                imported_statement_id VARCHAR,
+                created_at DATETIME NOT NULL,
+                FOREIGN KEY(document_id) REFERENCES documents (id),
+                CONSTRAINT check_document_extraction_validation_status
+                    CHECK (validation_status IN ('EXTRACTED', 'VALIDATED', 'NEEDS_REVIEW')),
+                CONSTRAINT check_document_extraction_approval_status
+                    CHECK (approval_status IN ('PENDING', 'APPROVED'))
+            )
+        """))
+        conn.execute(text("INSERT INTO document_extractions (id, document_id, parser_name, "
+                          "parser_version, validation_status, approval_status, "
+                          "extracted_data_json, created_at) "
+                          "VALUES ('legacy', 'doc_probe', 'p', '1', 'VALIDATED', 'PENDING', '{}', "
+                          "'2026-01-01')"))
+        # The generic constraint step is already recorded; only 109 is pending.
+        conn.execute(text("DELETE FROM schema_migrations WHERE version = 109"))
+
+    with pytest.raises(Exception):
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO document_extractions (id, document_id, parser_name, "
+                              "parser_version, validation_status, approval_status, "
+                              "extracted_data_json, created_at) "
+                              "VALUES ('pre', 'doc_probe', 'p', '1', 'PROCESSING', 'PENDING', '{}', "
+                              "'2026-01-01')"))
+
+    init_schema(engine)
+
+    with engine.begin() as conn:
+        ddl = conn.execute(text(
+            "SELECT sql FROM sqlite_master WHERE name = 'document_extractions'"
+        )).scalar()
+        assert "check_document_extraction_validation_status_v2" in ddl
+        assert conn.execute(text(
+            "SELECT COUNT(*) FROM document_extractions WHERE id = 'legacy'"
+        )).scalar() == 1
+        conn.execute(text("INSERT INTO document_extractions (id, document_id, parser_name, "
+                          "parser_version, validation_status, approval_status, "
+                          "extracted_data_json, created_at) "
+                          "VALUES ('post', 'doc_probe', 'p', '1', 'PROCESSING', 'PENDING', '{}', "
+                          "'2026-01-01')"))

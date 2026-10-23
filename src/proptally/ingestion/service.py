@@ -9,7 +9,7 @@ import os
 import re
 import shutil
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -1088,7 +1088,7 @@ class DocIntelStaged:
 
 
 def _iso_date(value: object) -> str | None:
-    """An ISO date string, from either ISO or a US-style printed date."""
+    """An ISO date string, from either ISO or a printed date."""
     if value in (None, ""):
         return None
     text = str(value).strip()
@@ -1096,9 +1096,28 @@ def _iso_date(value: object) -> str | None:
         return date.fromisoformat(text).isoformat()
     except ValueError:
         pass
-    for pattern in ("%m/%d/%Y", "%m/%d/%y"):
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        pass
+    clean = re.sub(r"(\d+)(st|nd|rd|th)", r"\1", text)
+    clean = re.sub(r"\s+", " ", clean)
+    formats = (
+        "%m/%d/%Y",
+        "%m/%d/%y",
+        "%B %d, %Y",
+        "%b %d, %Y",
+        "%B %d %Y",
+        "%b %d %Y",
+        "%d %B %Y",
+        "%d %b %Y",
+        "%d-%b-%Y",
+        "%d/%m/%Y",
+        "%Y/%m/%d",
+    )
+    for pattern in formats:
         try:
-            return datetime.strptime(text, pattern).date().isoformat()
+            return datetime.strptime(clean, pattern).date().isoformat()
         except ValueError:
             continue
     return None
@@ -1133,7 +1152,13 @@ def doc_intel_extraction_data(profile_name: str, fields: dict, payload: dict) ->
     Identity fields are left unresolved: ``resolve_extraction_data`` attaches them
     to accounts this portfolio already holds.
     """
-    fields = {k: _field_value(v) for k, v in (fields or {}).items()}
+    raw_fields = fields or {}
+    fields = {k: _field_value(v) for k, v in raw_fields.items()}
+    evidence = {
+        k: v["evidence"]
+        for k, v in raw_fields.items()
+        if isinstance(v, dict) and v.get("evidence")
+    }
     profile = (profile_name or "").strip().lower()
     if profile not in DOC_INTEL_PROFILES:
         raise DocIntelStagingError(
@@ -1156,6 +1181,8 @@ def doc_intel_extraction_data(profile_name: str, fields: dict, payload: dict) ->
         )
 
     masked = fields.get("account_number_masked") or account.get("account_number_masked")
+    masked_digits = _digits(masked)
+    account_last4 = masked_digits[-4:] if len(masked_digits) >= 4 else (masked_digits or None)
     institution_name = str(fields.get("institution_name") or "").strip() or None
     servicer_name = str(
         fields.get("servicer_name") or fields.get("lender") or fields.get("institution_name") or ""
@@ -1174,10 +1201,11 @@ def doc_intel_extraction_data(profile_name: str, fields: dict, payload: dict) ->
         "closing_balance_cents": _cents(statement.get("closing_balance_cents")),
         "institution_name": institution_name,
         "servicer_name": servicer_name,
-        "account_last4": _digits(masked) or None,
+        "account_last4": account_last4,
         "institution_id": None,
         "financial_account_id": None,
         "transactions": [],
+        "evidence": evidence,
         "field_ambiguities": [],
         "review_reasons": [],
         "resolution_reasons": [],
@@ -1206,26 +1234,274 @@ def doc_intel_extraction_data(profile_name: str, fields: dict, payload: dict) ->
             "payment_due_date": _iso_date(fields.get("payment_due_date")),
         })
         if data["account_last4"] is None:
-            data["account_last4"] = _digits(fields.get("loan_number")) or None
+            loan_digits = _digits(fields.get("loan_number"))
+            data["account_last4"] = loan_digits[-4:] if len(loan_digits) >= 4 else (loan_digits or None)
 
     return data
 
 
 def _doc_intel_review_reasons(data: dict, result: dict) -> list[str]:
     """Everything that keeps an extraction out of VALIDATED, in review-screen words."""
-    reasons: list[str] = []
+    reasons: list[str] = list(data.get("review_reasons") or [])
     for issue in result.get("cross_field_issues") or []:
         message = str(issue.get("message") or issue.get("reason") or "").strip()
-        if message:
+        if message and message not in reasons:
             reasons.append(message)
     if data["statement_type"] == "MORTGAGE":
         for key, label in _MORTGAGE_REVIEW_FIELDS:
             if data.get(key) is None:
-                reasons.append(f"The statement does not state its {label}; enter it to import.")
+                msg = f"The statement does not state its {label}; enter it to import."
+                if msg not in reasons:
+                    reasons.append(msg)
     return reasons
 
 
+def _hydrate_local_extraction(
+    item: BankStatementExtraction | MortgageExtraction | dict | None,
+) -> BankStatementExtraction | MortgageExtraction | None:
+    if item is None or isinstance(item, (BankStatementExtraction, MortgageExtraction)):
+        return item
+    if not isinstance(item, dict):
+        return None
+    st_type = item.get("statement_type")
+    if st_type in ("CHECKING", "CREDIT_CARD"):
+        txs = [
+            BankTransaction(
+                transaction_date=date.fromisoformat(t["transaction_date"])
+                if isinstance(t.get("transaction_date"), str)
+                else t.get("transaction_date"),
+                posting_date=date.fromisoformat(t["posting_date"])
+                if isinstance(t.get("posting_date"), str)
+                else t.get("posting_date"),
+                amount_cents=int(t.get("amount_cents", 0)),
+                direction=t.get("direction", "INFLOW" if int(t.get("amount_cents", 0)) > 0 else "OUTFLOW"),
+                raw_description=t.get("raw_description") or t.get("description", ""),
+                reference_number=t.get("reference_number"),
+                requires_client_confirmation=bool(t.get("requires_client_confirmation", False)),
+                requires_cpa_review=bool(t.get("requires_cpa_review", False)),
+            )
+            for t in item.get("transactions", [])
+        ]
+        return BankStatementExtraction(
+            parser_name=item.get("parser_name", "builtin"),
+            statement_type=st_type,
+            institution_name=item.get("institution_name"),
+            account_last4=item.get("account_last4"),
+            statement_date=date.fromisoformat(item["statement_date"])
+            if isinstance(item.get("statement_date"), str)
+            else (item.get("statement_date") or date.today()),
+            period_start_date=date.fromisoformat(item["period_start_date"])
+            if isinstance(item.get("period_start_date"), str)
+            else (item.get("period_start_date") or date.today()),
+            period_end_date=date.fromisoformat(item["period_end_date"])
+            if isinstance(item.get("period_end_date"), str)
+            else (item.get("period_end_date") or date.today()),
+            opening_balance_cents=item.get("opening_balance_cents", 0),
+            closing_balance_cents=item.get("closing_balance_cents", 0),
+            institution_id=item.get("institution_id"),
+            financial_account_id=item.get("financial_account_id"),
+            transactions=txs,
+            status=item.get("status", "EXTRACTED"),
+            review_reasons=list(item.get("review_reasons") or []),
+            resolution_reasons=list(item.get("resolution_reasons") or []),
+        )
+    elif st_type == "MORTGAGE":
+        return MortgageExtraction(
+            parser_name=item.get("parser_name", "builtin"),
+            statement_type=st_type,
+            servicer_name=item.get("servicer_name"),
+            loan_number=item.get("loan_number"),
+            account_last4=item.get("account_last4"),
+            statement_date=date.fromisoformat(item["statement_date"])
+            if isinstance(item.get("statement_date"), str)
+            else item.get("statement_date"),
+            payment_due_date=date.fromisoformat(item["payment_due_date"])
+            if isinstance(item.get("payment_due_date"), str)
+            else item.get("payment_due_date"),
+            principal_cents=item.get("principal_cents"),
+            interest_cents=item.get("interest_cents"),
+            escrow_cents=item.get("escrow_cents"),
+            fees_cents=item.get("fees_cents"),
+            total_due_cents=item.get("total_due_cents"),
+            outstanding_principal_cents=item.get("outstanding_principal_cents"),
+            reported_interest_rate_milli_percent=item.get("reported_interest_rate_milli_percent"),
+            financial_account_id=item.get("financial_account_id"),
+            loan_account_id=item.get("loan_account_id"),
+            property_id=item.get("property_id"),
+            escrow_balance_cents=item.get("escrow_balance_cents"),
+            field_ambiguities=list(item.get("field_ambiguities") or []),
+            status=item.get("status", "EXTRACTED"),
+            review_reasons=list(item.get("review_reasons") or []),
+            resolution_reasons=list(item.get("resolution_reasons") or []),
+        )
+    return None
+
+
+def merge_hybrid_extraction_data(
+    data: dict,
+    local_extraction: BankStatementExtraction | MortgageExtraction | dict | None,
+) -> dict:
+    """Merge sidecar extraction data with built-in parser extraction.
+
+    The built-in parser is the source of truth for transaction line items and mortgage
+    payment splits (P&I/escrow). The sidecar provides layout-agnostic identity, dates,
+    and summary balances. All fields track explicit provenance. Mathematical balance
+    consistency (opening + sum(transactions) == closing) is strictly enforced.
+    """
+    local_extraction = _hydrate_local_extraction(local_extraction)
+    provenance: dict[str, str] = {
+        k: "sidecar:doc_intel"
+        for k, v in data.items()
+        if v is not None and k not in ("transactions", "review_reasons", "resolution_reasons")
+    }
+
+    if local_extraction is not None:
+        if isinstance(local_extraction, BankStatementExtraction):
+            if local_extraction.transactions:
+                data["transactions"] = [t.to_dict() for t in local_extraction.transactions]
+                provenance["transactions"] = f"builtin:{local_extraction.parser_name}"
+
+            # Fallbacks for missing summary fields
+            if data.get("opening_balance_cents") is None and local_extraction.opening_balance_cents is not None:
+                data["opening_balance_cents"] = local_extraction.opening_balance_cents
+                provenance["opening_balance_cents"] = f"builtin:{local_extraction.parser_name}"
+            if data.get("closing_balance_cents") is None and local_extraction.closing_balance_cents is not None:
+                data["closing_balance_cents"] = local_extraction.closing_balance_cents
+                provenance["closing_balance_cents"] = f"builtin:{local_extraction.parser_name}"
+            if data.get("statement_date") is None and local_extraction.statement_date is not None:
+                data["statement_date"] = local_extraction.statement_date.isoformat()
+                provenance["statement_date"] = f"builtin:{local_extraction.parser_name}"
+            if data.get("period_start_date") is None and local_extraction.period_start_date is not None:
+                data["period_start_date"] = local_extraction.period_start_date.isoformat()
+                provenance["period_start_date"] = f"builtin:{local_extraction.parser_name}"
+            if data.get("period_end_date") is None and local_extraction.period_end_date is not None:
+                data["period_end_date"] = local_extraction.period_end_date.isoformat()
+                provenance["period_end_date"] = f"builtin:{local_extraction.parser_name}"
+            if not data.get("institution_name") and local_extraction.institution_name:
+                data["institution_name"] = local_extraction.institution_name
+                provenance["institution_name"] = f"builtin:{local_extraction.parser_name}"
+            if not data.get("account_last4") and local_extraction.account_last4:
+                data["account_last4"] = local_extraction.account_last4
+                provenance["account_last4"] = f"builtin:{local_extraction.parser_name}"
+
+            # Enforce Opening + Net transactions == Closing
+            opening = data.get("opening_balance_cents")
+            closing = data.get("closing_balance_cents")
+            txs = data.get("transactions", [])
+            if opening is not None and closing is not None and txs:
+                net_cents = sum(int(t.get("amount_cents", 0)) for t in txs)
+                if opening + net_cents != closing:
+                    diff_cents = (opening + net_cents) - closing
+                    reason = (
+                        f"Opening balance (${opening/100:,.2f}) plus net transactions "
+                        f"(${net_cents/100:,.2f}) does not equal closing balance "
+                        f"(${closing/100:,.2f}); difference of ${abs(diff_cents)/100:,.2f}."
+                    )
+                    data.setdefault("review_reasons", []).append(reason)
+
+        elif isinstance(local_extraction, MortgageExtraction):
+            for field_name in (
+                "principal_cents",
+                "interest_cents",
+                "escrow_cents",
+                "fees_cents",
+                "total_due_cents",
+                "outstanding_principal_cents",
+                "reported_interest_rate_milli_percent",
+                "escrow_balance_cents",
+                "payment_due_date",
+                "loan_number",
+                "servicer_name",
+            ):
+                local_val = getattr(local_extraction, field_name, None)
+                if data.get(field_name) is None and local_val is not None:
+                    data[field_name] = local_val.isoformat() if isinstance(local_val, date) else local_val
+                    provenance[field_name] = f"builtin:{local_extraction.parser_name}"
+
+    data["provenance"] = provenance
+    return data
+
+
+def classify_statement_profile(path: Path) -> str:
+    """Classify an unrecognised statement PDF to the best matching sidecar profile."""
+    import pymupdf
+
+    try:
+        with pymupdf.open(path) as doc:
+            text = "\n".join(page.get_text() for page in doc[:3]).lower()
+    except Exception:
+        return "bank_statement"
+
+    mortgage_cues = ("mortgage", "principal balance", "escrow", "interest rate", "loan number", "monthly payment due")
+    mortgage_score = sum(1 for cue in mortgage_cues if cue in text)
+
+    card_cues = ("credit card", "minimum payment", "cardmember", "credit limit", "available credit", "payment due date")
+    card_score = sum(1 for cue in card_cues if cue in text)
+
+    bank_cues = ("checking", "savings", "beginning balance", "ending balance", "deposits and other additions", "total deposits")
+    bank_score = sum(1 for cue in bank_cues if cue in text)
+
+    if mortgage_score >= 2 and mortgage_score > card_score and mortgage_score > bank_score:
+        return "mortgage_statement"
+    if card_score >= 2 and card_score > bank_score:
+        return "credit_card_statement"
+    return "bank_statement"
+
+
 logger = logging.getLogger("proptally.ingestion.doc_intel")
+
+
+def finalize_stale_extraction(
+    session: Session,
+    extraction: DocumentExtraction,
+    *,
+    commit: bool = True,
+    max_age_seconds: float = 300.0,
+) -> DocumentExtraction:
+    """Finalize a PROCESSING extraction that has exceeded max_age_seconds without completion."""
+    if extraction.validation_status != "PROCESSING":
+        return extraction
+    session.refresh(extraction)
+    if extraction.validation_status != "PROCESSING":
+        return extraction
+
+    now = datetime.now(timezone.utc)
+    data = json.loads(extraction.extracted_data_json) if extraction.extracted_data_json else {}
+    submitted_at_str = data.get("submitted_at")
+    ref_dt = None
+    if submitted_at_str:
+        try:
+            ref_dt = datetime.fromisoformat(submitted_at_str)
+        except Exception:
+            ref_dt = None
+    if ref_dt is None:
+        ref_dt = extraction.created_at
+
+    if ref_dt.tzinfo is None:
+        ref_dt = ref_dt.replace(tzinfo=timezone.utc)
+    age = (now - ref_dt).total_seconds()
+    if age < max_age_seconds:
+        return extraction
+    local_dict = data.get("local_extraction")
+    mins = max(1, int(round(age / 60)))
+    if local_dict:
+        status_note = f"Document Intelligence extraction timed out after {mins} min; fell back to built-in parser."
+        local_dict["review_reasons"] = list(local_dict.get("review_reasons") or []) + [status_note]
+        extraction.extracted_data_json = json.dumps(local_dict, sort_keys=True)
+        extraction.validation_status = local_dict.get("status") or "NEEDS_REVIEW"
+    else:
+        data["status"] = "NEEDS_REVIEW"
+        data["review_reasons"] = [f"Document Intelligence extraction timed out after {mins} min."]
+        extraction.extracted_data_json = json.dumps(data, sort_keys=True)
+        extraction.validation_status = "NEEDS_REVIEW"
+
+    extraction.approval_status = "PENDING"
+    extraction.approved_at = None
+    session.add(extraction)
+    if commit:
+        session.commit()
+    logger.info("Extraction %s marked as timed out after %.1fs", extraction.id, age)
+    return extraction
 
 
 class StatementIngestionService:
@@ -1322,6 +1598,7 @@ class StatementIngestionService:
         payload: bytes,
         original_filename: str,
         profile_name: str,
+        local_extraction: BankStatementExtraction | MortgageExtraction | None = None,
         commit: bool = False,
     ) -> DocIntelStaged:
         """Store the file and stage its extraction for review.
@@ -1344,6 +1621,7 @@ class StatementIngestionService:
             )
 
         data = doc_intel_extraction_data(profile_name, result.get("fields") or {}, proptally_payload)
+        data = merge_hybrid_extraction_data(data, local_extraction)
         review_reasons = _doc_intel_review_reasons(data, result)
         resolution_reasons = list(resolve_extraction_data(session, data))
         data["review_reasons"] = review_reasons
@@ -1370,6 +1648,15 @@ class StatementIngestionService:
             .order_by(desc(DocumentExtraction.created_at))
         ).first()
         if existing is not None:
+            if existing.imported_statement_id is None:
+                existing.extracted_data_json = json.dumps(data, sort_keys=True)
+                existing.validation_status = data["status"]
+                existing.approval_status = "PENDING"
+                existing.approved_at = None
+                session.add(existing)
+                session.flush()
+                if commit:
+                    session.commit()
             logger.info(
                 "DocIntel job %s already staged as extraction %s (document %s)",
                 job.job_id, existing.id, stored.document.id,
@@ -1399,6 +1686,238 @@ class StatementIngestionService:
             job=job, document=stored.document, extraction=extraction, created=True, data=data
         )
 
+    def stage_pending(
+        self,
+        session: Session,
+        vault_dir: Path,
+        *,
+        job: DocIntelJob,
+        payload: bytes,
+        original_filename: str,
+        profile_name: str,
+        local_extraction: BankStatementExtraction | MortgageExtraction | dict | None = None,
+        commit: bool = False,
+    ) -> DocumentExtraction:
+        """Store the file in vault and stage an in-flight (PROCESSING) extraction."""
+        st_type = DOC_INTEL_PROFILES.get(profile_name, "CHECKING")
+        doc_type = _DOC_INTEL_DOCUMENT_TYPES.get(st_type, "CHECKING_STATEMENT")
+        stored = store_document(
+            session,
+            vault_dir,
+            payload=payload,
+            original_filename=original_filename,
+            document_type=doc_type,
+            parse=False,
+        )
+        local_dict = None
+        if local_extraction is not None:
+            local_dict = (
+                local_extraction.to_dict()
+                if hasattr(local_extraction, "to_dict")
+                else local_extraction
+            )
+
+        now = datetime.now(timezone.utc)
+        parser_name = DOC_INTEL_PARSER_NAME
+        pending_data = {
+            "status": "PROCESSING",
+            "job_id": job.job_id,
+            "submitted_at": now.isoformat(),
+            "profile_name": profile_name,
+            "original_filename": original_filename,
+            "local_extraction": local_dict,
+            "statement_type": getattr(local_extraction, "statement_type", None)
+            or (local_dict.get("statement_type") if local_dict else None)
+            or st_type,
+            "institution_name": getattr(local_extraction, "institution_name", None)
+            or (local_dict.get("institution_name") if local_dict else None),
+            "servicer_name": getattr(local_extraction, "servicer_name", None)
+            or (local_dict.get("servicer_name") if local_dict else None),
+            "account_last4": getattr(local_extraction, "account_last4", None)
+            or (local_dict.get("account_last4") if local_dict else None),
+            "loan_number": getattr(local_extraction, "loan_number", None)
+            or (local_dict.get("loan_number") if local_dict else None),
+            "review_reasons": ["Processing with Document Intelligence..."],
+            "resolution_reasons": [],
+            "transactions": [],
+        }
+
+        existing = session.exec(
+            select(DocumentExtraction)
+            .where(DocumentExtraction.document_id == stored.document.id)
+            .where(DocumentExtraction.parser_name == parser_name)
+            .order_by(desc(DocumentExtraction.created_at))
+        ).first()
+        if existing is not None:
+            if existing.imported_statement_id is None:
+                existing.extracted_data_json = json.dumps(pending_data, sort_keys=True)
+                existing.validation_status = "PROCESSING"
+                existing.approval_status = "PENDING"
+                existing.approved_at = None
+                session.add(existing)
+                session.flush()
+                if commit:
+                    session.commit()
+            return existing
+
+        extraction = DocumentExtraction(
+            id=str(uuid4()),
+            document_id=stored.document.id,
+            parser_name=parser_name,
+            parser_version="0.1.0",
+            validation_status="PROCESSING",
+            approval_status="PENDING",
+            extracted_data_json=json.dumps(pending_data, sort_keys=True),
+        )
+        session.add(extraction)
+        session.flush()
+        if commit:
+            session.commit()
+        logger.info(
+            "Staged in-flight DocIntel job %s as extraction %s (document: %s, file: %s)",
+            job.job_id, extraction.id, stored.document.id, original_filename,
+        )
+        return extraction
+
+    def finalize_extraction(
+        self,
+        session: Session,
+        extraction: DocumentExtraction,
+        *,
+        job: DocIntelJob | None = None,
+        commit: bool = False,
+        max_age_seconds: float = 300.0,
+    ) -> DocumentExtraction:
+        """Query job status and finalize a PROCESSING extraction if completed, failed, or timed out."""
+        if extraction.validation_status != "PROCESSING":
+            return extraction
+
+        # Refresh from DB to guard against double-finalize race
+        session.refresh(extraction)
+        if extraction.validation_status != "PROCESSING":
+            return extraction
+
+        now = datetime.now(timezone.utc)
+        data = json.loads(extraction.extracted_data_json) if extraction.extracted_data_json else {}
+        submitted_at_str = data.get("submitted_at")
+        ref_dt = None
+        if submitted_at_str:
+            try:
+                ref_dt = datetime.fromisoformat(submitted_at_str)
+            except Exception:
+                ref_dt = None
+        if ref_dt is None:
+            ref_dt = extraction.created_at
+
+        if ref_dt.tzinfo is None:
+            ref_dt = ref_dt.replace(tzinfo=timezone.utc)
+        age = (now - ref_dt).total_seconds()
+
+        job_id = data.get("job_id")
+        if not job_id:
+            return extraction
+
+        # Staleness timeout check: if exceeded, finalize as timed out
+        if age > max_age_seconds:
+            return self._finalize_timed_out(session, extraction, data, age, commit=commit)
+
+        if job is None:
+            try:
+                job = self.client.get_job(job_id)
+            except Exception as exc:
+                logger.warning("Failed to fetch DocIntel job %s: %s", job_id, exc)
+                return extraction
+
+        if not job.is_done:
+            if job.progress_message and job.progress_message != data.get("progress_message"):
+                data["progress_message"] = job.progress_message
+                extraction.extracted_data_json = json.dumps(data, sort_keys=True)
+                session.add(extraction)
+                if commit:
+                    session.commit()
+            return extraction
+
+        local_dict = data.get("local_extraction")
+        if job.is_success and job.result:
+            result = job.result
+            proptally_payload = result.get("proptally_payload") or {}
+            profile_name = data.get("profile_name", job.profile_name or "bank_statement")
+            new_data = doc_intel_extraction_data(profile_name, result.get("fields") or {}, proptally_payload)
+            merged = merge_hybrid_extraction_data(new_data, local_dict)
+            review_reasons = _doc_intel_review_reasons(merged, result)
+            resolution_reasons = list(resolve_extraction_data(session, merged))
+            merged["review_reasons"] = review_reasons
+            merged["resolution_reasons"] = resolution_reasons
+            merged["status"] = "NEEDS_REVIEW" if (review_reasons or resolution_reasons) else "VALIDATED"
+            merged["source_document_id"] = result.get("document_id")
+            merged["source_job_id"] = job.job_id
+
+            statement = proptally_payload.get("statement") or {}
+            if statement.get("active_parser_version"):
+                extraction.parser_version = str(statement["active_parser_version"])
+
+            extraction.extracted_data_json = json.dumps(merged, sort_keys=True)
+            extraction.validation_status = merged["status"]
+            extraction.approval_status = "PENDING"
+            extraction.approved_at = None
+        else:
+            # Failed or cancelled
+            if local_dict:
+                status_note = f"Document Intelligence {job.status} ({job.error_message or 'cancelled'}); fell back to built-in parser."
+                local_dict["review_reasons"] = list(local_dict.get("review_reasons") or []) + [status_note]
+                extraction.extracted_data_json = json.dumps(local_dict, sort_keys=True)
+                extraction.validation_status = local_dict.get("status") or "NEEDS_REVIEW"
+            else:
+                data["status"] = "NEEDS_REVIEW"
+                data["review_reasons"] = [f"Document Intelligence {job.status}: {job.error_message or 'Job failed'}."]
+                extraction.extracted_data_json = json.dumps(data, sort_keys=True)
+                extraction.validation_status = "NEEDS_REVIEW"
+            extraction.approval_status = "PENDING"
+            extraction.approved_at = None
+
+        session.add(extraction)
+        session.flush()
+        if commit:
+            session.commit()
+        logger.info(
+            "Finalized DocIntel job %s for extraction %s: %s",
+            job.job_id, extraction.id, extraction.validation_status,
+        )
+        return extraction
+
+    def _finalize_timed_out(
+        self,
+        session: Session,
+        extraction: DocumentExtraction,
+        data: dict,
+        age: float,
+        commit: bool = False,
+    ) -> DocumentExtraction:
+        local_dict = data.get("local_extraction")
+        mins = max(1, int(round(age / 60)))
+        if local_dict:
+            status_note = f"Document Intelligence extraction timed out after {mins} min; fell back to built-in parser."
+            local_dict["review_reasons"] = list(local_dict.get("review_reasons") or []) + [status_note]
+            extraction.extracted_data_json = json.dumps(local_dict, sort_keys=True)
+            extraction.validation_status = local_dict.get("status") or "NEEDS_REVIEW"
+        else:
+            data["status"] = "NEEDS_REVIEW"
+            data["review_reasons"] = [f"Document Intelligence extraction timed out after {mins} min."]
+            extraction.extracted_data_json = json.dumps(data, sort_keys=True)
+            extraction.validation_status = "NEEDS_REVIEW"
+
+        extraction.approval_status = "PENDING"
+        extraction.approved_at = None
+        session.add(extraction)
+        session.flush()
+        if commit:
+            session.commit()
+        logger.warning(
+            "Extraction %s marked as timed out after %.1fs (status: %s)",
+            extraction.id, age, extraction.validation_status,
+        )
+        return extraction
+
     def extract_and_stage(
         self,
         session: Session,
@@ -1409,6 +1928,7 @@ class StatementIngestionService:
         profile_name: str,
         property_id: str = "",
         timeout: float = 180.0,
+        local_extraction: BankStatementExtraction | MortgageExtraction | None = None,
         on_progress=None,
         commit: bool = False,
     ) -> DocIntelStaged:
@@ -1432,5 +1952,6 @@ class StatementIngestionService:
             payload=payload,
             original_filename=original_filename,
             profile_name=profile_name,
+            local_extraction=local_extraction,
             commit=commit,
         )

@@ -178,7 +178,7 @@
                     {% for row in rows %}
                     {% set extraction = row.extraction %}
                     {% set chosen = selected and selected.document.id == row.document.id %}
-                    <tr{% if chosen %} class="is-active"{% endif %}>
+                    <tr{% if chosen %} class="is-active"{% endif %}{% if row.status == 'PROCESSING' and extraction %} data-extraction-processing="{{ extraction.id }}"{% endif %}>
                         <td class="pt-table__pick">
                             <a class="pt-pick{% if chosen %} is-active{% endif %}" href="{{ row.select_href }}"
                                {% if chosen %}aria-current="true"{% else %}aria-label="Show details for {{ row.document.original_filename }}"{% endif %}>
@@ -199,7 +199,7 @@
                                     {% endif %}
                                 </span>
                                 <a class="pt-table__primary" href="{{ row.select_href }}"
-                                   title="{{ row.document.original_filename }}">{{ row.document.original_filename }}</a>
+                                    title="{{ row.document.original_filename }}">{{ row.document.original_filename }}</a>
                             </div>
                             <span class="pt-table__sub">
                                 {% if row.data.get('institution_name') %}{{ row.data.get('institution_name') }}{% elif row.data.get('servicer_name') %}{{ row.data.get('servicer_name') }}{% else %}Statement{% endif %}
@@ -221,14 +221,18 @@
                         <td>
                             {# What was read from the document, and whether it was signed off. #}
                             <div class="pt-status-cluster">
-                                {% if row.status == 'VALIDATED' %}
+                                {% if row.status == 'PROCESSING' %}
+                                    <span class="pt-badge pt-badge--neutral pt-badge--upper pt-badge--mono" style="display: inline-flex; align-items: center; gap: 0.35rem;">
+                                        {{ ui.icon("clock", "xs") }} PROCESSING
+                                    </span>
+                                {% elif row.status == 'VALIDATED' %}
                                     {{ ui.badge("VALIDATED", variant="success", upper=true) }}
                                 {% elif row.status == 'NEEDS_REVIEW' %}
                                     {{ ui.badge("NEEDS REVIEW", variant="warning", upper=true) }}
                                 {% else %}
                                     {{ ui.badge(row.status, variant="neutral", upper=true) }}
                                 {% endif %}
-                                {% if row.approval_status %}
+                                {% if row.approval_status and row.status != 'PROCESSING' %}
                                     {{ ui.badge(row.approval_status,
                                                 variant=("success" if row.approval_status == 'APPROVED' else "neutral"),
                                                 upper=true) }}
@@ -252,12 +256,17 @@
                                         {{ csrf_field() }}
                                         {{ ui.btn("Retry parse", variant="ghost", size="sm", type="submit") }}
                                     </form>
+                                {% elif row.action == 'processing' %}
+                                    <form method="post" action="/statements/extractions/{{ extraction.id }}/cancel">
+                                        {{ csrf_field() }}
+                                        {{ ui.btn("Cancel", variant="ghost", size="sm", type="submit") }}
+                                    </form>
                                 {% elif row.action == 'import' %}
                                     {{ ui.btn("Import", variant="primary", size="sm", type="button",
                                               attrs='data-modal-open="import-' ~ extraction.id ~ '"') }}
                                     {{ ui.btn("Review", variant="ghost", size="sm", type="button",
                                               attrs='data-modal-open="review-' ~ extraction.id ~ '"') }}
-                                {% elif row.action == 'approve' %}
+                                    {% elif row.action == 'approve' %}
                                     {{ ui.btn("Approve", variant="primary", size="sm", type="button",
                                               attrs='data-modal-open="approve-' ~ extraction.id ~ '"') }}
                                     {{ ui.btn("Review", variant="ghost", size="sm", type="button",
@@ -818,6 +827,39 @@
                 render();
             }
         });
+    }
+
+    // Auto-poll in-flight Document Intelligence extractions
+    const processingRows = document.querySelectorAll("[data-extraction-processing]");
+    if (processingRows.length) {
+        let isPolling = false;
+        const checkExtractions = async () => {
+            if (isPolling) return;
+            isPolling = true;
+            try {
+                const rows = Array.from(document.querySelectorAll("[data-extraction-processing]"));
+                if (!rows.length) return;
+                for (const row of rows) {
+                    const id = row.getAttribute("data-extraction-processing");
+                    if (!id) continue;
+                    const res = await fetch(`/statements/extractions/${id}/poll`, {
+                        headers: { "X-Requested-With": "fetch", "Accept": "application/json" }
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.is_done) {
+                            window.location.reload();
+                            return;
+                        }
+                    }
+                }
+            } catch (err) {
+                // Ignore transient network errors during poll
+            } finally {
+                isPolling = false;
+            }
+        };
+        setInterval(checkExtractions, 2500);
     }
 })();
 </script>

@@ -283,8 +283,8 @@ class DocumentExtraction(SQLModel, table=True):
     __tablename__ = "document_extractions"
     __table_args__ = (
         CheckConstraint(
-            "validation_status IN ('EXTRACTED', 'VALIDATED', 'NEEDS_REVIEW')",
-            name="check_document_extraction_validation_status",
+            "validation_status IN ('PROCESSING', 'EXTRACTED', 'VALIDATED', 'NEEDS_REVIEW')",
+            name="check_document_extraction_validation_status_v2",
         ),
         CheckConstraint(
             "approval_status IN ('PENDING', 'APPROVED')",

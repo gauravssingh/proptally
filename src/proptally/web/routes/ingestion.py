@@ -21,7 +21,7 @@ from urllib.parse import quote, urlencode
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import desc
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
@@ -43,7 +43,9 @@ from proptally.ingestion.service import (
     StatementIngestionService,
     _persist_document,
     approve_extraction,
+    classify_statement_profile,
     extract_and_resolve,
+    finalize_stale_extraction,
     import_approved_extraction,
     register_observed_account,
     reprocess_document,
@@ -65,11 +67,12 @@ DOC_INTEL_UPLOAD_TIMEOUT = 300.0
 logger = logging.getLogger(__name__)
 
 
-def _doc_intel_service() -> StatementIngestionService | None:
+def _doc_intel_service(timeout: float = 180.0) -> StatementIngestionService | None:
     """The Document Intelligence client, when this instance opted in."""
     if os.environ.get(DOC_INTEL_ENV_FLAG, "").strip().lower() not in {"1", "true", "yes"}:
         return None
-    return StatementIngestionService()
+    from proptally.ingestion.doc_intel import DocumentIntelligenceClient
+    return StatementIngestionService(client=DocumentIntelligenceClient(timeout=timeout))
 
 
 #: Fields an operator may correct. Amounts are entered in dollars and rates in
@@ -86,7 +89,12 @@ _IDENTITY_FIELDS = ("servicer_name", "loan_number", "account_last4", "institutio
 _CHOICE_FIELDS = ("loan_account_id", "financial_account_id")
 
 #: The states an extraction can be in, and the words the screen shows for them.
-STATUS_LABELS = {"VALIDATED": "Validated", "NEEDS_REVIEW": "Needs review", "UNSUPPORTED": "Unsupported"}
+STATUS_LABELS = {
+    "PROCESSING": "Processing",
+    "VALIDATED": "Validated",
+    "NEEDS_REVIEW": "Needs review",
+    "UNSUPPORTED": "Unsupported",
+}
 
 #: The queue's facets, in the order the rail shows them. A row's `action` — the same
 #: value that decides its one next step — decides the facet it belongs to, so the rail's
@@ -100,7 +108,13 @@ STATUS_FACETS: tuple[tuple[str, str, str], ...] = (
 )
 
 #: A row's next step, as the URL names the facet that holds it.
-FACET_FOR_ACTION = {"review": "review", "approve": "approve", "import": "approved", "done": "imported"}
+FACET_FOR_ACTION = {
+    "processing": "review",
+    "review": "review",
+    "approve": "approve",
+    "import": "approved",
+    "done": "imported",
+}
 
 SORTS: tuple[tuple[str, str], ...] = (
     ("received", "Received"),
@@ -137,8 +151,13 @@ def _percent(milli_percent: int | None) -> str:
     return "" if milli_percent is None else f"{Decimal(milli_percent) / 1000:.3f}"
 
 
-def _redirect(message: str | None = None) -> RedirectResponse:
-    target = "/statements" if not message else f"/statements?message={quote(message)}"
+def _redirect(message: str | None = None, doc: str | None = None) -> RedirectResponse:
+    params = {}
+    if message:
+        params["message"] = message
+    if doc:
+        params["doc"] = doc
+    target = f"/statements?{urlencode(params)}" if params else "/statements"
     return RedirectResponse(url=target, status_code=303)
 
 
@@ -259,8 +278,54 @@ def _relink_pending_account_statements(session: Session, account: FinancialAccou
 
 def _store_single_statement(payload: bytes, filename: str, session: Session, context) -> RedirectResponse:
     digest = hashlib.sha256(payload).hexdigest()
-    if session.exec(select(Document).where(Document.file_sha256 == digest)).first():
-        return _redirect("That exact file is already in this portfolio's vault; review it below.")
+    existing_doc = session.exec(select(Document).where(Document.file_sha256 == digest)).first()
+    if existing_doc is not None:
+        already_imported = session.exec(
+            select(DocumentExtraction).where(
+                DocumentExtraction.document_id == existing_doc.id,
+                DocumentExtraction.imported_statement_id.is_not(None),
+            )
+        ).first()
+        if already_imported:
+            return _redirect("That exact file is already imported in this portfolio's ledger; review it below.", doc=existing_doc.id)
+
+        # Allow re-extracting an unimported document with the sidecar if available
+        service = _doc_intel_service()
+        if service is not None and service.available():
+            staging = context.paths.root / "staging" / f"upload-{uuid4().hex}.pdf"
+            staging.parent.mkdir(parents=True, exist_ok=True)
+            staging.write_bytes(payload)
+            try:
+                extraction = None
+                try:
+                    extraction = extract_and_resolve(staging, session)
+                except Exception:
+                    pass
+                profile = DOC_INTEL_PROFILE_FOR_TYPE.get(extraction.statement_type) if extraction else classify_statement_profile(staging)
+                if profile:
+                    job = service.submit(
+                        payload=payload,
+                        original_filename=Path(filename or "statement.pdf").name,
+                        profile_name=profile,
+                    )
+                    pending = service.stage_pending(
+                        session,
+                        context.paths.vault,
+                        job=job,
+                        payload=payload,
+                        original_filename=Path(filename or "statement.pdf").name,
+                        profile_name=profile,
+                        local_extraction=extraction,
+                        commit=True,
+                    )
+                    return _redirect(
+                        "Statement re-queued for local language model extraction.",
+                        doc=pending.document_id,
+                    )
+            finally:
+                staging.unlink(missing_ok=True)
+                service.close()
+        return _redirect("That exact file is already in this portfolio's vault; review it below.", doc=existing_doc.id)
 
     # Stage outside the watched inbox: the hot-folder watcher must never move
     # or process a file while this request is still reading it.
@@ -276,47 +341,47 @@ def _store_single_statement(payload: bytes, filename: str, session: Session, con
             # A malformed PDF is the uploader's problem, not a server fault.
             raise HTTPException(status_code=400, detail=f"The statement could not be read: {exc}") from exc
 
-        # The built-in parser still classifies the document: it is what tells this
-        # path which sidecar profile to use, and it is the fallback. Only a document
-        # it recognises is sent to the language model.
-        if service is not None and extraction is not None and service.available():
+        profile = None
+        if extraction is not None:
             profile = DOC_INTEL_PROFILE_FOR_TYPE.get(extraction.statement_type)
-            if profile:
-                try:
-                    logger.info(
-                        "Submitting statement '%s' to Document Intelligence (profile: %s)",
-                        filename, profile,
-                    )
-                    staged = service.extract_and_stage(
-                        session,
-                        context.paths.vault,
-                        payload=payload,
-                        original_filename=Path(filename or "statement.pdf").name,
-                        profile_name=profile,
-                        timeout=DOC_INTEL_UPLOAD_TIMEOUT,
-                        commit=True,
-                    )
-                except Exception as exc:  # noqa: BLE001 - the built-in parser is the fallback
-                    logger.warning(
-                        "Document Intelligence extraction failed for '%s'; falling back to built-in parser: %s",
-                        filename, exc, exc_info=True,
-                    )
-                    note = (
-                        f" The local language model could not read it ({exc}), "
-                        "so the built-in parser did."
-                    )
-                else:
-                    data = staged.data
-                    if data.get("status") == "VALIDATED":
-                        return _redirect(
-                            "Statement extracted by the local language model and matched to a "
-                            "registered account; approve and import it below."
-                        )
-                    reasons = " ".join(
-                        list(data.get("review_reasons") or [])
-                        + list(data.get("resolution_reasons") or [])
-                    ).strip()
-                    return _redirect(f"Statement extracted by the local language model; review it below. {reasons}")
+        elif service is not None and service.available():
+            # Built-in parser did not recognise document: classify via layout cues for sidecar extraction
+            profile = classify_statement_profile(staging)
+
+        if service is not None and profile and service.available():
+            try:
+                logger.info(
+                    "Submitting statement '%s' to Document Intelligence (profile: %s, has_local_extraction: %s)",
+                    filename, profile, extraction is not None,
+                )
+                job = service.submit(
+                    payload=payload,
+                    original_filename=Path(filename or "statement.pdf").name,
+                    profile_name=profile,
+                )
+                pending = service.stage_pending(
+                    session,
+                    context.paths.vault,
+                    job=job,
+                    payload=payload,
+                    original_filename=Path(filename or "statement.pdf").name,
+                    profile_name=profile,
+                    local_extraction=extraction,
+                    commit=True,
+                )
+                return _redirect(
+                    "Statement stored in vault and queued for local language model extraction.",
+                    doc=pending.document_id,
+                )
+            except Exception as exc:  # noqa: BLE001 - the built-in parser is the fallback
+                logger.warning(
+                    "Document Intelligence queue submission failed for '%s'; falling back to built-in parser: %s",
+                    filename, exc, exc_info=True,
+                )
+                note = (
+                    f" The local language model could not read it ({exc}), "
+                    "so the built-in parser did."
+                )
 
         _persist_document(
             staging, digest, context.paths.vault, session, extraction,
@@ -461,6 +526,7 @@ def _extraction_row(session: Session, document: Document, extraction: DocumentEx
         # so an imported statement is never offered again.
         "action": (
             "done" if statement
+            else "processing" if status == "PROCESSING"
             else "import" if approval_status == "APPROVED"
             else "approve" if status == "VALIDATED"
             else "review"
@@ -501,6 +567,25 @@ def get_ingestion_router(templates, get_session_dep):
         status = status if status in facet_keys else "all"
         sort = sort if sort in dict(SORTS) else "received"
         tab = tab if tab in dict(INSPECTOR_TABS) else "preview"
+
+        # Finalize any completed background jobs or stale pending rows before displaying queue
+        service = _doc_intel_service(timeout=5.0)
+        try:
+            sidecar_ok = service is not None and service.available(timeout=2.0)
+            pending_extractions = session.exec(
+                select(DocumentExtraction).where(DocumentExtraction.validation_status == "PROCESSING")
+            ).all()
+            for pending_ext in pending_extractions:
+                try:
+                    if sidecar_ok:
+                        service.finalize_extraction(session, pending_ext, commit=True)
+                    else:
+                        finalize_stale_extraction(session, pending_ext, commit=True, max_age_seconds=120)
+                except Exception as exc:
+                    logger.warning("Failed to finalize pending extraction %s: %s", pending_ext.id, exc)
+        finally:
+            if service is not None:
+                service.close()
 
         documents = session.exec(
             select(Document).order_by(desc(Document.uploaded_at), desc(Document.id))
@@ -834,6 +919,93 @@ def get_ingestion_router(templates, get_session_dep):
             return RedirectResponse(url=f"/statements?doc={extraction.document_id}", status_code=303)
         return RedirectResponse(url="/statements", status_code=303)
 
+    @router.get("/statements/extractions/{extraction_id}/poll")
+    def poll_statement_extraction(
+        extraction_id: str,
+        request: Request,
+        session: Session = Depends(get_session_dep),
+    ):
+        """Poll the status of an in-flight Document Intelligence extraction."""
+        extraction = session.get(DocumentExtraction, extraction_id)
+        if extraction is None:
+            raise HTTPException(status_code=404, detail="Unknown extraction.")
+
+        service = _doc_intel_service(timeout=5.0)
+        try:
+            if extraction.validation_status == "PROCESSING":
+                if service is not None and service.available(timeout=2.0):
+                    extraction = service.finalize_extraction(session, extraction, commit=True)
+                else:
+                    # Daemon down or disabled: check if stale (> 60s) and finalize fallback
+                    extraction = finalize_stale_extraction(session, extraction, commit=True, max_age_seconds=60)
+        finally:
+            if service is not None:
+                service.close()
+
+        data = json.loads(extraction.extracted_data_json) if extraction.extracted_data_json else {}
+        is_done = extraction.validation_status != "PROCESSING"
+
+        wants_json = (
+            request.headers.get("x-requested-with") == "fetch"
+            or "application/json" in request.headers.get("accept", "")
+        )
+        if wants_json:
+            return JSONResponse({
+                "id": extraction.id,
+                "is_done": is_done,
+                "status": extraction.validation_status,
+                "approval_status": extraction.approval_status,
+                "statement_type": data.get("statement_type"),
+                "institution_name": data.get("institution_name") or data.get("servicer_name"),
+                "account_last4": data.get("account_last4") or data.get("loan_number"),
+                "reasons": list(data.get("review_reasons") or []) + list(data.get("resolution_reasons") or []),
+            })
+
+        return _redirect(f"Extraction status: {extraction.validation_status}.", doc=extraction.document_id)
+
+    @router.post("/statements/extractions/{extraction_id}/cancel")
+    def cancel_statement_extraction(
+        extraction_id: str,
+        session: Session = Depends(get_session_dep),
+    ):
+        """Cancel an in-flight Document Intelligence job and fallback to local parse or review."""
+        extraction = session.get(DocumentExtraction, extraction_id)
+        if extraction is None:
+            raise HTTPException(status_code=404, detail="Unknown extraction.")
+
+        if extraction.validation_status != "PROCESSING":
+            return _redirect("Extraction is not in processing state.", doc=extraction.document_id)
+
+        data = json.loads(extraction.extracted_data_json) if extraction.extracted_data_json else {}
+        job_id = data.get("job_id")
+        service = _doc_intel_service(timeout=5.0)
+        if service is not None and service.available(timeout=2.0) and job_id:
+            try:
+                service.client.cancel_job(job_id)
+            except Exception as exc:
+                logger.warning("Failed to cancel job %s: %s", job_id, exc)
+            finally:
+                service.close()
+
+        local_dict = data.get("local_extraction")
+        if local_dict:
+            local_dict["review_reasons"] = list(local_dict.get("review_reasons") or []) + [
+                "Document Intelligence extraction cancelled by operator; fell back to built-in parser."
+            ]
+            extraction.extracted_data_json = json.dumps(local_dict, sort_keys=True)
+            extraction.validation_status = local_dict.get("status") or "NEEDS_REVIEW"
+        else:
+            data["status"] = "NEEDS_REVIEW"
+            data["review_reasons"] = ["Extraction cancelled by operator."]
+            extraction.extracted_data_json = json.dumps(data, sort_keys=True)
+            extraction.validation_status = "NEEDS_REVIEW"
+
+        extraction.approval_status = "PENDING"
+        extraction.approved_at = None
+        session.add(extraction)
+        session.commit()
+        return _redirect("Extraction processing cancelled.", doc=extraction.document_id)
+
     @router.post("/statements/documents/{document_id}/reprocess")
     def reprocess_statement_document(
         document_id: str,
@@ -843,6 +1015,45 @@ def get_ingestion_router(templates, get_session_dep):
         document = session.get(Document, document_id)
         if document is None:
             raise HTTPException(status_code=404, detail="Unknown document.")
+
+        service = _doc_intel_service()
+        if service is not None and service.available():
+            try:
+                context = current_context()
+                path = Path(document.storage_path) if document.storage_path else None
+                if path and path.is_file():
+                    payload = path.read_bytes()
+                    local_extraction = None
+                    try:
+                        local_extraction = extract_and_resolve(path, session)
+                    except Exception:
+                        pass
+                    profile = DOC_INTEL_PROFILE_FOR_TYPE.get(local_extraction.statement_type) if local_extraction else classify_statement_profile(path)
+                    if profile:
+                        job = service.submit(
+                            payload=payload,
+                            original_filename=document.original_filename or "statement.pdf",
+                            profile_name=profile,
+                        )
+                        pending = service.stage_pending(
+                            session,
+                            context.paths.vault,
+                            job=job,
+                            payload=payload,
+                            original_filename=document.original_filename or "statement.pdf",
+                            profile_name=profile,
+                            local_extraction=local_extraction,
+                            commit=True,
+                        )
+                        return _redirect(
+                            "Document re-queued for local language model extraction.",
+                            doc=document.id,
+                        )
+            except Exception as exc:
+                logger.warning("Sidecar reprocess failed for %s: %s; using built-in parser", document_id, exc)
+            finally:
+                service.close()
+
         try:
             extraction = reprocess_document(session, document, commit=True)
         except ValueError as exc:

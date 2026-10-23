@@ -89,6 +89,24 @@ class DocumentIntelligenceClient:
         resp.raise_for_status()
         return list(resp.json().get("profiles", {}).keys())
 
+    def profile_details(self) -> dict[str, Any]:
+        """Every profile with its display name, version and field schema."""
+        resp = self._client.get("/api/v1/profiles")
+        resp.raise_for_status()
+        return dict(resp.json().get("profiles", {}))
+
+    def profile_detail(self, profile_id: str) -> dict[str, Any]:
+        """One profile: full field schema, and the YAML it was loaded from."""
+        resp = self._client.get(f"/api/v1/profiles/{profile_id}")
+        resp.raise_for_status()
+        return dict(resp.json())
+
+    def cancel_job(self, job_id: str) -> dict[str, Any]:
+        """Cancel a queued or running extraction job."""
+        resp = self._client.post(f"/api/v1/jobs/{job_id}/cancel")
+        resp.raise_for_status()
+        return resp.json()
+
     def submit_extraction(
         self,
         file: Union[str, Path, bytes],
@@ -147,9 +165,9 @@ class DocumentIntelligenceClient:
             logger.error(f"[{cid}] Connection error submitting job to {self.base_url}: {e}")
             raise
 
-    def get_job(self, job_id: str) -> DocIntelJob:
+    def get_job(self, job_id: str, timeout: Optional[float] = None) -> DocIntelJob:
         """Fetch the current execution status and result of a job."""
-        resp = self._client.get(f"/api/v1/jobs/{job_id}")
+        resp = self._client.get(f"/api/v1/jobs/{job_id}", timeout=timeout or self.timeout)
         resp.raise_for_status()
         return DocIntelJob.from_dict(resp.json())
 
@@ -170,10 +188,37 @@ class DocumentIntelligenceClient:
         max_time = timeout or self.timeout
         t0 = time.time()
         last_msg = ""
+        consecutive_errors = 0
+        max_consecutive_errors = 3
         logger.info(f"[{job_id}] Waiting for job completion (timeout: {max_time}s, poll: {poll_interval}s)...")
 
         while True:
-            job = self.get_job(job_id)
+            elapsed = time.time() - t0
+            if elapsed > max_time:
+                logger.error(f"[{job_id}] Job TIMED OUT after {elapsed:.2f}s (budget: {max_time}s)")
+                try:
+                    self.cancel_job(job_id)
+                    logger.info(f"[{job_id}] Cancelled timed-out job on daemon")
+                except Exception as cancel_exc:
+                    logger.warning(f"[{job_id}] Failed to cancel timed-out job on daemon: {cancel_exc}")
+                raise TimeoutError(f"Job {job_id} did not complete within {max_time} seconds (status: timed_out).")
+
+            poll_timeout = min(10.0, max(1.0, max_time - elapsed))
+            try:
+                job = self.get_job(job_id, timeout=poll_timeout)
+                consecutive_errors = 0
+            except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code not in (502, 503, 504):
+                    raise
+                consecutive_errors += 1
+                if consecutive_errors > max_consecutive_errors:
+                    logger.error(f"[{job_id}] Polling error limit reached ({consecutive_errors}): {exc}")
+                    raise
+                logger.warning(
+                    f"[{job_id}] Transient polling error ({consecutive_errors}/{max_consecutive_errors}): {exc}. Retrying..."
+                )
+                time.sleep(min(poll_interval, max(0.1, max_time - (time.time() - t0))))
+                continue
 
             if job.progress_message and job.progress_message != last_msg:
                 last_msg = job.progress_message
@@ -189,12 +234,7 @@ class DocumentIntelligenceClient:
                     logger.error(f"[{job_id}] Job {job.status.upper()} in {elapsed:.2f}s: {job.error_message}")
                 return job
 
-            if time.time() - t0 > max_time:
-                elapsed = time.time() - t0
-                logger.error(f"[{job_id}] Job TIMED OUT after {elapsed:.2f}s (last status: {job.status})")
-                raise TimeoutError(f"Job {job_id} did not complete within {max_time} seconds (status: {job.status}).")
-
-            time.sleep(poll_interval)
+            time.sleep(min(poll_interval, max(0.1, max_time - (time.time() - t0))))
 
     def extract_file(
         self,

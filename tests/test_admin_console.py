@@ -768,3 +768,64 @@ def test_the_profile_detail_page_reports_an_unreachable_daemon(console, monkeypa
     assert page.status_code == 200
     assert "could not be read" in page.text
     assert "Connection refused" in page.text
+
+
+def test_doc_intel_engine_status_integrates_with_client_methods(monkeypatch):
+    import httpx
+    from proptally.web.routes import admin as admin_routes
+    from proptally.ingestion.doc_intel import DocumentIntelligenceClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "healthy", "version": "0.1.0"})
+        if request.url.path == "/api/v1/profiles":
+            return httpx.Response(200, json={
+                "profiles": {
+                    "bank_statement": {
+                        "display_name": "Bank Account Statement",
+                        "version": 1,
+                        "fields": {"account_type": {"required": True}},
+                    }
+                }
+            })
+        if request.url.path == "/api/v1/jobs":
+            return httpx.Response(200, json=[
+                {
+                    "job_id": "job_01",
+                    "status": "completed",
+                    "profile_name": "bank_statement",
+                }
+            ])
+        if request.url.path == "/api/v1/profiles/bank_statement":
+            return httpx.Response(200, json={
+                "profile_id": "bank_statement",
+                "path": "/path/to/bank_statement.yaml",
+                "source": "yaml_content",
+                "profile": {"profile_id": "bank_statement", "fields": []},
+                "error": None,
+            })
+        return httpx.Response(404, json={"detail": "not found"})
+
+    def mock_client_factory(*args, **kwargs):
+        return DocumentIntelligenceClient(
+            base_url="http://127.0.0.1:8765",
+            http_client=httpx.Client(
+                base_url="http://127.0.0.1:8765", transport=httpx.MockTransport(handler)
+            ),
+        )
+
+    monkeypatch.setattr(admin_routes, "DocumentIntelligenceClient", mock_client_factory)
+
+    status = admin_routes._doc_intel_engine_status()
+    assert status["reachable"] is True
+    assert status["error"] is None
+    assert len(status["profiles"]) == 1
+    assert status["profiles"][0]["id"] == "bank_statement"
+    assert status["profiles"][0]["statement_type"] == "CHECKING"
+    assert len(status["jobs"]) == 1
+    assert status["jobs"][0]["id"] == "job_01"
+
+    profile_data = admin_routes._doc_intel_profile("bank_statement")
+    assert profile_data["error"] is None
+    assert profile_data["profile_id"] == "bank_statement"
+    assert profile_data["source"] == "yaml_content"
