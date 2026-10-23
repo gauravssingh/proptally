@@ -379,13 +379,61 @@
                         {% endif %}
                         {% for field, label in money_labels.items() %}
                         {% if selected.money.get(field) %}
-                        {{ ui.statement_row(label, "$" ~ selected.money[field]) }}
+                        {% set ev = selected.evidence_by_field.get(field) %}
+                        {% if ev and ev.quote %}
+                            {% set ev_note %}
+                            <a href="{{ selected.preview_href }}&pdf_page={{ ev.page }}&evidence={{ ev.field }}" class="pt-fs-caption pt-link" title="Locate on PDF">
+                                {{ ui.icon("search", "xs") }} Page {{ ev.page }} · “{{ ev.quote | truncate(26) }}”
+                            </a>
+                            {% endset %}
+                        {% else %}
+                            {% set ev_note = None %}
+                        {% endif %}
+                        {{ ui.statement_row(label, "$" ~ selected.money[field], note=ev_note) }}
                         {% endif %}
                         {% endfor %}
                         {% if selected.rate_percent %}
-                        {{ ui.statement_row("Interest rate", selected.rate_percent ~ "%") }}
+                        {% set ev = selected.evidence_by_field.get('reported_interest_rate_milli_percent') or selected.evidence_by_field.get('interest_rate_percent') %}
+                        {% if ev and ev.quote %}
+                            {% set ev_note %}
+                            <a href="{{ selected.preview_href }}&pdf_page={{ ev.page }}&evidence={{ ev.field }}" class="pt-fs-caption pt-link" title="Locate on PDF">
+                                {{ ui.icon("search", "xs") }} Page {{ ev.page }} · “{{ ev.quote | truncate(26) }}”
+                            </a>
+                            {% endset %}
+                        {% else %}
+                            {% set ev_note = None %}
+                        {% endif %}
+                        {{ ui.statement_row("Interest rate", selected.rate_percent ~ "%", note=ev_note) }}
                         {% endif %}
                     {{ ui.statement_close() }}
+
+                    {% if selected.evidence_items %}
+                    <div class="pt-stack-2 pt-mt-4">
+                        <div class="pt-flex pt-items-center pt-justify-between">
+                            <span class="pt-fs-caption pt-font-medium pt-text-secondary">Extracted Evidence ({{ selected.evidence_items | length }})</span>
+                            <a href="{{ selected.preview_href }}" class="pt-fs-caption pt-link">Inspect on PDF &rarr;</a>
+                        </div>
+                        <ul class="pt-evidence-list">
+                            {% for item in selected.evidence_items %}
+                            <li class="pt-evidence-item">
+                                <a href="{{ selected.preview_href }}&pdf_page={{ item.page }}&evidence={{ item.field }}" class="pt-evidence-item__button" style="text-decoration: none;">
+                                    <div class="pt-flex pt-items-center pt-justify-between pt-w-full">
+                                        <span class="pt-fs-caption pt-text-muted">{{ item.label }} · page {{ item.page }}</span>
+                                        {% if item.boxes_count %}
+                                        <span class="pt-badge pt-badge--neutral pt-badge--xs">{{ item.boxes_count }} box{{ '' if item.boxes_count == 1 else 'es' }}</span>
+                                        {% endif %}
+                                    </div>
+                                    <strong>{{ item.display }}</strong>
+                                    {% if item.quote and item.quote != item.display %}
+                                    <span class="pt-extracted-field__evidence-text pt-fs-caption pt-text-muted">“{{ item.quote }}”</span>
+                                    {% endif %}
+                                </a>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+
                     {% else %}
                     {{ ui.empty_state(
                         "Nothing was read from this document",
@@ -407,10 +455,77 @@
                     {% endif %}
                 {% else %}
                     {% if selected.can_preview %}
-                    <div class="pt-preview">
-                        <iframe class="pt-preview__frame" src="/documents/{{ selected.document.id }}/view#view=FitH"
-                                title="Preview of {{ selected.document.original_filename }}"></iframe>
-                    </div>
+                        {% if selected.is_pdf %}
+                        <div class="pt-pdf-viewer" data-pdf-viewer data-pdf-fit-width
+                             data-pdf-url="/documents/{{ selected.document.id }}/view"
+                             data-pdf-page="{{ pdf_page or 1 }}">
+                            <div class="pt-pdf-viewer__toolbar">
+                                <div class="pt-pdf-viewer__group">
+                                    <button type="button" class="pt-btn pt-btn--ghost pt-btn--icon pt-btn--sm"
+                                            data-pdf-prev aria-label="Previous page">{{ ui.icon("chevron_left", "sm") }}</button>
+                                    <span class="pt-pdf-viewer__page-label" data-pdf-page-label>Page {{ pdf_page or 1 }}</span>
+                                    <button type="button" class="pt-btn pt-btn--ghost pt-btn--icon pt-btn--sm"
+                                            data-pdf-next aria-label="Next page">{{ ui.icon("chevron_right", "sm") }}</button>
+                                </div>
+                                <div class="pt-pdf-viewer__group">
+                                    <button type="button" class="pt-btn pt-btn--ghost pt-btn--icon pt-btn--sm"
+                                            data-pdf-zoom-out aria-label="Zoom out">−</button>
+                                    <span class="pt-pdf-viewer__zoom" data-pdf-zoom>100%</span>
+                                    <button type="button" class="pt-btn pt-btn--ghost pt-btn--icon pt-btn--sm"
+                                            data-pdf-zoom-in aria-label="Zoom in">+</button>
+                                </div>
+                            </div>
+                            <div class="pt-pdf-viewer__viewport" data-pdf-viewport style="max-height: 28rem;">
+                                <div class="pt-pdf-viewer__page" data-pdf-page-container>
+                                    <canvas data-pdf-canvas></canvas>
+                                    <div class="pt-pdf-viewer__highlights" data-pdf-highlights></div>
+                                </div>
+                            </div>
+                            <div class="pt-pdf-viewer__status" data-pdf-status role="status">
+                                {% if selected.evidence_items %}
+                                Select an extracted value below to highlight its source on this page.
+                                {% else %}
+                                PDF loaded. Select figures from the Figures tab.
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        {% if selected.evidence_items and selected.extraction %}
+                        <div class="pt-stack-2 pt-mt-3">
+                            <div class="pt-flex pt-items-center pt-justify-between">
+                                <span class="pt-fs-caption pt-font-medium pt-text-secondary">Extracted Evidence ({{ selected.evidence_items | length }})</span>
+                                <span class="pt-fs-caption pt-text-muted">Click to highlight</span>
+                            </div>
+                            <ul class="pt-evidence-list pt-evidence-list--selectable">
+                                {% for item in selected.evidence_items %}
+                                <li class="pt-evidence-item{% if selected_evidence_id == item.field %} is-selected{% endif %}" data-evidence-id="{{ item.field }}"
+                                    data-evidence-page="{{ item.page }}"
+                                    data-evidence-location="/statements/extractions/{{ selected.extraction.id }}/evidence/{{ item.field }}/location">
+                                    <button type="button" class="pt-evidence-item__button" data-evidence-select>
+                                        <div class="pt-flex pt-items-center pt-justify-between pt-w-full">
+                                            <span class="pt-fs-caption pt-text-muted">{{ item.label }} · page {{ item.page }}</span>
+                                            {% if item.boxes_count %}
+                                            <span class="pt-badge pt-badge--neutral pt-badge--xs">{{ item.boxes_count }} box{{ '' if item.boxes_count == 1 else 'es' }}</span>
+                                            {% endif %}
+                                        </div>
+                                        <strong>{{ item.display }}</strong>
+                                        {% if item.quote and item.quote != item.display %}
+                                        <span class="pt-extracted-field__evidence-text pt-fs-caption pt-text-muted">“{{ item.quote }}”</span>
+                                        {% endif %}
+                                    </button>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+
+                        {% else %}
+                        <div class="pt-preview">
+                            <img src="/documents/{{ selected.document.id }}/view"
+                                 alt="Preview of {{ selected.document.original_filename }}"
+                                 style="display: block; max-width: 100%; height: auto;">
+                        </div>
+                        {% endif %}
                     {% else %}
                     <div class="pt-preview">
                         <p class="pt-preview__fallback">No preview for this file type. Download it to open it.</p>
@@ -863,4 +978,25 @@
     }
 })();
 </script>
+{% if selected and selected.can_preview and selected.is_pdf and active_tab == 'preview' %}
+<script src="/static/vendor/pdfjs/pdf.min.js"></script>
+<script src="/static/js/pdf-viewer.js?v={{ asset_version() }}"></script>
+{% if selected_evidence_id %}
+<script>
+(function() {
+    var checkCount = 0;
+    var timer = setInterval(function() {
+        checkCount++;
+        var btn = document.querySelector('[data-evidence-id="{{ selected_evidence_id }}"] [data-evidence-select]');
+        if (btn) {
+            btn.click();
+            clearInterval(timer);
+        } else if (checkCount > 25) {
+            clearInterval(timer);
+        }
+    }, 150);
+})();
+</script>
+{% endif %}
+{% endif %}
 {% endblock %}

@@ -242,26 +242,41 @@ def _doc_intel_portfolios(control_engine, tenant_manager: TenantManager) -> list
         }
         try:
             with Session(tenant_manager.engine_for(tenant.id)) as session:
-                row["documents"] = session.exec(
-                    select(func.count()).select_from(Document)
+                # 1. Consolidated scalar subqueries for document and committed counts
+                doc_count, committed_count = session.exec(
+                    select(
+                        select(func.count()).select_from(Document).scalar_subquery(),
+                        select(func.count())
+                        .select_from(Statement)
+                        .where(Statement.ingestion_status == "COMMITTED")
+                        .scalar_subquery(),
+                    )
                 ).one()
+                row["documents"] = doc_count or 0
+                row["committed"] = committed_count or 0
+
+                # 2. Grouped extractions including sidecar recency in a single pass
                 grouped = session.exec(
                     select(
                         DocumentExtraction.parser_name,
                         DocumentExtraction.validation_status,
                         DocumentExtraction.approval_status,
                         func.count(),
+                        func.max(DocumentExtraction.created_at),
                     ).group_by(
                         DocumentExtraction.parser_name,
                         DocumentExtraction.validation_status,
                         DocumentExtraction.approval_status,
                     )
                 ).all()
-                for parser_name, validation, approval, count in grouped:
+                for parser_name, validation, approval, count, max_created_at in grouped:
                     if parser_name != DOC_INTEL_PARSER_NAME:
                         row["local"] += count
                         continue
                     row["sidecar"] += count
+                    if max_created_at:
+                        if row["last_sidecar_at"] is None or max_created_at > row["last_sidecar_at"]:
+                            row["last_sidecar_at"] = max_created_at
                     if validation == "VALIDATED":
                         row["validated"] += count
                     elif validation == "NEEDS_REVIEW":
@@ -270,16 +285,6 @@ def _doc_intel_portfolios(control_engine, tenant_manager: TenantManager) -> list
                         row["other"] += count
                     if approval == "APPROVED":
                         row["approved"] += count
-                row["committed"] = session.exec(
-                    select(func.count())
-                    .select_from(Statement)
-                    .where(Statement.ingestion_status == "COMMITTED")
-                ).one()
-                row["last_sidecar_at"] = session.exec(
-                    select(func.max(DocumentExtraction.created_at)).where(
-                        DocumentExtraction.parser_name == DOC_INTEL_PARSER_NAME
-                    )
-                ).one()
         except Exception as exc:  # noqa: BLE001 - an unreadable portfolio is reported
             row["readable"] = False
             row["error"] = type(exc).__name__

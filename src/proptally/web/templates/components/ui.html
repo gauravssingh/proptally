@@ -360,7 +360,7 @@
     <span class="pt-statement__label">
         {{ label }}
         {%- if line %}<span class="pt-statement__line">{{ line }}</span>{% endif -%}
-        {%- if note %}<span class="pt-statement__note">{{ note }}</span>{% endif -%}
+        {%- if note %}<span class="pt-statement__note">{{ note | safe }}</span>{% endif -%}
     </span>
     <span class="pt-statement__value">{{ value | safe }}</span>
 </div>

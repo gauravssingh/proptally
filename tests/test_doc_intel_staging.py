@@ -999,3 +999,144 @@ def test_evidence_coordinates_retained_in_extraction_data():
     assert data["evidence"]["opening_balance_cents"][0]["quote"] == "$1,000.00"
 
 
+def test_extraction_evidence_location_endpoint(owner, tmp_path):
+    signed_in = owner()
+    with Session(signed_in.engine) as session:
+        doc = Document(
+            id="doc_test_evidence",
+            original_filename="statement.pdf",
+            mime_type="application/pdf",
+            storage_path=str(tmp_path / "mock.pdf"),
+            file_sha256="abc123",
+            file_size_bytes=100,
+        )
+        session.add(doc)
+        ext = DocumentExtraction(
+            id="ext_test_evidence",
+            document_id=doc.id,
+            parser_name="document_intelligence_lab",
+            parser_version="0.1.0",
+            validation_status="VALIDATED",
+            approval_status="PENDING",
+            extracted_data_json=json.dumps({
+                "statement_type": "CHECKING",
+                "opening_balance_cents": 100000,
+                "closing_balance_cents": 200000,
+                "evidence": {
+                    "opening_balance_cents": [
+                        {
+                            "quote": "$1,000.00",
+                            "page_index": 0,
+                            "resolution_status": "exact",
+                            "boxes": [[150.0, 200.0, 220.0, 215.0]],
+                        }
+                    ],
+                    "institution_name": [
+                        {
+                            "quote": "Bank of America",
+                            "page_index": 0,
+                            "resolution_status": "exact",
+                            "boxes": [{"x0": 10.0, "y0": 20.0, "x1": 100.0, "y1": 40.0}],
+                        }
+                    ],
+                },
+            }),
+        )
+        session.add(ext)
+        session.commit()
+        ext_id = ext.id
+        doc_id = doc.id
+
+    # 1. Fetch evidence location by exact field name
+    resp = signed_in.client.get(f"/statements/extractions/{ext_id}/evidence/opening_balance_cents/location")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "AVAILABLE"
+    assert data["page"] == 1
+    assert data["quote"] == "$1,000.00"
+    assert data["rects"] == [{"x0": 150.0, "y0": 200.0, "x1": 220.0, "y1": 215.0}]
+
+    # 2. Fetch evidence location by alias without _cents
+    resp_alias = signed_in.client.get(f"/statements/extractions/{ext_id}/evidence/opening_balance/location")
+    assert resp_alias.status_code == 200
+    assert resp_alias.json()["status"] == "AVAILABLE"
+    assert resp_alias.json()["rects"] == data["rects"]
+
+    # 3. Fetch dict-shaped box
+    resp_inst = signed_in.client.get(f"/statements/extractions/{ext_id}/evidence/institution_name/location")
+    assert resp_inst.status_code == 200
+    data_inst = resp_inst.json()
+    assert data_inst["status"] == "AVAILABLE"
+    assert data_inst["rects"] == [{"x0": 10.0, "y0": 20.0, "x1": 100.0, "y1": 40.0}]
+
+    # 4. Unknown field returns UNAVAILABLE (status 200)
+    resp_unavail = signed_in.client.get(f"/statements/extractions/{ext_id}/evidence/unknown_field/location")
+    assert resp_unavail.status_code == 200
+    assert resp_unavail.json()["status"] == "UNAVAILABLE"
+    assert resp_unavail.json()["reason"] == "NOT_LOCATED"
+
+    # 5. Non-existent extraction returns 404
+    resp_404 = signed_in.client.get("/statements/extractions/ext_non_existent/evidence/opening_balance/location")
+    assert resp_404.status_code == 404
+
+
+def test_statements_ui_evidence_locator_rendering(owner, tmp_path):
+    signed_in = owner()
+    with Session(signed_in.engine) as session:
+        doc = Document(
+            id="doc_ui_evidence",
+            original_filename="statement.pdf",
+            mime_type="application/pdf",
+            storage_path=str(tmp_path / "mock.pdf"),
+            file_sha256="hash_ui",
+            file_size_bytes=100,
+        )
+        session.add(doc)
+        ext = DocumentExtraction(
+            id="ext_ui_evidence",
+            document_id=doc.id,
+            parser_name="document_intelligence_lab",
+            parser_version="0.1.0",
+            validation_status="VALIDATED",
+            approval_status="PENDING",
+            extracted_data_json=json.dumps({
+                "statement_type": "CHECKING",
+                "opening_balance_cents": 100000,
+                "closing_balance_cents": 200000,
+                "evidence": {
+                    "opening_balance_cents": [
+                        {
+                            "quote": "$1,000.00",
+                            "page_index": 0,
+                            "resolution_status": "exact",
+                            "boxes": [[150.0, 200.0, 220.0, 215.0]],
+                        }
+                    ],
+                },
+            }),
+        )
+        session.add(ext)
+        session.commit()
+        ext_id = ext.id
+        doc_id = doc.id
+
+    # View Preview tab with evidence selection
+    resp_preview = signed_in.client.get(f"/statements?doc={doc_id}&tab=preview&evidence=opening_balance_cents")
+    assert resp_preview.status_code == 200
+    html = resp_preview.text
+    assert "data-pdf-viewer" in html
+    assert "/documents/doc_ui_evidence/view" in html
+    assert "data-evidence-select" in html
+    assert f"/statements/extractions/{ext_id}/evidence/opening_balance_cents/location" in html
+    assert "pdf-viewer.js" in html
+
+    # View Figures tab with evidence notes and links
+    resp_figures = signed_in.client.get(f"/statements?doc={doc_id}&tab=figures")
+    assert resp_figures.status_code == 200
+    html_fig = resp_figures.text
+    assert "Extracted Evidence" in html_fig
+    assert "$1000.00" in html_fig
+    assert "Page 1" in html_fig
+
+
+

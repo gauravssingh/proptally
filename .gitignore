@@ -71,3 +71,9 @@ logs/
 # Backups & Hot-folder inbox
 backups/
 inbox/
+
+# Review artifacts & working documents
+docs/MID_DEV_REVIEW.md
+proptally-code-review-*
+review/
+

@@ -142,6 +142,65 @@ MONEY_LABELS: dict[str, str] = {
     "escrow_balance": "Escrow balance",
 }
 
+#: Canonical human labels for evidence and inspection fields.
+FIELD_LABELS: dict[str, str] = {
+    "opening_balance_cents": "Opening balance",
+    "closing_balance_cents": "Closing balance",
+    "opening_balance": "Opening balance",
+    "closing_balance": "Closing balance",
+    "principal_cents": "Principal",
+    "principal": "Principal",
+    "interest_cents": "Interest",
+    "interest": "Interest",
+    "escrow_cents": "Escrow",
+    "escrow": "Escrow",
+    "fees_cents": "Fees",
+    "fees": "Fees",
+    "total_due_cents": "Total due",
+    "total_due": "Total due",
+    "outstanding_principal_cents": "Outstanding principal",
+    "outstanding_principal": "Outstanding principal",
+    "escrow_balance_cents": "Escrow balance",
+    "escrow_balance": "Escrow balance",
+    "reported_interest_rate_milli_percent": "Interest rate",
+    "interest_rate_percent": "Interest rate",
+    "institution_name": "Institution",
+    "servicer_name": "Servicer",
+    "account_last4": "Account last four",
+    "loan_number": "Loan number",
+    "statement_date": "Statement date",
+    "payment_due_date": "Payment due date",
+    "period_start_date": "Period start",
+    "period_end_date": "Period end",
+    "statement_period_start": "Period start",
+    "statement_period_end": "Period end",
+}
+
+
+def _normalize_box(box: Any) -> dict[str, float] | None:
+    """Normalize bounding box representation to canonical top-left coordinates."""
+    if isinstance(box, dict) and "x0" in box and "y0" in box:
+        try:
+            return {
+                "x0": round(float(box["x0"]), 2),
+                "y0": round(float(box["y0"]), 2),
+                "x1": round(float(box.get("x1", box["x0"])), 2),
+                "y1": round(float(box.get("y1", box["y0"])), 2),
+            }
+        except (ValueError, TypeError):
+            return None
+    if isinstance(box, (list, tuple)) and len(box) >= 4:
+        try:
+            return {
+                "x0": round(float(box[0]), 2),
+                "y0": round(float(box[1]), 2),
+                "x1": round(float(box[2]), 2),
+                "y1": round(float(box[3]), 2),
+            }
+        except (ValueError, TypeError):
+            return None
+    return None
+
 
 def _dollars(cents: int | None) -> str:
     return "" if cents is None else f"{Decimal(cents) / 100:.2f}"
@@ -507,6 +566,40 @@ def _extraction_row(session: Session, document: Document, extraction: DocumentEx
     status = extraction.validation_status if extraction else "UNSUPPORTED"
     approval_status = extraction.approval_status if extraction else None
     mime = document.mime_type or ""
+    is_pdf = mime == "application/pdf" or (document.original_filename or "").lower().endswith(".pdf")
+
+    evidence_dict = data.get("evidence") or {}
+    evidence_items = []
+    evidence_by_field = {}
+    if isinstance(evidence_dict, dict):
+        for field_key, ev_data in evidence_dict.items():
+            if not ev_data:
+                continue
+            ev_list = ev_data if isinstance(ev_data, list) else [ev_data]
+            for ev in ev_list:
+                if not isinstance(ev, dict):
+                    continue
+                quote = ev.get("quote") or ""
+                p_idx = int(ev.get("page_index") or 0)
+                page_num = p_idx + 1
+                boxes = ev.get("boxes") or []
+                item = {
+                    "field": field_key,
+                    "label": FIELD_LABELS.get(field_key, field_key.replace("_", " ").title()),
+                    "page": page_num,
+                    "quote": quote,
+                    "display": quote or str(data.get(field_key) or ""),
+                    "boxes_count": len(boxes),
+                    "status": ev.get("resolution_status") or "exact",
+                }
+                evidence_items.append(item)
+                if field_key not in evidence_by_field:
+                    evidence_by_field[field_key] = item
+                if field_key.endswith("_cents"):
+                    base_k = field_key[:-6]
+                    if base_k not in evidence_by_field:
+                        evidence_by_field[base_k] = item
+
     return {
         "document": document,
         "extraction": extraction,
@@ -520,7 +613,10 @@ def _extraction_row(session: Session, document: Document, extraction: DocumentEx
         "loan": session.get(LoanAccount, loan_id) if loan_id else None,
         "is_bank": data.get("statement_type") in BANK_STATEMENT_TYPES,
         "type_label": data.get("statement_type") or "Unrecognised",
-        "can_preview": mime == "application/pdf" or mime.startswith("image/"),
+        "can_preview": is_pdf or mime.startswith("image/"),
+        "is_pdf": is_pdf,
+        "evidence_items": evidence_items,
+        "evidence_by_field": evidence_by_field,
         # The single next step for this row, decided once here so that the row's button,
         # its dialog and the rail's counts cannot drift apart. Importing ends the chain,
         # so an imported statement is never offered again.
@@ -559,6 +655,8 @@ def get_ingestion_router(templates, get_session_dep):
         q: str | None = Query(None),
         per_page: str = "25",
         page: int | None = None,
+        pdf_page: int | None = Query(None),
+        evidence: str | None = Query(None),
         message: str | None = Query(None),
         session: Session = Depends(get_session_dep),
     ):
@@ -699,6 +797,10 @@ def get_ingestion_router(templates, get_session_dep):
 
         inspector_tabs: list[dict] = []
         if selected is not None:
+            selected["preview_href"] = _statements_url(
+                status=status, sort=sort, doc=selected["document"].id, tab="preview", q=q,
+                per_page=per_page_clean, page=page,
+            )
             inspector_tabs = [
                 {"key": key, "label": label, "href": _statements_url(
                     status=status, sort=sort, doc=selected["document"].id, tab=key, q=q,
@@ -780,6 +882,8 @@ def get_ingestion_router(templates, get_session_dep):
                 "selected": selected,
                 "inspector_tabs": inspector_tabs,
                 "active_tab": tab,
+                "pdf_page": pdf_page,
+                "selected_evidence_id": evidence,
                 "inspector_close_href": _statements_url(
                     status=status, sort=sort, q=q, per_page=per_page_clean, page=page),
                 "money_labels": MONEY_LABELS,
@@ -1180,5 +1284,90 @@ def get_ingestion_router(templates, get_session_dep):
         return _redirect(
             f"Statement imported as {statement.statement_type} on {statement.statement_date}.{rent_note}"
         )
+
+    @router.get("/statements/extractions/{extraction_id}/evidence/{field_name}/location")
+    def extraction_evidence_location(
+        extraction_id: str,
+        field_name: str,
+        session: Session = Depends(get_session_dep),
+    ):
+        """Return the physical PDF bounding boxes and page location for an extracted field."""
+        extraction = session.get(DocumentExtraction, extraction_id)
+        if extraction is None:
+            raise HTTPException(status_code=404, detail="Extraction not found.")
+
+        data = json.loads(extraction.extracted_data_json or "{}")
+        evidence_dict = data.get("evidence") or {}
+
+        field_ev = (
+            evidence_dict.get(field_name)
+            or evidence_dict.get(f"{field_name}_cents")
+            or (evidence_dict.get(field_name[:-6]) if field_name.endswith("_cents") else None)
+        )
+
+        if not field_ev:
+            return JSONResponse({
+                "version": 1,
+                "status": "UNAVAILABLE",
+                "reason": "NOT_LOCATED",
+                "page": 1,
+                "rects": [],
+            })
+
+        if isinstance(field_ev, list):
+            entry = field_ev[0] if field_ev else {}
+        elif isinstance(field_ev, dict):
+            entry = field_ev
+        else:
+            entry = {}
+
+        boxes = entry.get("boxes") or []
+        page_index = int(entry.get("page_index") or 0)
+        page_number = page_index + 1
+        quote = entry.get("quote") or ""
+        resolution_status = entry.get("resolution_status") or "exact"
+
+        page_width = 612.0
+        page_height = 792.0
+        doc = session.get(Document, extraction.document_id)
+        if doc and doc.storage_path and Path(doc.storage_path).exists():
+            try:
+                import pymupdf
+                with pymupdf.open(doc.storage_path) as pdf_doc:
+                    if 0 <= page_index < len(pdf_doc):
+                        p = pdf_doc[page_index]
+                        page_width = float(p.rect.width)
+                        page_height = float(p.rect.height)
+            except Exception:
+                pass
+
+        rects = []
+        for box in boxes:
+            norm = _normalize_box(box)
+            if norm:
+                rects.append(norm)
+
+        if not rects:
+            return JSONResponse({
+                "version": 1,
+                "status": "UNAVAILABLE",
+                "reason": "NO_BOXES",
+                "page": page_number,
+                "rects": [],
+                "quote": quote,
+            })
+
+        return JSONResponse({
+            "version": 1,
+            "status": "AVAILABLE",
+            "coordinate_system": "pdf_points_top_left",
+            "page": page_number,
+            "page_width": page_width,
+            "page_height": page_height,
+            "rects": rects,
+            "candidate_count": len(rects),
+            "quote": quote,
+            "resolution_status": resolution_status,
+        })
 
     return router
