@@ -248,7 +248,7 @@ uploader is a dialog like the vault's rather than a permanent form.
 
 ---
 
-### 3.8 Tax Center (IRS Schedule E Hub) (`/tax-center`)
+### 3.8 Tax Center (IRS Schedule E Hub) (`/tax/schedule-e`)
 * **Tax Year Selector:** Toggle between tax years (2025, 2026).
 * **Schedule E Workpaper Grid:**
   * Columns: `Tax Line Number | Category Description | 12307 Larkspur St | 2718 Foxglove Ct | Total Rental Portfolio`

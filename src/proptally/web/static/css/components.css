@@ -1244,33 +1244,40 @@
 
 /* The narrow context rail stacks facts instead of squeezing a label and a long
    value onto one line. */
-.pt-period-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--pt-space-3);
-    margin: 0;
-}
-
-.pt-period-list > div {
+.pt-period {
     display: flex;
     flex-direction: column;
     gap: 2px;
+    padding: var(--pt-space-3);
+    background-color: var(--pt-surface-sunken);
+    border-radius: var(--pt-radius-md);
 }
 
-.pt-period-list dt {
-    font-size: var(--pt-fs-caption);
+.pt-period__range {
+    font-size: var(--pt-fs-subsection);
     font-weight: var(--pt-fw-semibold);
-    letter-spacing: var(--pt-tracking-wide);
-    text-transform: uppercase;
+    line-height: var(--pt-lh-snug);
+    color: var(--pt-text);
+    font-variant-numeric: tabular-nums;
+}
+
+.pt-period__note {
+    font-size: var(--pt-fs-caption);
+    line-height: var(--pt-lh-snug);
     color: var(--pt-text-muted);
 }
 
-.pt-period-list dd {
-    margin: 0;
-    font-size: var(--pt-fs-body);
-    line-height: var(--pt-lh-snug);
+.pt-period__scope {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--pt-space-1) var(--pt-space-3);
+    font-size: var(--pt-fs-caption);
+    color: var(--pt-text-muted);
+}
+
+.pt-period__scope strong {
     color: var(--pt-text);
-    overflow-wrap: anywhere;
+    font-variant-numeric: tabular-nums;
 }
 
 /* --- C7. Badge -------------------------------------------------------- */

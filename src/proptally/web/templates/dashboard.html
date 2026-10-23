@@ -252,21 +252,42 @@
 
     {{ ui.card_open() }}
     <div class="pt-card__body pt-stack-3">
-        <h2 class="pt-section__title">This period</h2>
-        <dl class="pt-period-list">
-            <div>
-                <dt>Period</dt>
-                <dd>{{ period_label }}{% if period_is_filtered %} (filtered){% endif %}</dd>
+        <div class="pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-2">
+            <h2 class="pt-section__title">This period</h2>
+            {% if period_is_filtered %}
+            {{ ui.badge("FILTERED", variant="warning", upper=true,
+                        title="Figures cover only the requested date range.") }}
+            {% else %}
+            {{ ui.badge("LIFETIME", variant="neutral", upper=true,
+                        title="No date filter is active: every posted entry is included.") }}
+            {% endif %}
+        </div>
+
+        <div class="pt-period">
+            <span class="pt-period__range">{{ period_window }}</span>
+            <span class="pt-period__note">{{ period_window_note }}</span>
+        </div>
+
+        <div class="pt-period__scope">
+            <span><strong>{{ equity.property_metrics | length }}</strong> door{{ '' if (equity.property_metrics | length) == 1 else 's' }}</span>
+            <span><strong>{{ rental_count }}</strong> rental{{ '' if rental_count == 1 else 's' }}</span>
+            {% if primary_count %}
+            <span><strong>{{ primary_count }}</strong> primary</span>
+            {% endif %}
+        </div>
+
+        <div>
+            <div class="pt-kv">
+                <span class="pt-kv__key">Debt basis</span>
+                <span class="pt-kv__value">{{ debt_basis_label }}</span>
             </div>
-            <div>
-                <dt>Debt basis</dt>
-                <dd>{{ debt_basis_label }}</dd>
-            </div>
-            <div>
-                <dt>Doors</dt>
-                <dd>{{ equity.property_metrics | length }}</dd>
-            </div>
-        </dl>
+        </div>
+
+        {% if period_is_filtered %}
+        <a class="pt-row-action" href="/">Clear period filter →</a>
+        {% else %}
+        <a class="pt-row-action" href="/reconciliation/report">Open controls report →</a>
+        {% endif %}
     </div>
     {{ ui.card_close() }}
 

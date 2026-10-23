@@ -40,6 +40,32 @@ def _debt_basis_label(equity) -> str:
     return basis
 
 
+def _period_window(financials: dict) -> tuple[str, str]:
+    """The date range the figures cover, plus what that range means."""
+    start = financials.get("period_start")
+    end = financials.get("period_end")
+    coverage_start = financials.get("coverage_start")
+    coverage_end = financials.get("coverage_end")
+
+    if start or end:
+        if start and end:
+            window = f"{start:%d %b %Y} – {end:%d %b %Y}"
+        elif start:
+            window = f"From {start:%d %b %Y}"
+        else:
+            window = f"Through {end:%d %b %Y}"
+        if coverage_start and coverage_end:
+            return window, "Filtered window · figures follow these dates"
+        return window, "Filtered window · no posted activity inside it"
+
+    if coverage_start and coverage_end:
+        return (
+            f"{coverage_start:%d %b %Y} – {coverage_end:%d %b %Y}",
+            "All posted activity",
+        )
+    return "No posted activity yet", "Post a statement or transaction to start the period"
+
+
 def _parse_day(value: str | None, field: str) -> date | None:
     if not value:
         return None
@@ -91,6 +117,8 @@ def get_dashboard_router(templates, get_session_dep):
                 request.app.state.control_engine, context.user.id, context.tenant.id
             )
 
+        period_window, period_window_note = _period_window(financials)
+
         return templates.TemplateResponse(
             request=request,
             name="dashboard.html",
@@ -106,6 +134,18 @@ def get_dashboard_router(templates, get_session_dep):
                 "debt_basis_label": _debt_basis_label(equity),
                 "period_label": period_label(financials),
                 "period_is_filtered": bool(start_date or end_date),
+                "period_window": period_window,
+                "period_window_note": period_window_note,
+                "rental_count": sum(
+                    1
+                    for metric in equity["property_metrics"]
+                    if metric["property"].property_type == "RENTAL_INVESTMENT"
+                ),
+                "primary_count": sum(
+                    1
+                    for metric in equity["property_metrics"]
+                    if metric["property"].property_type != "RENTAL_INVESTMENT"
+                ),
             },
         )
 
