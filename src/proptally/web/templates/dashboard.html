@@ -273,11 +273,39 @@
     {{ ui.card_open() }}
     <div class="pt-card__body pt-stack-3">
         <h2 class="pt-section__title">Quick actions</h2>
-        <div class="pt-flex pt-flex-wrap pt-gap-2">
-            {{ ui.btn("Add a document", variant="secondary", size="sm", href="/documents") }}
-            {{ ui.btn("Upload a statement", variant="secondary", size="sm", href="/statements") }}
-            {{ ui.btn("Transactions", variant="secondary", size="sm", href="/transactions") }}
-            {{ ui.btn("Tax centre", variant="secondary", size="sm", href="/tax-center") }}
+        <div class="pt-quick-actions">
+            <a class="pt-quick-action pt-quick-action--primary" href="/statements">
+                <span class="pt-quick-action__icon">{{ ui.icon("upload", "sm") }}</span>
+                <span class="pt-quick-action__text">
+                    <span class="pt-quick-action__label">Upload a statement</span>
+                    <span class="pt-quick-action__desc">Bank, card or mortgage PDF</span>
+                </span>
+                {{ ui.icon("chevron_right", "sm", "pt-quick-action__chevron") }}
+            </a>
+            <a class="pt-quick-action" href="/documents">
+                <span class="pt-quick-action__icon">{{ ui.icon("file_text", "sm") }}</span>
+                <span class="pt-quick-action__text">
+                    <span class="pt-quick-action__label">Add a document</span>
+                    <span class="pt-quick-action__desc">Lease, policy or property file</span>
+                </span>
+                {{ ui.icon("chevron_right", "sm", "pt-quick-action__chevron") }}
+            </a>
+            <a class="pt-quick-action" href="/transactions">
+                <span class="pt-quick-action__icon">{{ ui.icon("plus", "sm") }}</span>
+                <span class="pt-quick-action__text">
+                    <span class="pt-quick-action__label">Record a transaction</span>
+                    <span class="pt-quick-action__desc">Enter a cash movement and allocate it</span>
+                </span>
+                {{ ui.icon("chevron_right", "sm", "pt-quick-action__chevron") }}
+            </a>
+            <a class="pt-quick-action" href="/tax/schedule-e">
+                <span class="pt-quick-action__icon">{{ ui.icon("ledger", "sm") }}</span>
+                <span class="pt-quick-action__text">
+                    <span class="pt-quick-action__label">Tax &amp; Schedule E</span>
+                    <span class="pt-quick-action__desc">Year-end income and expense summary</span>
+                </span>
+                {{ ui.icon("chevron_right", "sm", "pt-quick-action__chevron") }}
+            </a>
         </div>
     </div>
     {{ ui.card_close() }}
