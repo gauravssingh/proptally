@@ -77,3 +77,8 @@ docs/MID_DEV_REVIEW.md
 proptally-code-review-*
 review/
 
+# Agent configuration & runtime noise
+.omp/*
+!.omp/AGENTS.md
+
+

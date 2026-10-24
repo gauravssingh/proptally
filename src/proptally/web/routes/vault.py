@@ -23,21 +23,20 @@ folder holding a match is visible from the tree itself.
 
 from __future__ import annotations
 
-from datetime import datetime
-import io
 import json
 import logging
 import os
-from pathlib import Path
 import tempfile
-from urllib.parse import urlencode
 import zipfile
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
-from starlette.background import BackgroundTask
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlalchemy import desc
 from sqlmodel import Session, select
+from starlette.background import BackgroundTask
 
 from proptally.db.models import (
     NON_STATEMENT_DOCUMENT_TYPES,

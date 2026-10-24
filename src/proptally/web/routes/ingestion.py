@@ -37,7 +37,6 @@ from proptally.db.models import (
     Property,
     Statement,
 )
-from proptally.web.routes.vault import TYPE_LABELS
 from proptally.ingestion.service import (
     BANK_STATEMENT_TYPES,
     DOC_INTEL_ENV_FLAG,
@@ -58,6 +57,7 @@ from proptally.ingestion.service import (
 from proptally.onboarding.archive import ArchiveRejected, inventory_archive
 from proptally.onboarding.store import OnboardingStore
 from proptally.web.auth import current_context
+from proptally.web.routes.vault import TYPE_LABELS
 
 #: A statement is a PDF; the size limit is shared with the document vault.
 PDF_MAGIC = b"%PDF-"
