@@ -212,6 +212,15 @@
         });
     });
 
+    var resizeTimer = null;
+    window.addEventListener("resize", function () {
+        if (!fitToWidth || !pdf) return;
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(function () {
+            renderPage();
+        }, 150);
+    });
+
     setStatus("Loading document…");
     window.pdfjsLib.getDocument({url: pdfUrl}).promise.then(function (document) {
         pdf = document;

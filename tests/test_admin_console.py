@@ -206,7 +206,7 @@ def test_the_console_reports_counts_and_never_a_balance(console):
     detail = console.admin().get(f"/admin/tenants/{console.tenant.tenant_id}")
     assert detail.status_code == 200
     assert "What it holds" in detail.text
-    assert "Doors" in detail.text
+    assert "Properties" in detail.text
     # No currency anywhere: a portfolio's money is not the platform's business.
     assert "$" not in detail.text
 

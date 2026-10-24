@@ -14,7 +14,7 @@ import pytest
 from sqlmodel import Session, select
 from starlette.testclient import TestClient
 
-from proptally.db.models import Document
+from proptally.db.models import Document, FinancialAccount, FinancialInstitution, Statement
 from proptally.db.system_models import TenantMembership, User
 from proptally.web.app import create_app
 from proptally.web.auth import hash_password
@@ -399,3 +399,315 @@ def _only_document_id(vault) -> str:
         documents = session.exec(select(Document)).all()
     assert len(documents) == 1, f"expected one document, found {len(documents)}"
     return documents[0].id
+
+
+def test_simplified_document_listing_and_no_glance_panel(vault):
+    client = vault["client"]
+    _upload(client, [("lease.pdf", LEASE_PDF), ("receipt.png", RECEIPT_PNG)],
+            document_type="LEASE_AGREEMENT", property_id=vault["property_id"])
+
+    # 1. Without a selection: Vault at a glance panel is gone, giving 2-pane spacious view
+    res = client.get("/documents")
+    assert res.status_code == 200
+    html = res.text
+    assert "Vault at a glance" not in html
+    assert "Which folder holds what" not in html
+
+    # 2. Simplified columns are present
+    assert ">Document<" in html
+    assert ">Location<" in html
+    assert ">Uploaded<" in html
+    assert ">Size<" in html
+    assert ">Status<" in html
+    # Type is removed as a column
+    assert "<th>Type</th>" not in html and ">Type<</th>" not in html
+
+    # 3. Row clickability and checkboxes
+    assert 'data-row-click="true"' in html
+    assert 'data-doc-checkbox' in html
+    assert 'id="doc-select-all"' in html
+    assert 'id="doc-bulk-bar"' in html
+    assert 'id="col-visibility-menu"' in html
+
+    # 4. When a document is selected: inspector opens for it
+    engine = vault["app"].state.tenant_manager.engine_for(vault["tenant_id"])
+    with Session(engine) as session:
+        doc = session.exec(select(Document).where(Document.original_filename == "lease.pdf")).first()
+    assert doc is not None
+
+    selected_res = client.get(f"/documents?doc={doc.id}")
+    assert selected_res.status_code == 200
+    assert "Preview of lease.pdf" in selected_res.text or f"/documents/{doc.id}/view" in selected_res.text
+    assert "pt-explorer__aside pt-inspector" in selected_res.text
+
+
+def test_bulk_download_documents(vault):
+    import io
+    import zipfile
+
+    client = vault["client"]
+    _upload(client, [("first.pdf", LEASE_PDF), ("second.pdf", POLICY_PDF)],
+            document_type="LEASE_AGREEMENT", property_id=vault["property_id"])
+
+    engine = vault["app"].state.tenant_manager.engine_for(vault["tenant_id"])
+    with Session(engine) as session:
+        docs = session.exec(select(Document)).all()
+    assert len(docs) >= 2
+    doc_ids = ",".join(d.id for d in docs)
+
+    # POST bulk download
+    resp = client.post("/documents/bulk/download", data={"doc_ids": doc_ids, "csrf_token": _csrf(client)})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+    assert "documents_export.zip" in resp.headers.get("content-disposition", "")
+
+    # Inspect zip contents
+    with zipfile.ZipFile(io.BytesIO(resp.content), "r") as zf:
+        namelist = zf.namelist()
+        assert "first.pdf" in namelist
+        assert "second.pdf" in namelist
+        assert zf.read("first.pdf") == LEASE_PDF
+        assert zf.read("second.pdf") == POLICY_PDF
+
+
+def test_sorting_columns_and_direction(vault):
+    client = vault["client"]
+    _upload(client, [("alpha.pdf", LEASE_PDF), ("beta.pdf", POLICY_PDF)],
+            document_type="LEASE_AGREEMENT", property_id=vault["property_id"])
+
+    # Sort by document name ascending & descending
+    res_asc = client.get("/documents?sort=name&dir=asc")
+    assert res_asc.status_code == 200
+    pos_alpha = res_asc.text.find("alpha.pdf")
+    pos_beta = res_asc.text.find("beta.pdf")
+    assert pos_alpha != -1 and pos_beta != -1
+    assert pos_alpha < pos_beta
+
+    res_desc = client.get("/documents?sort=name&dir=desc")
+    assert res_desc.status_code == 200
+    pos_alpha_desc = res_desc.text.find("alpha.pdf")
+    pos_beta_desc = res_desc.text.find("beta.pdf")
+    assert pos_beta_desc < pos_alpha_desc
+
+    # Sort by location and status
+    res_loc = client.get("/documents?sort=location&dir=asc")
+    assert res_loc.status_code == 200
+    res_status = client.get("/documents?sort=status&dir=desc")
+    assert res_status.status_code == 200
+
+
+def test_inspector_navigation_and_resizer(vault):
+    client = vault["client"]
+    DOC_C = b"%PDF-1.4\nthird distinct document content\n%%EOF\n"
+    _upload(client, [("doc_a.pdf", LEASE_PDF), ("doc_b.pdf", POLICY_PDF), ("doc_c.pdf", DOC_C)],
+            document_type="LEASE_AGREEMENT", property_id=vault["property_id"])
+
+    engine = vault["app"].state.tenant_manager.engine_for(vault["tenant_id"])
+    with Session(engine) as session:
+        docs = session.exec(select(Document).order_by(Document.original_filename)).all()
+    assert len(docs) >= 3
+    doc_a = next(d for d in docs if d.original_filename == "doc_a.pdf")
+    doc_b = next(d for d in docs if d.original_filename == "doc_b.pdf")
+    doc_c = next(d for d in docs if d.original_filename == "doc_c.pdf")
+
+    # Select middle document on page 2 with per_page=1, sorting by name asc
+    res = client.get(f"/documents?sort=name&dir=asc&per_page=1&page=2&doc={doc_b.id}")
+    assert res.status_code == 200
+    html = res.text
+
+    # Resizer element present
+    assert 'id="explorer-resizer"' in html
+    assert 'class="pt-explorer__resizer"' in html
+
+    # Position counter
+    assert 'id="inspector-position"' in html
+    # Previous and Next buttons with proper hrefs
+    assert f"doc={doc_a.id}" in html
+    assert f"doc={doc_c.id}" in html
+    assert 'id="inspector-prev-btn"' in html
+    assert 'id="inspector-next-btn"' in html
+
+    # Close button preserves page, per_page, and sorting
+    assert 'id="inspector-close-btn"' in html
+    assert "page=2" in html
+    assert "sort=name" in html
+
+    # Column preferences: reset button & required Document column
+    assert 'id="col-reset-btn"' in html
+    assert "(Required)" in html
+
+
+def test_bulk_download_all_matching_scope(vault):
+    import io
+    import zipfile
+
+    client = vault["client"]
+    _upload(client, [("matching_1.pdf", LEASE_PDF), ("matching_2.pdf", POLICY_PDF)],
+            document_type="LEASE_AGREEMENT", property_id=vault["property_id"])
+
+    resp = client.post(
+        "/documents/bulk/download",
+        data={
+            "scope": "all_matching",
+            "csrf_token": _csrf(client),
+            "kind": "all",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+    assert "documents_export.zip" in resp.headers.get("content-disposition", "")
+
+    with zipfile.ZipFile(io.BytesIO(resp.content), "r") as zf:
+        names = zf.namelist()
+        assert "matching_1.pdf" in names
+        assert "matching_2.pdf" in names
+
+
+def test_dedicated_financial_accounts_section_in_vault(vault):
+    import io
+    import zipfile
+    from datetime import date
+
+    client = vault["client"]
+    engine = vault["app"].state.tenant_manager.engine_for(vault["tenant_id"])
+
+    # 1. Setup Financial Accounts
+    with Session(engine) as session:
+        inst = FinancialInstitution(id="inst_bofa", name="Bank of America")
+        session.add(inst)
+        session.commit()
+
+        chk = FinancialAccount(
+            id="fa_bofa_chk",
+            institution_id=inst.id,
+            account_name="Bank of America Checking (...9456)",
+            account_type="CHECKING",
+            account_number_masked="...9456",
+        )
+        cc = FinancialAccount(
+            id="fa_apple_card",
+            institution_id=inst.id,
+            account_name="Apple Card (...1234)",
+            account_type="CREDIT_CARD",
+            account_number_masked="...1234",
+        )
+        session.add(chk)
+        session.add(cc)
+        session.commit()
+
+    # 2. Upload: 1 property doc, 1 checking stmt, 1 cc stmt, 1 misc unclassified doc
+    BOFA_PDF = b"%PDF-1.4\nBank of America Checking Statement content\n%%EOF\n"
+    APPLE_PDF = b"%PDF-1.4\nApple Card Statement content\n%%EOF\n"
+    MISC_PDF = b"%PDF-1.4\nMiscellaneous unclassified content\n%%EOF\n"
+
+    _upload(client, [("lease.pdf", LEASE_PDF)], document_type="LEASE_AGREEMENT", property_id=vault["property_id"])
+    _upload(client, [("bofa_jan.pdf", BOFA_PDF)], document_type="CHECKING_STATEMENT")
+    _upload(client, [("apple_jan.pdf", APPLE_PDF)], document_type="CREDIT_CARD_STATEMENT")
+    _upload(client, [("misc.pdf", MISC_PDF)], document_type="")
+
+    # Link checking and card statements to accounts in Statement table
+    with Session(engine) as session:
+        bofa_doc = session.exec(select(Document).where(Document.original_filename == "bofa_jan.pdf")).one()
+        bofa_doc_id = bofa_doc.id
+        session.add(
+            Statement(
+                id="stmt_bofa_jan",
+                financial_account_id="fa_bofa_chk",
+                document_id=bofa_doc_id,
+                statement_type="CHECKING",
+                active_parser_name="bofa_checking",
+                active_parser_version="1.0",
+                statement_date=date(2025, 1, 31),
+                opening_balance_cents=10000,
+                closing_balance_cents=20000,
+            )
+        )
+        apple_doc = session.exec(select(Document).where(Document.original_filename == "apple_jan.pdf")).one()
+        session.add(
+            Statement(
+                id="stmt_apple_jan",
+                financial_account_id="fa_apple_card",
+                document_id=apple_doc.id,
+                statement_type="CREDIT_CARD",
+                active_parser_name="apple_card",
+                active_parser_version="1.0",
+                statement_date=date(2025, 1, 31),
+                opening_balance_cents=0,
+                closing_balance_cents=5000,
+            )
+        )
+        session.commit()
+
+    # 3. Whole vault view
+    res = client.get("/documents")
+    assert res.status_code == 200
+    html = res.text
+
+    # Three rail sections present
+    assert "Properties" in html
+    assert "Financial Accounts" in html
+    assert "Unfiled" in html
+
+    # Property tree has Larkspur
+    assert "4821 Larkspur Ave" in html
+
+    # Financial Accounts tree has Checking Accounts and Credit Cards
+    assert "Checking Accounts" in html
+    assert "Bank of America Checking (...9456)" in html
+    assert "Credit Cards" in html
+    assert "Apple Card (...1234)" in html
+
+    # Location column in document table shows account name, not 'Unfiled'
+    assert "Bank of America Checking (...9456) / Bank statement" in html
+    assert "Apple Card (...1234) / Credit card statement" in html
+    assert "4821 Larkspur Ave / Lease agreement" in html
+    assert "Unfiled / Unclassified" in html
+
+    # 4. Inspector tags on checking statement
+    doc_res = client.get(f"/documents?doc={bofa_doc_id}")
+    assert doc_res.status_code == 200
+    # Inspector tags have the account name, not 'Unfiled'
+    assert "Bank of America Checking (...9456)" in doc_res.text
+    assert "Bank statement" in doc_res.text
+
+    # 5. Open Checking Account folder
+    acct_res = client.get("/documents?account=fa_bofa_chk")
+    assert acct_res.status_code == 200
+    acct_html = acct_res.text
+    assert "bofa_jan.pdf" in acct_html
+    assert "apple_jan.pdf" not in acct_html
+    assert "lease.pdf" not in acct_html
+    assert "misc.pdf" not in acct_html
+    assert "Bank of America Checking (...9456)" in acct_html
+    # Parent navigation points to Checking Accounts group
+    assert "account_group=checking" in acct_html
+
+    # 6. Open Unfiled folder
+    unfiled_res = client.get("/documents?property=unfiled")
+    assert unfiled_res.status_code == 200
+    unfiled_html = unfiled_res.text
+    assert "misc.pdf" in unfiled_html
+    assert "bofa_jan.pdf" not in unfiled_html
+    assert "apple_jan.pdf" not in unfiled_html
+    assert "lease.pdf" not in unfiled_html
+
+    # 7. Bulk download matching within financial account
+    dl_res = client.post(
+        "/documents/bulk/download",
+        data={
+            "scope": "all_matching",
+            "csrf_token": _csrf(client),
+            "account": "fa_bofa_chk",
+            "kind": "all",
+        },
+    )
+    assert dl_res.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(dl_res.content), "r") as zf:
+        zf_names = zf.namelist()
+        assert "bofa_jan.pdf" in zf_names
+        assert "apple_jan.pdf" not in zf_names
+        assert "lease.pdf" not in zf_names
+        assert "misc.pdf" not in zf_names
+
+
+

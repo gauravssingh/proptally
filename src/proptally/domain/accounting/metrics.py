@@ -174,6 +174,8 @@ CARD_SETTLED_OPEX_CATEGORIES = frozenset({
     "REPAIRS",
     "SUPPLIES",
     "SNOW_LANDSCAPING",
+    "UTILITIES",
+    "BANK_FEES",
     "MANAGEMENT",
     "COMMISSIONS",
     "HOA",

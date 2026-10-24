@@ -175,9 +175,9 @@
     </div>
 
     <div class="pt-flex pt-items-center pt-gap-2">
-        <label class="pt-sr-only" for="quickDoorSelect">Quick select door</label>
+        <label class="pt-sr-only" for="quickDoorSelect">Switch property</label>
         <select id="quickDoorSelect" class="pt-flex-1" data-nav-select>
-            <option value="/"{{ ' selected' if not active_property }}>All Doors ({{ doors | length }})</option>
+            <option value="/"{{ ' selected' if not active_property }}>All properties ({{ doors | length }})</option>
             {% for door in nav.door_items(doors, active_property) %}
             <option value="{{ door.href }}"{% if door.is_active %} selected{% endif %}>{{ door.label }}</option>
             {% endfor %}
@@ -253,7 +253,7 @@
         <button type="button" class="pt-bottomnav__item{% if active_property %} is-active{% endif %}"
                 data-drawer-open aria-controls="mobileDrawer" aria-expanded="false">
             {{ ui.icon("bank", "lg") }}
-            <span>Doors</span>
+            <span>Properties</span>
         </button>
         {% endif %}
         <a href="{{ item.href }}" class="pt-bottomnav__item{% if item.page == active_page %} is-active{% endif %}"

@@ -1,7 +1,9 @@
 """Mortgages and Escrow web router with strict posted-balance integrity."""
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from urllib.parse import urlencode
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
 
 from proptally.db.models import (
@@ -16,6 +18,8 @@ from proptally.db.models import (
     Property,
     TransactionProcessingState,
 )
+from proptally.domain.accounting.mortgage_application import apply_mortgage_period
+from proptally.web.form_parsing import FormError, cents, day
 
 
 def get_mortgages_router(templates, get_session_dep):
@@ -167,7 +171,7 @@ def get_mortgages_router(templates, get_session_dep):
             escrow_data.append({
                 "escrow": e,
                 "servicer_name": inst.name if inst else "Servicer",
-                "property_name": prop.name if prop else "Unknown Door",
+                "property_name": prop.name if prop else "Unknown property",
                 "current_balance_cents": calculated_escrow_balance_cents,
                 "calculated_escrow_balance_cents": calculated_escrow_balance_cents,
                 "reported_escrow_balance_cents": reported_escrow_balance_cents,
@@ -193,6 +197,47 @@ def get_mortgages_router(templates, get_session_dep):
                 "escrow_data": escrow_data,
                 "review_count": review_count,
             },
+        )
+
+    @router.post("/mortgages/{loan_id}/periods/{period_id}/apply")
+    def apply_statement(
+        loan_id: str,
+        period_id: str,
+        extra_principal: str = Form("0"),
+        payment_date: str = Form(""),
+        session: Session = Depends(get_session_dep),
+    ):
+        """Release funded clearing cash into principal, interest and escrow."""
+        loan = session.get(LoanAccount, loan_id)
+        period = session.get(MortgagePeriod, period_id)
+        if not loan or not period or period.loan_account_id != loan.id:
+            raise HTTPException(status_code=404, detail="Mortgage statement not found")
+
+        try:
+            extra = cents(extra_principal, "Extra principal") or 0
+            applied_on = day(payment_date, "Payment date")
+            apply_mortgage_period(
+                session,
+                period_id,
+                extra_principal_cents=extra,
+                payment_date=applied_on,
+            )
+        except FormError as exc:
+            session.rollback()
+            return RedirectResponse(
+                url=f"/properties/{loan.property_id}?{urlencode({'error': str(exc)})}",
+                status_code=303,
+            )
+        except ValueError as exc:
+            session.rollback()
+            return RedirectResponse(
+                url=f"/properties/{loan.property_id}?{urlencode({'error': str(exc)})}",
+                status_code=303,
+            )
+
+        return RedirectResponse(
+            url=f"/properties/{loan.property_id}?{urlencode({'message': 'Mortgage statement applied.'})}",
+            status_code=303,
         )
 
     return router

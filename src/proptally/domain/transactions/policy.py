@@ -47,7 +47,11 @@ RENTAL_DEDUCTION_CATEGORIES = frozenset({
     "TAXES",
     "INSURANCE",
     "SNOW_LANDSCAPING",
+    "UTILITIES",
+    "BANK_FEES",
     "MANAGEMENT",
+    "COMMISSIONS",
+    "HOA",
     "LEGAL",
     "MORTGAGE",
 })

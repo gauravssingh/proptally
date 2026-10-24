@@ -22,11 +22,13 @@ from proptally.domain.accounting.metrics import calculate_property_financials
 from proptally.domain.transactions.policy import (
     DEDICATED_RENTAL,
     MIXED_USE,
+    RENTAL_DEDUCTION_CATEGORIES,
     UNCLASSIFIED,
     assert_posting_authorized,
     evaluate_posting_policy,
 )
 from proptally.domain.transactions.splits import (
+    CATEGORY_TO_OPEX_CODE,
     SplitItem,
     apply_transaction_splits,
     post_transaction_to_ledger,
@@ -212,3 +214,22 @@ def test_mixed_allocation_is_gated_by_its_rental_portion(mu_env):
         _Split("REPAIRS", property_id=LARKSPUR),
     ])
     assert policy.requires_cpa_review is True
+
+
+@pytest.mark.parametrize("category", ["UTILITIES", "BANK_FEES", "COMMISSIONS", "HOA"])
+def test_every_rental_opex_category_is_gated_on_a_shared_card(mu_env, category):
+    """A rental OpEx category must not bypass CBD-2 just because it is not REPAIRS."""
+    txn = _txn(mu_env, f"txn_mu_{category.lower()}", SHARED, -40000)
+    policy = evaluate_posting_policy(mu_env, txn, [_Split(category)])
+    assert policy.requires_cpa_review is True
+    with pytest.raises(GovernanceAuthorizationError, match="CBD-2 Policy Violation"):
+        assert_posting_authorized(policy)
+
+
+def test_category_sets_cover_every_operating_expense():
+    """Every operating category must reach both the CBD-2 gate and card OpEx."""
+    from proptally.domain.accounting.metrics import CARD_SETTLED_OPEX_CATEGORIES
+
+    operating = frozenset(CATEGORY_TO_OPEX_CODE) - {"PERSONAL"}
+    assert RENTAL_DEDUCTION_CATEGORIES == operating | {"MORTGAGE"}
+    assert CARD_SETTLED_OPEX_CATEGORIES == operating

@@ -22,6 +22,7 @@
        --------------------------------------------------------------------- */
     --pt-bg: #f1f5f9;               /* Main application canvas (clear separation from white cards) */
     --pt-surface: #ffffff;          /* Cards, tables, modals, primary content containers */
+    --pt-surface-subtle: #f8fafc;   /* Inset card backgrounds and muted subpanels */
     --pt-surface-sunken: #eaf0f6;   /* Table headers, filter bars, inset stat cells */
     --pt-surface-hover: #f1f5f9;    /* Table row and list-item hover */
     --pt-surface-selected: #d1fae5; /* Selected transaction row (subtle emerald tint) */
@@ -44,11 +45,13 @@
        4. Semantic families  (bg / text / border / solid)
        --------------------------------------------------------------------- */
     --pt-success-bg: #dcfce7;
+    --pt-success-soft: #dcfce7;
     --pt-success-text: #166534;     /* 6.49:1 on --pt-success-bg */
     --pt-success-border: #bbf7d0;
     --pt-success-solid: #15803d;
 
     --pt-warning-bg: #fef3c7;
+    --pt-warning-soft: #fef3c7;
     --pt-warning-text: #92400e;     /* 6.37:1 */
     --pt-warning-border: #fde68a;
     --pt-warning-solid: #d97706;
@@ -88,6 +91,7 @@
        6. Borders, dividers, focus
        --------------------------------------------------------------------- */
     --pt-border: #e2e8f0;
+    --pt-border-subtle: #f1f5f9;
     --pt-border-strong: #cbd5e1;
     --pt-border-chrome: #1e293b;
     --pt-divider: #f1f5f9;
@@ -188,11 +192,14 @@
     --pt-appbar-h: 3.25rem;
     --pt-bottomnav-h: 4.5rem;
     --pt-drawer-w: 18rem;
+    --pt-inspector-w: 24rem;
     /* The workspace is fluid: the content region fills everything beside the sidebar and
        stops capping at 1920px, so a wide display spends its width on the tables rather
        than on gutters. */
     --pt-content-max: 120rem;
+    --pt-content-max-fluid: 100%;
     --pt-content-pad-x: var(--pt-space-8);
+    --pt-content-pad-x-wide: var(--pt-space-10);
     --pt-content-pad-x-mobile: var(--pt-space-4);
 
     --pt-card-pad: var(--pt-space-5);
@@ -254,6 +261,7 @@
        14. Motion
        --------------------------------------------------------------------- */
     --pt-transition-fast: 120ms;
+    --pt-motion-fast: 120ms;
     --pt-transition: 180ms;
     --pt-ease: cubic-bezier(0.2, 0, 0.2, 1);
 

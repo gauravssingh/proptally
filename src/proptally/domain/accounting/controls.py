@@ -33,6 +33,7 @@ from proptally.db.models import (
     TransactionSplit,
     utc_now,
 )
+from proptally.domain.money import format_cents, format_cents_signed
 
 BLOCKING = "blocking"
 WARNING = "warning"
@@ -460,11 +461,11 @@ def build_reconciliation_report(session: Session) -> ReconciliationReport:
             label="Ledger balances",
             severity=BLOCKING,
             passed=not unbalanced,
-            count=0 if not unbalanced else abs(debit - credit),
+            count=1 if unbalanced else 0,
             summary=(
-                f"Posted debits and credits tie at {debit:,} cents."
+                f"Posted debits and credits tie at {format_cents(debit)}."
                 if not unbalanced
-                else f"Posted debits {debit:,} do not equal credits {credit:,}."
+                else f"Posted debits {format_cents(debit)} do not equal credits {format_cents(credit)}."
             ),
         )
     )
@@ -484,7 +485,7 @@ def build_reconciliation_report(session: Session) -> ReconciliationReport:
             ),
             detail="Difference = posted ledger balance minus the latest statement balance.",
             samples=[
-                f"{a.name}: {a.difference_cents:+,} cents" for a in drift
+                f"{a.name}: {format_cents_signed(a.difference_cents)}" for a in drift
             ],
         )
     )
@@ -500,7 +501,7 @@ def build_reconciliation_report(session: Session) -> ReconciliationReport:
             summary=(
                 "Every imported transaction has been posted to the ledger."
                 if unposted_count == 0
-                else f"{unposted_count} transactions ({unposted_cents:,} cents) are unposted."
+                else f"{unposted_count} transaction{'s' if unposted_count != 1 else ''} ({format_cents_signed(unposted_cents)}) {'are' if unposted_count != 1 else 'is'} unposted."
             ),
             samples=[a.name for a in accounts if a.unposted_count],
         )

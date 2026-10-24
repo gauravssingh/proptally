@@ -29,16 +29,16 @@
    Empty portfolio: the one action that matters is the first door.
    --------------------------------------------------------------------------- #}
 {% if not properties %}
-{{ ui.section_open("Start here", "A portfolio reports over the doors and accounts you declare.") }}
+{{ ui.section_open("Start here", "A portfolio reports over the properties and accounts you declare.") }}
 <div class="pt-stack">
     {{ ui.alert(
         variant="info",
-        title="This portfolio has no doors yet",
+        title="This portfolio has no properties yet",
         text="Add your first property below, then its deposit or card accounts, then any mortgage on it."
     ) }}
     {{ ui.empty_state(
         "No properties declared",
-        "The dashboard reports on nothing until a door exists.",
+        "The dashboard reports on nothing until a property exists.",
         action_label=("Add your first property" if can_work else none),
         action_href="#",
         action_attrs='data-modal-open="create-property-modal"',
@@ -58,7 +58,7 @@
 {% endset %}
 {{ ui.section_open(
     "Properties (" ~ (properties | length) ~ ")",
-    "Each door owns its own fixed-asset ledger account; the code is allocated automatically when the property is created.",
+    "Each property owns its own fixed-asset ledger account; the code is allocated automatically when the property is created.",
     actions=property_actions,
     flush=true
 ) }}
@@ -90,7 +90,7 @@
             </td>
             <td>
                 {% if p.property_type == 'RENTAL_INVESTMENT' %}
-                {{ ui.badge("RENTAL DOOR", variant="accent", upper=true) }}
+                {{ ui.badge("RENTAL PROPERTY", variant="accent", upper=true) }}
                 {% else %}
                 {{ ui.badge("PRIMARY RESIDENCE", variant="rule", upper=true) }}
                 {% endif %}
@@ -111,7 +111,7 @@
 <div class="pt-section__body">
     {{ ui.empty_state(
         "No properties declared",
-        "Add a rental door or your primary residence to start reporting on it.",
+        "Add a rental property or your primary residence to start reporting on it.",
         action_label=("Add property" if can_work else none),
         action_href="#",
         action_attrs='data-modal-open="create-property-modal"',
@@ -176,7 +176,7 @@
 <div class="pt-section__body">
     {{ ui.empty_state(
         "No accounts declared",
-        "Add the bank account rent lands in and the card you spend on the doors from.",
+        "Add the bank account rent lands in and the card you spend on the properties from.",
         action_label=("Add account" if can_work else none),
         action_href="#",
         action_attrs='data-modal-open="create-account-modal"',
@@ -243,7 +243,7 @@
 <div class="pt-section__body">
     {{ ui.empty_state(
         "No mortgage loans declared",
-        "Add the loan on a door so its principal and escrow reserve are carried in the ledger.",
+        "Add the loan on a property so its principal and escrow reserve are carried in the ledger.",
         action_label=("Add mortgage" if can_work else none),
         action_href="#",
         action_attrs='data-modal-open="create-mortgage-modal"',
@@ -334,7 +334,7 @@
             {{ ui.th("Vendor") }}
             {{ ui.th("Service") }}
             {{ ui.th("Category") }}
-            {{ ui.th("Door") }}
+            {{ ui.th("Property") }}
             {{ ui.th("Gates") }}
             {{ ui.th("State") }}
             {{ ui.th("", num=true) }}
@@ -396,7 +396,7 @@
 {% if who and who.is_owner %}
 {{ ui.section_open(
     "Portfolio data",
-    "Export the whole portfolio as a database-and-documents archive, or remove it permanently. Both actions apply to the entire portfolio, not one door."
+    "Export the whole portfolio as a database-and-documents archive, or remove it permanently. Both actions apply to the entire portfolio, not one property."
 ) }}
 <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-3">
     {{ ui.btn("Export portfolio", variant="secondary",
@@ -417,7 +417,7 @@
 
 {# 1. Create property #}
 {% if can_work %}
-{{ ui.modal_open("create-property-modal", "Add a property", "A rental door or your primary residence.", size="lg") }}
+{{ ui.modal_open("create-property-modal", "Add a property", "A rental property or your primary residence.", size="lg") }}
 <form action="/properties/create" method="POST" class="pt-modal__form">
     {{ csrf_field() }}
     <div class="pt-modal__body pt-stack">

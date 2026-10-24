@@ -70,7 +70,7 @@
     {{ ui.kpi(
         "Portfolio Equity",
         ui.amount(equity.net_equity_cents, mode="plain"),
-        sub="Valuation " ~ (equity.total_valuation_cents | format_cents) ~ " · asset equity across all doors",
+        sub="Valuation " ~ (equity.total_valuation_cents | format_cents) ~ " · asset equity across all properties",
         evidence_kind="estimated",
         evidence_title="Total recorded valuation less total mortgage debt. Valuation is manual or appraised input, not a market quote."
     ) }}
@@ -78,9 +78,10 @@
     {{ ui.kpi(
         "Total Debt Outstanding",
         ui.amount(equity.total_debt_cents, mode="plain"),
-        sub=("Awaiting balance confirmation for " ~ (equity.unavailable_property_ids | length) ~ " door(s)"
+        sub=("Awaiting balance confirmation for " ~ (equity.unavailable_property_ids | length)
+             ~ (" property" if (equity.unavailable_property_ids | length) == 1 else " properties")
              if equity.unavailable_property_ids
-             else "Statement-backed debt balance verified across all doors"),
+             else "Statement-backed debt balance verified across all properties"),
         evidence_kind=("verified" if equity.debt_fully_verified else "needs_review"),
         evidence_label=debt_basis_label,
         evidence_title="Servicer-reported principal is authoritative where a statement exists; otherwise the ledger-derived principal is used."
@@ -105,8 +106,8 @@
    Doors. Primary residence is visually segregated by surface, and by badge —
    never by colour alone.
    --------------------------------------------------------------------------- #}
-{{ ui.section_open("Portfolio Doors (" ~ equity.property_metrics | length ~ ")",
-                   "Rental doors and the primary residence are kept separate: operating metrics apply to rentals only.") }}
+{{ ui.section_open("Portfolio Properties (" ~ equity.property_metrics | length ~ ")",
+                   "Rental properties and the primary residence are kept separate: operating metrics apply to rentals only.") }}
 <div class="pt-doors">
     {% for prop_meta in equity.property_metrics %}
     {% set p = prop_meta.property %}
@@ -118,7 +119,7 @@
                 {% if is_primary %}
                 {{ ui.badge("PRIMARY RESIDENCE", variant="rule", upper=true) }}
                 {% else %}
-                {{ ui.badge("RENTAL DOOR", variant="accent", upper=true) }}
+                {{ ui.badge("RENTAL PROPERTY", variant="accent", upper=true) }}
                 {% endif %}
                 {{ ui.badge("Acquired " ~ (p.acquisition_date | format_date), variant="outline", mono=true, upper=false) }}
             </div>
@@ -180,6 +181,18 @@
         ui.amount(financials.gross_rental_income_cents, mode="income", strong=true)
     ) }}
     {{ ui.statement_row(
+        "Property taxes",
+        ui.amount(financials.property_tax_cents, mode="expense"),
+        line="Sch. E line 16",
+        indent=true
+    ) }}
+    {{ ui.statement_row(
+        "Insurance",
+        ui.amount(financials.hazard_insurance_cents, mode="expense"),
+        line="Sch. E line 9",
+        indent=true
+    ) }}
+    {{ ui.statement_row(
         "Repairs & maintenance",
         ui.amount(financials.repairs_cents, mode="expense"),
         line="Sch. E line 14",
@@ -188,7 +201,19 @@
     {{ ui.statement_row(
         "Supplies & hardware",
         ui.amount(financials.supplies_cents, mode="expense"),
-        line="Sch. E line 17",
+        line="Sch. E line 15",
+        indent=true
+    ) }}
+    {{ ui.statement_row(
+        "Snow & landscaping",
+        ui.amount(financials.snow_landscaping_cents, mode="expense"),
+        line="Sch. E line 7",
+        indent=true
+    ) }}
+    {{ ui.statement_row(
+        "Other operating expenses",
+        ui.amount(financials.other_operating_expense_cents, mode="expense"),
+        line="Sch. E lines 8, 10, 11, 17, 19",
         indent=true
     ) }}
     {{ ui.statement_row(
@@ -215,19 +240,44 @@
         note="Equity build, not an expense",
         indent=true
     ) }}
-    {{ ui.statement_row(
-        "Escrow reserve contributions",
-        ui.amount(financials.escrow_funded_cents, mode="movement"),
-        note="Pre-funding of taxes and insurance",
-        indent=true
-    ) }}
+    {% if financials.escrow_funded_cents %}
     {{ ui.statement_row(
         "Cash flow after debt service (CADS)",
         ui.amount(financials.cads_cents, mode="signed", size="lg"),
-        note="Net cash retained in the operating account",
+        note="Operating cash after confirmed principal and interest",
+        kind="subtotal"
+    ) }}
+    {{ ui.statement_row(
+        "Escrow reserve contributions",
+        ui.amount(financials.escrow_funded_cents, mode="movement"),
+        note="Reserve transfer; excluded from CADS",
+        indent=true
+    ) }}
+    {{ ui.statement_row(
+        "Cash retained after escrow funding",
+        ui.amount(financials.cads_cents - financials.escrow_funded_cents, mode="signed", size="lg"),
+        note="Operating cash after the reserve transfer",
         kind="total"
     ) }}
+    {% else %}
+    {{ ui.statement_row(
+        "Cash flow after debt service (CADS)",
+        ui.amount(financials.cads_cents, mode="signed", size="lg"),
+        note="Operating cash after confirmed principal and interest",
+        kind="total"
+    ) }}
+    {% endif %}
 {{ ui.statement_close() }}
+{% if financials.unfunded_applied_debt_service_cents %}
+<div class="pt-section__body">
+    {{ ui.alert(
+        variant="warning",
+        title="Unconfirmed debt service excluded",
+        text=ui.amount(financials.unfunded_applied_debt_service_cents, mode="plain") ~
+             " of applied principal and interest has no confirmed bank payment and is excluded from CADS."
+    ) }}
+</div>
+{% endif %}
 {{ ui.section_close() }}
 </div>{# /pt-workspace__main #}
 
@@ -269,7 +319,7 @@
         </div>
 
         <div class="pt-period__scope">
-            <span><strong>{{ equity.property_metrics | length }}</strong> door{{ '' if (equity.property_metrics | length) == 1 else 's' }}</span>
+            <span><strong>{{ equity.property_metrics | length }}</strong> propert{{ 'y' if (equity.property_metrics | length) == 1 else 'ies' }}</span>
             <span><strong>{{ rental_count }}</strong> rental{{ '' if rental_count == 1 else 's' }}</span>
             {% if primary_count %}
             <span><strong>{{ primary_count }}</strong> primary</span>

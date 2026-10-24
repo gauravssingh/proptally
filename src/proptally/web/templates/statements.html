@@ -18,7 +18,7 @@
    stays readable at a glance and no two extractions compete for the same stretch of
    page. The row and its dialog are the same decision, which is why `action` — decided
    once per row in the route — drives both. #}
-<div class="pt-stack-4">
+<div class="pt-stack-3">
     {% set header_meta %}
         {{ ui.badge(ready_to_import ~ " READY TO IMPORT", variant="success", upper=true) }}
         {{ ui.badge(awaiting_review ~ " AWAITING REVIEW", variant="warning", upper=true) }}
@@ -126,7 +126,7 @@
             </div>
         </div>
         <div class="pt-pipeline-callout__actions">
-            <a href="/statements?status=review" class="pt-btn pt-btn--warning pt-btn--sm">
+            <a href="/statements?status=review" class="pt-btn pt-btn--secondary pt-btn--sm">
                 <span>Review {{ awaiting_review }} Waiting Statement{{ '' if awaiting_review == 1 else 's' }} &rarr;</span>
             </a>
         </div>
@@ -224,9 +224,7 @@
                             {# What was read from the document, and whether it was signed off. #}
                             <div class="pt-status-cluster">
                                 {% if row.status == 'PROCESSING' %}
-                                    <span class="pt-badge pt-badge--neutral pt-badge--upper pt-badge--mono" style="display: inline-flex; align-items: center; gap: 0.35rem;">
-                                        {{ ui.icon("clock", "xs") }} PROCESSING
-                                    </span>
+                                    {{ ui.badge("PROCESSING", variant="neutral", upper=true, mono=true) }}
                                 {% elif row.status == 'VALIDATED' %}
                                     {{ ui.badge("VALIDATED", variant="success", upper=true) }}
                                 {% elif row.status == 'NEEDS_REVIEW' %}
@@ -245,7 +243,7 @@
                                 Imported {{ row.statement.statement_type }} · {{ row.statement.statement_date | format_date }}
                             </span>
                             {% elif row.reasons and row.status == 'NEEDS_REVIEW' %}
-                            <span class="pt-table__sub pt-text-warning" title="{{ row.reasons[0] }}">
+                            <span class="pt-table__sub pt-text-muted" title="{{ row.reasons[0] }}">
                                 {{ row.reasons[0] | truncate(35) }}
                             </span>
                             {% endif %}
@@ -384,7 +382,7 @@
                         {% set ev = selected.evidence_by_field.get(field) %}
                         {% if ev and ev.quote %}
                             {% set ev_note %}
-                            <a href="{{ selected.preview_href }}&pdf_page={{ ev.page }}&evidence={{ ev.field }}" class="pt-fs-caption pt-link" title="Locate on PDF">
+                            <a href="{{ selected.preview_href }}&pdf_page={{ ev.page }}&evidence={{ ev.field }}" class="pt-fs-caption pt-row-action" title="Locate on PDF">
                                 {{ ui.icon("search", "xs") }} Page {{ ev.page }} · “{{ ev.quote | truncate(26) }}”
                             </a>
                             {% endset %}
@@ -398,7 +396,7 @@
                         {% set ev = selected.evidence_by_field.get('reported_interest_rate_milli_percent') or selected.evidence_by_field.get('interest_rate_percent') %}
                         {% if ev and ev.quote %}
                             {% set ev_note %}
-                            <a href="{{ selected.preview_href }}&pdf_page={{ ev.page }}&evidence={{ ev.field }}" class="pt-fs-caption pt-link" title="Locate on PDF">
+                            <a href="{{ selected.preview_href }}&pdf_page={{ ev.page }}&evidence={{ ev.field }}" class="pt-fs-caption pt-row-action" title="Locate on PDF">
                                 {{ ui.icon("search", "xs") }} Page {{ ev.page }} · “{{ ev.quote | truncate(26) }}”
                             </a>
                             {% endset %}
@@ -410,19 +408,19 @@
                     {{ ui.statement_close() }}
 
                     {% if selected.evidence_items %}
-                    <div class="pt-stack-2 pt-mt-4">
+                    <div class="pt-stack-2">
                         <div class="pt-flex pt-items-center pt-justify-between">
-                            <span class="pt-fs-caption pt-font-medium pt-text-secondary">Extracted Evidence ({{ selected.evidence_items | length }})</span>
-                            <a href="{{ selected.preview_href }}" class="pt-fs-caption pt-link">Inspect on PDF &rarr;</a>
+                            <span class="pt-fs-caption pt-fw-medium pt-text-secondary">Extracted Evidence ({{ selected.evidence_items | length }})</span>
+                            <a href="{{ selected.preview_href }}" class="pt-fs-caption pt-row-action">Inspect on PDF &rarr;</a>
                         </div>
                         <ul class="pt-evidence-list">
                             {% for item in selected.evidence_items %}
                             <li class="pt-evidence-item">
-                                <a href="{{ selected.preview_href }}&pdf_page={{ item.page }}&evidence={{ item.field }}" class="pt-evidence-item__button" style="text-decoration: none;">
+                                <a href="{{ selected.preview_href }}&pdf_page={{ item.page }}&evidence={{ item.field }}" class="pt-evidence-item__button">
                                     <div class="pt-flex pt-items-center pt-justify-between pt-w-full">
                                         <span class="pt-fs-caption pt-text-muted">{{ item.label }} · page {{ item.page }}</span>
                                         {% if item.boxes_count %}
-                                        <span class="pt-badge pt-badge--neutral pt-badge--xs">{{ item.boxes_count }} box{{ '' if item.boxes_count == 1 else 'es' }}</span>
+                                        <span class="pt-badge pt-badge--neutral">{{ item.boxes_count }} box{{ '' if item.boxes_count == 1 else 'es' }}</span>
                                         {% endif %}
                                     </div>
                                     <strong>{{ item.display }}</strong>
@@ -477,7 +475,7 @@
                                             data-pdf-zoom-in aria-label="Zoom in">+</button>
                                 </div>
                             </div>
-                            <div class="pt-pdf-viewer__viewport" data-pdf-viewport style="max-height: 28rem;">
+                            <div class="pt-pdf-viewer__viewport" data-pdf-viewport>
                                 <div class="pt-pdf-viewer__page" data-pdf-page-container>
                                     <canvas data-pdf-canvas></canvas>
                                     <div class="pt-pdf-viewer__highlights" data-pdf-highlights></div>
@@ -493,9 +491,9 @@
                         </div>
 
                         {% if selected.evidence_items and selected.extraction %}
-                        <div class="pt-stack-2 pt-mt-3">
+                        <div class="pt-stack-2">
                             <div class="pt-flex pt-items-center pt-justify-between">
-                                <span class="pt-fs-caption pt-font-medium pt-text-secondary">Extracted Evidence ({{ selected.evidence_items | length }})</span>
+                                <span class="pt-fs-caption pt-fw-medium pt-text-secondary">Extracted Evidence ({{ selected.evidence_items | length }})</span>
                                 <span class="pt-fs-caption pt-text-muted">Click to highlight</span>
                             </div>
                             <ul class="pt-evidence-list pt-evidence-list--selectable">
@@ -507,7 +505,7 @@
                                         <div class="pt-flex pt-items-center pt-justify-between pt-w-full">
                                             <span class="pt-fs-caption pt-text-muted">{{ item.label }} · page {{ item.page }}</span>
                                             {% if item.boxes_count %}
-                                            <span class="pt-badge pt-badge--neutral pt-badge--xs">{{ item.boxes_count }} box{{ '' if item.boxes_count == 1 else 'es' }}</span>
+                                            <span class="pt-badge pt-badge--neutral">{{ item.boxes_count }} box{{ '' if item.boxes_count == 1 else 'es' }}</span>
                                             {% endif %}
                                         </div>
                                         <strong>{{ item.display }}</strong>
@@ -524,8 +522,7 @@
                         {% else %}
                         <div class="pt-preview">
                             <img src="/documents/{{ selected.document.id }}/view"
-                                 alt="Preview of {{ selected.document.original_filename }}"
-                                 style="display: block; max-width: 100%; height: auto;">
+                                 alt="Preview of {{ selected.document.original_filename }}">
                         </div>
                         {% endif %}
                     {% else %}
@@ -563,7 +560,7 @@
 {{ ui.modal_open("review-" ~ extraction.id,
                       "Review " ~ row.document.original_filename,
                       row.type_label ~ " · " ~ row.status ~ " · " ~ (row.approval_status or "NOT APPROVED"),
-                      size="lg") }}
+                      size="xl") }}
 <form method="POST" action="/statements/extractions/{{ extraction.id }}/update" class="pt-modal__form">
     {{ csrf_field() }}
     <div class="pt-modal__body">

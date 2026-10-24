@@ -21,7 +21,7 @@
 {% endif %}
 
 <div class="pt-stack pt-gap-4">
-    <a class="pt-link pt-fs-caption" href="/admin/document-intelligence">&larr; Document intelligence</a>
+    <a class="pt-table__primary pt-fs-caption" href="/admin/document-intelligence">&larr; Document intelligence</a>
 
     {% if profile.error %}
         {{ ui.alert("warning", title="This profile could not be read", text=profile.error) }}
@@ -50,7 +50,7 @@
             <div class="pt-kv">
                 <span class="pt-kv__key">File</span>
                 <span class="pt-kv__value">
-                    {% if profile.path %}<code class="pt-num" style="word-break: break-all;">{{ profile.path }}</code>{% else %}—{% endif %}
+                    {% if profile.path %}<code class="pt-num pt-code-break">{{ profile.path }}</code>{% else %}—{% endif %}
                 </span>
             </div>
             <div class="pt-kv">
@@ -117,11 +117,11 @@
         "The YAML the daemon loaded. The file is the source of truth: the daemon re-reads it on the next request, so an edit on disk takes effect without a restart."
     ) }}
         {% if profile.source %}
-            <pre class="pt-fs-caption" style="white-space: pre-wrap; word-break: break-word; font-family: var(--pt-font-mono); background: var(--pt-surface); border: 1px solid var(--pt-border-subtle); border-radius: var(--pt-radius-md); padding: var(--pt-space-4); max-height: 34rem; overflow: auto; margin: 0;">{{ profile.source }}</pre>
+            <pre class="pt-code-block pt-fs-caption">{{ profile.source }}</pre>
         {% else %}
             <p class="pt-fs-caption pt-text-secondary">No source available: the daemon did not answer, or has no such profile.</p>
         {% endif %}
-        <p class="pt-fs-caption pt-text-secondary" style="margin-top: var(--pt-space-3);">
+        <p class="pt-fs-caption pt-text-secondary">
             This page is read-only. Editing a profile changes what every future extraction of that
             document family asks for, so it is not wired to a form here: the daemon exposes no write
             endpoint, and a change needs a version bump and a review of the schema.

@@ -387,6 +387,11 @@ def _rental_cash_flow(session):
         # 6. Mixed allocation -> only the eligible rental expense reduces OCF.
         ("mixed", [(LARKSPUR, "REPAIRS", 40000), (None, "PERSONAL", 20000)],
          40000, RENT_INCOME_CENTS - 40000),
+        # 7. Utilities and bank fees are operating expenses too.
+        ("rental_utilities", [(LARKSPUR, "UTILITIES", 40000)],
+         40000, RENT_INCOME_CENTS - 40000),
+        ("rental_bank_fees", [(LARKSPUR, "BANK_FEES", 40000)],
+         40000, RENT_INCOME_CENTS - 40000),
     ],
     ids=lambda v: v if isinstance(v, str) else "",
 )

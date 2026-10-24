@@ -108,12 +108,10 @@
         <td class="pt-table__th-num">{{ ui.amount(account.statement_cents, mode="plain") }}</td>
         <td class="pt-table__th-num">{{ ui.amount(account.difference_cents) }}</td>
         <td class="pt-table__th-num">
-            {% if account.unposted_count %}
-            <strong>{{ account.unposted_count }}</strong>
-            <div class="pt-fs-caption pt-text-muted">{{ ui.amount(account.unposted_cents) }}</div>
-            {% else %}
-            <span class="pt-text-muted">0</span>
-            {% endif %}
+            {{ ui.amount(account.unposted_cents, mode="signed") }}
+            <div class="pt-fs-caption pt-text-muted">
+                {{ account.unposted_count }} transaction{% if account.unposted_count != 1 %}s{% endif %}
+            </div>
         </td>
         <td>{{ account.latest_statement_date | format_date }}</td>
         <td class="pt-table__th-center">

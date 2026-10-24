@@ -127,7 +127,7 @@
         {% for profile in engine.profiles %}
             <tr>
                 <td>
-                    <a class="pt-link" href="/admin/document-intelligence/profiles/{{ profile.id }}"><code class="pt-num">{{ profile.id }}</code></a>
+                    <a class="pt-table__primary" href="/admin/document-intelligence/profiles/{{ profile.id }}"><code class="pt-num">{{ profile.id }}</code></a>
                     <div class="pt-fs-caption pt-text-secondary">{{ profile.name }}</div>
                 </td>
                 <td>
@@ -219,7 +219,7 @@
         {% for row in portfolios %}
             <tr>
                 <td>
-                    <a class="pt-link" href="/admin/tenants/{{ row.id }}">{{ row.name }}</a>
+                    <a class="pt-table__primary" href="/admin/tenants/{{ row.id }}">{{ row.name }}</a>
                     <div class="pt-fs-caption pt-text-secondary">{{ row.slug }}</div>
                 </td>
                 {% if row.readable %}

@@ -655,6 +655,9 @@ def get_reconciliation_router(templates, get_session_dep):
                 # The rule's requirements are policy, not a client/CPA grant.
                 client_confirmed=False,
                 user_attested_cpa_review=False,
+                # This is an internal call, not an HTTP form. Without an explicit
+                # None the route default is a FastAPI Form object, not a string.
+                rule_id=None,
                 session=session,
             )
 

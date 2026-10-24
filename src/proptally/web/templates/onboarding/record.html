@@ -112,7 +112,7 @@
                 <details class="pt-extracted-field__edit">
                     <summary class="pt-btn pt-btn--ghost pt-btn--icon pt-btn--sm"
                              aria-label="Edit value" title="Edit value">
-                        <span class="pt-field-edit-icon">{{ ui.icon("edit", "sm") }}</span>
+                        {{ ui.icon("edit", "sm") }}
                     </summary>
                     <form method="post" action="/onboarding/import/{{ session.id }}/records/{{ proposal.id }}/field"
                           class="pt-extracted-field__form" data-record-field-form>

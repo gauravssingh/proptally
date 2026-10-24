@@ -28,6 +28,7 @@ from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 
 from proptally.db.models import (
+    NON_STATEMENT_DOCUMENT_TYPES,
     Document,
     DocumentExtraction,
     FinancialAccount,
@@ -36,6 +37,7 @@ from proptally.db.models import (
     Property,
     Statement,
 )
+from proptally.web.routes.vault import TYPE_LABELS
 from proptally.ingestion.service import (
     BANK_STATEMENT_TYPES,
     DOC_INTEL_ENV_FLAG,
@@ -348,6 +350,13 @@ def _store_single_statement(payload: bytes, filename: str, session: Session, con
         ).first()
         if already_imported:
             return _redirect("That exact file is already imported in this portfolio's ledger; review it below.", doc=existing_doc.id)
+
+        if existing_doc.document_type in NON_STATEMENT_DOCUMENT_TYPES:
+            type_label = TYPE_LABELS.get(existing_doc.document_type, "non-financial document")
+            return RedirectResponse(
+                url=f"/documents?doc={existing_doc.id}&{urlencode({'message': f'{existing_doc.original_filename} is already stored in the Document Vault as a {type_label.lower()}. Non-financial documents are not queued in statement reconciliation.', 'message_variant': 'info'})}",
+                status_code=303,
+            )
 
         # Allow re-extracting an unimported document with the sidecar if available
         service = _doc_intel_service()
@@ -667,6 +676,17 @@ def get_ingestion_router(templates, get_session_dep):
         sort = sort if sort in dict(SORTS) else "received"
         tab = tab if tab in dict(INSPECTOR_TABS) else "preview"
 
+        # If a non-statement document (e.g. lease, deed) is explicitly requested, redirect to Document Vault
+        if doc:
+            requested_doc = session.get(Document, doc)
+            if requested_doc and requested_doc.document_type in NON_STATEMENT_DOCUMENT_TYPES:
+                type_label = TYPE_LABELS.get(requested_doc.document_type, "non-financial document")
+                msg = f"{requested_doc.original_filename} is a {type_label.lower()}. Legal contracts and property records are managed in the Document Vault."
+                return RedirectResponse(
+                    url=f"/documents?doc={requested_doc.id}&{urlencode({'message': msg, 'message_variant': 'info'})}",
+                    status_code=303,
+                )
+
         # Finalize any completed background jobs or stale pending rows before displaying queue
         service = _doc_intel_service(timeout=5.0)
         try:
@@ -687,7 +707,12 @@ def get_ingestion_router(templates, get_session_dep):
                 service.close()
 
         documents = session.exec(
-            select(Document).order_by(desc(Document.uploaded_at), desc(Document.id))
+            select(Document)
+            .where(
+                (Document.document_type.is_(None))
+                | (~Document.document_type.in_(NON_STATEMENT_DOCUMENT_TYPES))
+            )
+            .order_by(desc(Document.uploaded_at), desc(Document.id))
         ).all()
 
         # The most recent extraction of each document is the one on screen; older
@@ -1120,6 +1145,14 @@ def get_ingestion_router(templates, get_session_dep):
         document = session.get(Document, document_id)
         if document is None:
             raise HTTPException(status_code=404, detail="Unknown document.")
+
+        if document.document_type in NON_STATEMENT_DOCUMENT_TYPES:
+            type_label = TYPE_LABELS.get(document.document_type, "non-financial document")
+            msg = f"{document.original_filename} is classified as {type_label.lower()}; only financial statements can be parsed for ledger reconciliation."
+            return RedirectResponse(
+                url=f"/documents?doc={document.id}&{urlencode({'message': msg, 'message_variant': 'warning'})}",
+                status_code=303,
+            )
 
         service = _doc_intel_service()
         if service is not None and service.available():

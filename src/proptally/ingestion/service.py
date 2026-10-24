@@ -18,6 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
 from proptally.db.models import (
+    NON_STATEMENT_DOCUMENT_TYPES,
     Document,
     DocumentExtraction,
     EscrowAccount,
@@ -450,6 +451,10 @@ def reprocess_document(
     """
     if not document.storage_path:
         raise ValueError("The document has no stored file to reprocess.")
+    if document.document_type in NON_STATEMENT_DOCUMENT_TYPES:
+        raise ValueError(
+            f"Documents classified as {document.document_type} cannot be reprocessed as financial statements."
+        )
     if session.exec(
         select(DocumentExtraction).where(
             DocumentExtraction.document_id == document.id,
@@ -507,7 +512,11 @@ def reprocess_unrecognized_documents(session: Session, *, commit: bool = True) -
 
     documents = session.exec(
         select(Document)
-        .where(~Document.id.in_(select(DocumentExtraction.document_id)))
+        .where(
+            ~Document.id.in_(select(DocumentExtraction.document_id)),
+            (Document.document_type.is_(None))
+            | (~Document.document_type.in_(NON_STATEMENT_DOCUMENT_TYPES)),
+        )
         .order_by(Document.uploaded_at, Document.id)
     ).all()
     for document in documents:
@@ -1422,15 +1431,35 @@ def merge_hybrid_extraction_data(
     return data
 
 
-def classify_statement_profile(path: Path) -> str:
-    """Classify an unrecognised statement PDF to the best matching sidecar profile."""
+def classify_statement_profile(path: Path) -> str | None:
+    """Classify an unrecognised statement PDF to the best matching sidecar profile, or None."""
     import pymupdf
 
     try:
         with pymupdf.open(path) as doc:
             text = "\n".join(page.get_text() for page in doc[:3]).lower()
     except Exception:
-        return "bank_statement"
+        return None
+
+    # Contract, deed, policy, or tax documents should not be routed to statement sidecars
+    non_statement_cues = (
+        "residential lease",
+        "lease agreement",
+        "landlord and tenant",
+        "landlord",
+        "tenant",
+        "premises",
+        "warranty deed",
+        "grant deed",
+        "quitclaim deed",
+        "title insurance",
+        "insurance policy",
+        "homeowners policy",
+        "property tax bill",
+        "county tax collector",
+        "real estate tax",
+    )
+    non_statement_score = sum(1 for cue in non_statement_cues if cue in text)
 
     mortgage_cues = ("mortgage", "principal balance", "escrow", "interest rate", "loan number", "monthly payment due")
     mortgage_score = sum(1 for cue in mortgage_cues if cue in text)
@@ -1441,11 +1470,16 @@ def classify_statement_profile(path: Path) -> str:
     bank_cues = ("checking", "savings", "beginning balance", "ending balance", "deposits and other additions", "total deposits")
     bank_score = sum(1 for cue in bank_cues if cue in text)
 
+    if non_statement_score >= 2 and max(mortgage_score, card_score, bank_score) < 2:
+        return None
+
     if mortgage_score >= 2 and mortgage_score > card_score and mortgage_score > bank_score:
         return "mortgage_statement"
     if card_score >= 2 and card_score > bank_score:
         return "credit_card_statement"
-    return "bank_statement"
+    if bank_score >= 2:
+        return "bank_statement"
+    return None
 
 
 logger = logging.getLogger("proptally.ingestion.doc_intel")

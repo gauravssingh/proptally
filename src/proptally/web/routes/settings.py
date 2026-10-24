@@ -135,6 +135,7 @@ CATEGORY_OPTIONS = [
     {"value": "COMMISSIONS", "label": "Commissions (line 8)"},
     {"value": "HOA", "label": "HOA assessments (line 19)"},
     {"value": "TAXES", "label": "Property taxes (line 16)"},
+    {"value": "MORTGAGE", "label": "Mortgage payment (loan clearing)"},
 ]
 CATEGORIES = tuple(option["value"] for option in CATEGORY_OPTIONS)
 
@@ -162,12 +163,17 @@ def _redirect(**params: str) -> RedirectResponse:
 def _return_target(form) -> str:
     """Where a submitted setup form goes back to.
 
-    The guided wizard sets ``return_to=/setup``; every other caller gets the
-    management screen. Only paths under /setup are accepted, so a crafted form
+    The guided wizard sets ``return_to=/setup``; property detail pages set
+    ``return_to=/properties/...``; every other caller gets the management screen.
+    Only safe paths under /setup or /properties are accepted, so a crafted form
     cannot turn this into an open redirect.
     """
     target = _clean(form.get("return_to"))
-    if target == "/setup" or target.startswith("/setup/"):
+    if target and (
+        target == "/setup"
+        or target.startswith("/setup/")
+        or target.startswith("/properties/")
+    ):
         return target
     return "/settings"
 
@@ -638,11 +644,11 @@ def get_settings_router(templates, get_session_dep, auth_dep=None):
             session.commit()
         except _FormError as exc:
             session.rollback()
-            return _redirect(error=str(exc))
+            return _redirect_for(form, error=str(exc))
         except PropTallyError as exc:
             session.rollback()
-            return _redirect(error=str(exc))
-        return _redirect(message=f"Mortgage loan {loan.loan_number} updated.")
+            return _redirect_for(form, error=str(exc))
+        return _redirect_for(form, message=f"Mortgage loan {loan.loan_number} updated.")
 
     # --- Opening balances -------------------------------------------------
 

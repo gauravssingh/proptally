@@ -84,9 +84,9 @@ def add_journal_line(
 
     # Validate non-negative integer cents and exactly one side active
     if debit_cents < 0 or credit_cents < 0:
-        raise ValueError("Line debit and credit cents must be non-negative.")
+        raise ValueError("Line debit and credit amounts must be non-negative.")
     if (debit_cents > 0 and credit_cents > 0) or (debit_cents == 0 and credit_cents == 0):
-        raise ValueError("A journal line must specify either debit_cents > 0 or credit_cents > 0, not both or neither.")
+        raise ValueError("A journal line must specify either a debit or a credit, not both or neither.")
 
     line = JournalEntryLine(
         id=str(uuid4()),

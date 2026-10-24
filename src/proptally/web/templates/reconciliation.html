@@ -192,6 +192,7 @@
     {"value": "MANAGEMENT", "label": "Management Fees (Line 11)"},
     {"value": "COMMISSIONS", "label": "Tenant Placement (Line 8)"},
     {"value": "HOA", "label": "HOA Assessments (Line 19)"},
+    {"value": "MORTGAGE", "label": "Mortgage Payment (Loan Clearing)"},
     {"value": "RENT_INCOME", "label": "Rent Income (Line 3)"},
     {"value": "SECURITY_DEPOSIT", "label": "Tenant Security Deposit (Liability)"}
 ] %}
@@ -211,7 +212,8 @@
     {"value": "HOA", "label": "HOA Assessments (Line 19)"},
     {"value": "SUPPLIES", "label": "Supplies (Line 15)"},
     {"value": "UTILITIES", "label": "Utilities (Line 17)"},
-    {"value": "TAXES", "label": "Property Taxes (Line 16)"}
+    {"value": "TAXES", "label": "Property Taxes (Line 16)"},
+    {"value": "MORTGAGE", "label": "Mortgage Payment (Loan Clearing)"}
 ] %}
 
 {% set assign_property_options = [{"value": "", "label": "Personal / Non-Deductible"}] %}
@@ -472,7 +474,8 @@
                         {"value": "MANAGEMENT", "label": "Management Fees (Line 11)"},
                         {"value": "COMMISSIONS", "label": "Commissions (Line 8)"},
                         {"value": "HOA", "label": "HOA Dues (Line 19)"},
-                        {"value": "TAXES", "label": "Property Taxes (Line 16)"}
+                        {"value": "TAXES", "label": "Property Taxes (Line 16)"},
+                        {"value": "MORTGAGE", "label": "Mortgage Payment (Loan Clearing)"}
                     ]) }}
                 </div>
 
@@ -539,7 +542,7 @@
 {{ ui.modal_open(
     "bulk-rent-modal",
     "Bulk Classify Rent",
-    "Reads tenant names and memos from Zelle inflows, attributes rent to one rental door, posts Rental Income, and creates a lease when the payment history supports it.",
+    "Reads tenant names and memos from Zelle inflows, attributes rent to one rental property, posts Rental Income, and creates a lease when the payment history supports it.",
     size="lg"
 ) }}
 <form class="pt-modal__form" action="/reconciliation/bulk-rent" method="POST">
@@ -548,8 +551,8 @@
         <div class="pt-form-grid pt-form-grid--2">
             <div class="pt-field">
                 <label class="pt-field__label" for="bulkRentProperty">Rental property</label>
-                <select class="pt-input" id="bulkRentProperty" name="property_id" required>
-                    <option value="">Choose a rental door</option>
+                <select id="bulkRentProperty" name="property_id" required>
+                    <option value="">Choose a rental property</option>
                     {% for p in rental_properties %}
                     <option value="{{ p.id }}">{{ p.name }}</option>
                     {% endfor %}

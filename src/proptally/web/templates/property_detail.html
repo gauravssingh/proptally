@@ -3,6 +3,18 @@
 {% import "components/property_location.html" as location with context %}
 {% import "components/mortgage_progress.html" as mortgage_progress with context %}
 
+{# Valuation provenance is owned by PropertyValuation.valuation_source. Never
+   label every recorded value as an appraisal. #}
+{% set valuation_badges = {
+    "APPRAISAL": ("APPRAISED", "success", "Confirmed by an appraisal document."),
+    "CLIENT_MANUAL": ("ESTIMATED", "neutral", "Owner-declared value from the portfolio setup screen."),
+    "PURCHASE_PRICE": ("PURCHASE PRICE", "neutral", "Based on the recorded purchase price."),
+} %}
+{% set valuation_badge = (
+    valuation_badges.get(valuation.valuation_source, ("RECORDED", "neutral", "Valuation source not recorded."))
+    if valuation else ("UNRECORDED", "neutral", "No valuation is recorded for this property.")
+) %}
+
 {% block title %}{{ property.name }} — PropTally{% endblock %}
 
 {% block content %}
@@ -18,7 +30,7 @@
         <div>
             <div class="pt-property-identity__badges">
                 {% if property.property_type == 'RENTAL_INVESTMENT' %}
-                {{ ui.badge("RENTAL DOOR", variant="accent", upper=true) }}
+                {{ ui.badge("RENTAL PROPERTY", variant="accent", upper=true) }}
                 {% else %}
                 {{ ui.badge("PRIMARY RESIDENCE", variant="rule", upper=true) }}
                 {% endif %}
@@ -66,7 +78,8 @@
             ui.amount(valuation.estimated_value_cents, mode="plain") if valuation else '<span class="pt-amount pt-amount--unavailable">—</span>',
             sub="Owned free and clear · no debt lien",
             evidence_kind=("estimated" if valuation else "needs_review"),
-            evidence_label=("APPRAISED" if valuation else "NEEDS VALUATION")
+            evidence_label=(valuation_badge[0] if valuation else "NEEDS VALUATION"),
+            evidence_title=valuation_badge[2]
         ) }}
     {% elif net_equity_cents is not none %}
         {{ ui.kpi(
@@ -114,13 +127,18 @@
     {% endif %}
 
     {# KPI 3: Operating Performance / CADS / Primary #}
+    {% set cads_sub = ("NOI " ~ (financials.noi_cents | format_cents) if financials.noi_cents is not none else "Operating cash flow after debt service") %}
+    {% if loan and financials.total_debt_service_cents == 0 %}
+        {% set cads_sub = cads_sub ~ " · " ~ (financials.total_debt_service_cents | format_cents) ~ " debt service settled" %}
+    {% endif %}
     {% if financials.rental_metrics_applicable %}
         {{ ui.kpi(
             "Net Cash Flow (CADS)",
             ui.amount(financials.cads_cents, mode="signed"),
-            sub=("NOI " ~ (financials.noi_cents | format_cents) if financials.noi_cents is not none else "Operating cash flow after debt service"),
+            sub=cads_sub,
             evidence_kind="calculated",
-            evidence_label="DOUBLE-ENTRY"
+            evidence_label="DOUBLE-ENTRY",
+            evidence_title="CADS deducts only debt service backed by a confirmed bank payment."
         ) }}
     {% else %}
         {{ ui.kpi(
@@ -172,8 +190,11 @@
             <div class="pt-overview-card__badges">
                 {{ ui.badge("MORTGAGE-FREE" if is_mortgage_free else "FINANCED",
                             variant=("success" if is_mortgage_free else "neutral"), upper=true) }}
-                {% if lease %}
+                {% if lease and lease_document %}
                 {{ ui.badge("TENANTED", variant="accent", upper=true) }}
+                {% elif lease or (detected_tenant and detected_tenant.name) %}
+                {{ ui.badge("UNVERIFIED LEASE", variant="warning", upper=true,
+                            title=("Lease terms registered, but the signed contract is missing from the vault." if lease else "Tenant inferred from bank activity; signed lease agreement missing from the vault.")) }}
                 {% endif %}
             </div>
         </div>
@@ -217,10 +238,6 @@
                     <dd>{{ ui.amount(property.purchase_price_cents, mode="plain") }}</dd>
                 </div>
                 {% endif %}
-                <div>
-                    <dt>Equity share</dt>
-                    <dd>{{ equity_percent }}%</dd>
-                </div>
             </dl>
         </div>
         {% if equity_percent is not none %}
@@ -390,6 +407,7 @@
         {% endif %}
 
         <div class="pt-overview-card__actions">
+            {{ ui.btn("Edit loan terms", variant="secondary", size="sm", attrs='data-modal-open="edit-loan-modal"') }}
             {{ ui.btn("View mortgage", variant="secondary", size="sm", href="/mortgages") }}
         </div>
         {% else %}
@@ -411,7 +429,8 @@
             {{ ui.badge("VALUATION STALE", variant="warning", upper=true,
                         title="The latest valuation is more than 12 months old.") }}
             {% elif valuation %}
-            {{ ui.badge("APPRAISED", variant="success", upper=true) }}
+            {{ ui.badge(valuation_badge[0], variant=valuation_badge[1], upper=true,
+                        title=valuation_badge[2]) }}
             {% else %}
             {{ ui.badge("UNRECORDED", variant="neutral", upper=true) }}
             {% endif %}
@@ -465,11 +484,15 @@
                 Down payment, closing costs and furnishing costs are not recorded.
             </p>
             <div>
-                <button type="button" class="pt-btn pt-btn--ghost pt-btn--sm"
-                        data-modal-open="edit-details-modal">
-                    Add acquisition costs
-                </button>
+                {{ ui.btn("Add acquisition costs", variant="secondary", size="sm",
+                          icon_name="plus", attrs='data-modal-open="edit-details-modal"') }}
             </div>
+            {% endif %}
+            {% if property.property_type == "RENTAL_INVESTMENT" and not property.building_basis_cents %}
+            <p class="pt-text-muted pt-fs-caption">
+                Schedule E Line 18 depreciation is $0.00 until land and building basis are
+                recorded in <a href="/settings">Settings</a>.
+            </p>
             {% endif %}
         </div>
 
@@ -535,6 +558,88 @@
 </section>
 
 {# ===========================================================================
+   Mortgage Statements (servicer bills, not payments)
+   =========================================================================== #}
+{% set unsettled_periods = mortgage_periods | rejectattr('status', 'equalto', 'FULLY_SETTLED') | sort(attribute='payment_due_date', reverse=true) | list %}
+{% if loan and unsettled_periods %}
+{% set statement_actions %}
+    <a class="pt-btn pt-btn--ghost pt-btn--sm" href="#mortgage-loan-detail">
+        View full statement history ↓
+    </a>
+{% endset %}
+{{ ui.section_open(
+    "Mortgage Statements",
+    "Bills from the servicer, not payments. Apply a statement only after its bank payment is posted to the loan clearing account. Clearing: " ~ (outstanding_clearing_balance_cents | format_cents) ~ ".",
+    actions=statement_actions,
+    flush=true
+) }}
+{% set funding = namespace(remaining=outstanding_clearing_balance_cents) %}
+<div class="pt-mortgage-statements">
+{{ ui.table_open(label="Servicer statements") }}
+    <thead>
+        <tr>
+            {{ ui.th("Statement due") }}
+            {{ ui.th("Principal", num=true) }}
+            {{ ui.th("Interest", num=true) }}
+            {{ ui.th("Escrow", num=true) }}
+            {{ ui.th("Total", num=true) }}
+            {{ ui.th("Action") }}
+        </tr>
+    </thead>
+    <tbody>
+        {% for period in unsettled_periods %}
+        {% set funded = funding.remaining >= period.total_amount_billed_cents %}
+        {% if funded %}{% set funding.remaining = funding.remaining - period.total_amount_billed_cents %}{% endif %}
+        <tr>
+            <td>
+                <div class="pt-cell-stack pt-cell-stack--start">
+                    <span class="pt-table__primary">{{ period.payment_due_date | format_date }}</span>
+                    <span class="pt-table__sub">Statement {{ period.statement_date | format_date }}</span>
+                </div>
+            </td>
+            <td class="pt-table__num">{{ ui.amount(period.principal_billed_cents, mode="plain") }}</td>
+            <td class="pt-table__num">{{ ui.amount(period.interest_billed_cents, mode="plain") }}</td>
+            <td class="pt-table__num">{{ ui.amount(period.escrow_billed_cents, mode="plain") }}</td>
+            <td class="pt-table__num">{{ ui.amount(period.total_amount_billed_cents, mode="plain") }}</td>
+            <td>
+                {% if funded %}
+                <details class="pt-statement-apply">
+                    <summary class="pt-btn pt-btn--secondary pt-btn--sm">Apply statement</summary>
+                    <form action="/mortgages/{{ loan.id }}/periods/{{ period.id }}/apply"
+                          method="POST" class="pt-stack-2">
+                        {{ csrf_field() }}
+                        {{ ui.number_field(
+                            "extra_principal", "Extra principal ($)",
+                            id="extra-" ~ period.id,
+                            placeholder="0.00",
+                            cls="pt-field--sm"
+                        ) }}
+                        {{ ui.date_field(
+                            "payment_date", "Payment date",
+                            id="paid-" ~ period.id,
+                            value=period.payment_due_date.isoformat(),
+                            cls="pt-field--sm"
+                        ) }}
+                        <button type="submit" class="pt-btn pt-btn--secondary pt-btn--sm">
+                            Apply statement
+                        </button>
+                    </form>
+                </details>
+                {% elif outstanding_clearing_balance_cents > 0 %}
+                {{ ui.badge("FUNDS SHORT", variant="warning", upper=true) }}
+                {% else %}
+                {{ ui.badge("AWAITING BANK PAYMENT", variant="neutral", upper=true) }}
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+{{ ui.table_close() }}
+</div>
+{{ ui.section_close() }}
+{% endif %}
+
+{# ===========================================================================
    4. Tenant & Lease Information (Moved up directly under Financial Overview)
    =========================================================================== #}
 {% set lease_header_actions %}
@@ -565,13 +670,24 @@
         {{ ui.stat("Lease Term", (lease.start_date | format_date) ~ " – " ~ (lease.end_date | format_date if lease.end_date else "Open Ended"), sub="Active Period") }}
     </div>
 
+    {% if lease_progress_percent is not none %}
+    <div class="pt-overview-progress">
+        <div class="pt-overview-progress__head">
+            <span>Lease progress</span>
+            <strong>{{ lease_progress_percent }}%</strong>
+        </div>
+        {{ ui.progress(lease_progress_percent, "Lease progress") }}
+        <span class="pt-overview-progress__meta">{{ lease_progress_meta }}</span>
+    </div>
+    {% endif %}
+
     {% if lease_document %}
     <div class="pt-alert pt-alert--success">
         <span class="pt-alert__icon">{{ ui.icon("check_circle", "md") }}</span>
         <div class="pt-alert__body">
             <strong class="pt-alert__title">Signed Lease Contract Vaulted & Verified</strong>
             <span class="pt-alert__text">
-                {{ lease_document.original_filename }} &middot; SHA-256: <code class="pt-badge pt-badge--mono">{{ lease_document.file_sha256[:12] }}...</code> &middot; {{ (lease_document.file_size_bytes / 1024) | round(1) }} KB
+                {{ lease_document.original_filename }}
             </span>
             <div class="pt-alert__actions">
                 <a href="/documents/{{ lease_document.id }}/view" target="_blank" rel="noopener noreferrer" class="pt-btn pt-btn--secondary pt-btn--sm">
@@ -653,9 +769,9 @@
         <strong class="pt-alert__title">Action Required: Missing Written Lease Agreement</strong>
         <span class="pt-alert__text">
             {% if detected_tenant %}
-                {{ detected_tenant.source }}. No tenant identity or written lease agreement is registered for this rental door.
+                {{ detected_tenant.source }}. No tenant identity or written lease agreement is registered for this rental property.
             {% else %}
-                No active lease is registered for this rental door. Awaiting client upload of signed lease agreement or confirmation of lease terms.
+                No active lease is registered for this rental property. Awaiting client upload of signed lease agreement or confirmation of lease terms.
             {% endif %}
         </span>
         <div class="pt-alert__actions">
@@ -686,16 +802,16 @@
     "Operating Statement (P&L)",
     "Double-entry verified operating cash flow and Schedule E allocations (Line items).",
     actions=pl_actions,
-    flush=true
+    flush=financials.rental_metrics_applicable
 ) }}
 {% if not financials.rental_metrics_applicable %}
 <div class="pt-alert pt-alert--info">
-    <span class="pt-alert__icon">{{ ui.icon("info", "md") }}</span>
+    <span class="pt-alert__icon">{{ ui.icon("home", "md") }}</span>
     <div class="pt-alert__body">
         <strong class="pt-alert__title">Owner-Occupied Primary Residence Policy</strong>
         <span class="pt-alert__text">
-            Under IRS rules, a primary residence cannot generate Schedule E rental income or deduct standard operating expenses. Operating metrics (GOI, NOI, OCF, CADS) are strictly rental-only and return $0.00 for this door.
-            <br>
+            Under IRS rules, a primary residence cannot generate Schedule E rental income or deduct standard operating expenses. Operating metrics (GOI, NOI, OCF, CADS) are strictly rental-only and return $0.00 for this property.
+            <br><br>
             While operating cash flows are segregated from rental performance, mortgage principal ({% if servicer_reported_principal_cents %}<strong>{{ servicer_reported_principal_cents | format_cents }}</strong>{% else %}debt{% endif %}) and property equity ({% if net_equity_cents %}<strong>{{ net_equity_cents | format_cents }}</strong>{% else %}equity{% endif %}) are fully integrated into consolidated portfolio net worth.
         </span>
     </div>
@@ -805,9 +921,10 @@
 {% endset %}
 
 {{ ui.section_open(
-    "Mortgage Debt & Clearing Ledger",
-    "Contract loan terms, debt service amortization, and clearing accounts.",
-    actions=loan_actions
+    "Mortgage Loan Detail",
+    "Loan terms, balances, and the full servicer statement history.",
+    actions=loan_actions,
+    id="mortgage-loan-detail"
 ) }}
 {% if loan %}
 <div class="pt-stack">
@@ -818,22 +935,6 @@
         {{ ui.stat("Escrow Reserve", ui.amount(reported_escrow_balance_cents or calculated_escrow_balance_cents, mode="plain"), sub="Servicer Reported" if reported_escrow_balance_cents else "Calculated Reserve") }}
     </div>
 
-    {% if latest_period %}
-    <div class="pt-alert pt-alert--neutral">
-        <span class="pt-alert__icon">{{ ui.icon("calendar", "md") }}</span>
-        <div class="pt-alert__body">
-            <strong class="pt-alert__title">Latest Statement Cycle: {{ latest_period.statement_date | format_date }}</strong>
-            <span class="pt-alert__text">
-                Payment due: <strong>{{ latest_period.payment_due_date | format_date }}</strong> ·
-                Principal: <strong>{{ latest_period.principal_billed_cents | format_cents }}</strong> ·
-                Interest: <strong>{{ latest_period.interest_billed_cents | format_cents }}</strong> ·
-                Escrow: <strong>{{ latest_period.escrow_billed_cents | format_cents }}</strong> ·
-                Total billed: <strong>{{ latest_period.total_amount_billed_cents | format_cents }}</strong>
-            </span>
-        </div>
-    </div>
-    {% endif %}
-
     {% if mortgage_periods %}
     <div class="pt-stack-2">
         <h4 class="pt-fs-caption pt-fw-bold pt-text-muted">Servicer Statement History ({{ mortgage_periods | length }} Cycles Extracted)</h4>
@@ -842,6 +943,7 @@
                 <tr>
                     {{ ui.th("Statement Date") }}
                     {{ ui.th("Payment Due") }}
+                    {{ ui.th("Status") }}
                     {{ ui.th("Principal Billed", num=true) }}
                     {{ ui.th("Interest Billed", num=true) }}
                     {{ ui.th("Escrow Billed", num=true) }}
@@ -855,6 +957,15 @@
                 <tr>
                     <td>{{ p.statement_date | format_date }}</td>
                     <td>{{ p.payment_due_date | format_date }}</td>
+                    <td>
+                        {% if p.status == 'FULLY_SETTLED' %}
+                        {{ ui.badge("SETTLED", variant="success", upper=true) }}
+                        {% elif p.status == 'PARTIALLY_SETTLED' %}
+                        {{ ui.badge("PARTIAL", variant="warning", upper=true) }}
+                        {% else %}
+                        {{ ui.badge("UNPAID", variant="warning", upper=true) }}
+                        {% endif %}
+                    </td>
                     <td class="pt-table__num">{{ ui.amount(p.principal_billed_cents, mode="plain") }}</td>
                     <td class="pt-table__num">{{ ui.amount(p.interest_billed_cents, mode="plain") }}</td>
                     <td class="pt-table__num">{{ ui.amount(p.escrow_billed_cents, mode="plain") }}</td>
@@ -886,7 +997,7 @@
 
 {{ ui.section_open(
     "Property Document Vault (" ~ (property_documents | length) ~ ")",
-    "Offline, tamper-evident document vault with SHA-256 cryptographic digests.",
+    "Documents stored for this property.",
     actions=doc_header_actions
 ) }}
 <div id="documents-vault">
@@ -898,17 +1009,15 @@
                     {{ ui.icon("check_circle", "sm") }}
                     <span>{{ property_documents | length }} Vaulted Document{% if property_documents | length > 1 %}s{% endif %}</span>
                 </span>
-                <span class="pt-badge pt-badge--neutral pt-badge--pill">Tamper-evident SHA-256</span>
-                <span class="pt-badge pt-badge--neutral pt-badge--pill">100% Offline Storage</span>
             </div>
 
-            <p class="pt-fs-body pt-text-secondary pt-mt-2 pt-mb-2">
+            <p class="pt-fs-body pt-text-secondary">
                 {% if property.property_type == 'RENTAL_INVESTMENT' %}
                 All executed lease agreements, mortgage statements, tax assessments, and insurance policies for
                 {% else %}
                 All mortgage statements, tax assessments, insurance policies, and property records for
                 {% endif %}
-                <strong>{{ property.name }}</strong> are stored and cryptographically verified in your local document vault.
+                <strong>{{ property.name }}</strong> are stored in your document vault.
             </p>
 
             <nav class="pt-vault-filters" aria-label="Filter {{ property.name }} documents">
@@ -924,7 +1033,7 @@
             </nav>
         </div>
 
-        <div class="pt-vault-summary-card__actions pt-flex pt-items-center pt-gap-3 pt-flex-wrap pt-mt-4">
+        <div class="pt-vault-summary-card__actions">
             <a href="/documents?property={{ property.id }}" class="pt-btn pt-btn--primary">
                 {{ ui.icon("folder", "sm") }}
                 <span>View Filtered Vault ({{ property_documents | length }} files) &rarr;</span>
@@ -973,7 +1082,7 @@
         ) }}
         <div class="pt-stack">
             {% if property.description %}
-            <p class="pt-fs-body pt-text-secondary" style="white-space: pre-wrap;">{{ property.description }}</p>
+            <p class="pt-fs-body pt-text-secondary pt-notes-card__text">{{ property.description }}</p>
             {% else %}
             <div class="pt-empty pt-empty--compact">
                 <p class="pt-empty__title">No property notes have been added.</p>
@@ -983,7 +1092,7 @@
             </div>
             {% endif %}
 
-            <div class="pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-2 pt-fs-caption pt-text-muted" style="margin-top: auto; padding-top: var(--pt-space-3); border-top: 1px solid var(--pt-border-subtle);">
+            <div class="pt-notes-card__footer pt-flex pt-flex-wrap pt-items-center pt-justify-between pt-gap-2 pt-fs-caption pt-text-muted">
                 <span class="pt-flex pt-items-center pt-gap-1">
                     <span class="pt-dot pt-dot--accent"></span>
                     <span>{{ "Pinned location" if property.google_place_id else "Manual address" }}</span>
@@ -1103,6 +1212,53 @@
 </form>
 {{ ui.modal_close() }}
 
+<!-- Modal: Edit Loan Terms -->
+{% if loan %}
+{{ ui.modal_open("edit-loan-modal", "Edit Loan Terms", subtitle=(institution_name ~ " · Loan " ~ loan.loan_number), size="lg") }}
+<form action="/mortgages/{{ loan.id }}/edit" method="POST" class="pt-modal__form">
+    {{ csrf_field() }}
+    <input type="hidden" name="return_to" value="/properties/{{ property.id }}">
+    <input type="hidden" name="property_id" value="{{ property.id }}">
+    <div class="pt-modal__body pt-stack">
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.text_field("institution_name", "Servicer / lender", required=true,
+                             value=institution_name) }}
+            {{ ui.text_field("loan_number", "Loan number", required=true, value=loan.loan_number) }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.text_field("account_name", "Servicing account name", required=true,
+                             value=(loan_account.account_name if loan_account else loan.loan_number)) }}
+            {{ ui.text_field("account_number_masked", "Masked number",
+                             value=(loan_account.account_number_masked if loan_account else "")) }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--3">
+            {{ ui.date_field("origination_date", "Start / Origination date",
+                             value=(loan.origination_date.isoformat() if loan.origination_date else ""),
+                             help="Sets loan start month for schedule & elapsed progress tracking.") }}
+            {{ ui.number_field("term_months", "Term (months)", value=(loan.term_months or 360), step="1", required=true) }}
+            {{ ui.number_field("interest_rate", "Interest rate (%)", step="0.001",
+                               value=("%.3f" | format(loan.current_interest_rate_bps / 1000) if loan.current_interest_rate_bps is not none else "")) }}
+        </div>
+        <div class="pt-form-grid pt-form-grid--2">
+            {{ ui.number_field("original_principal", "Original principal ($)",
+                               value=("%.2f" | format(loan.original_principal_cents / 100) if loan.original_principal_cents else "")) }}
+            {{ ui.select_field("rate_type", "Rate type", loan_rate_type_options,
+                               selected=loan.rate_type,
+                               help="Fixed for the life of the loan, or adjustable (ARM).") }}
+        </div>
+        {% if escrow %}
+        {{ ui.number_field("escrow_opening_balance", "Escrow opening reserve ($)",
+                           value=("%.2f" | format(escrow.opening_balance_cents / 100) if escrow.opening_balance_cents else "")) }}
+        {% endif %}
+    </div>
+    <div class="pt-modal__footer">
+        <button type="button" class="pt-btn pt-btn--secondary" data-modal-close>Cancel</button>
+        <button type="submit" class="pt-btn pt-btn--neutral">Save Loan Terms</button>
+    </div>
+</form>
+{{ ui.modal_close() }}
+{% endif %}
+
 <!-- Modal 2: Upload Property Photo -->
 {{ ui.modal_open("upload-photo-modal", "Upload Property Photo", subtitle=property.name, size="md") }}
 <form action="/properties/{{ property.id }}/photos/upload" method="POST" enctype="multipart/form-data" class="pt-modal__form" data-upload-form>
@@ -1163,7 +1319,7 @@
         <div class="pt-field">
             <label class="pt-field__label" for="doc-file">Select Document File</label>
             <input type="file" id="doc-file" name="file" accept=".pdf,.png,.jpg,.jpeg" required>
-            <span class="pt-field__help">PDF, PNG, JPG up to 50MB. Stored locally in SHA-256 tamper-evident vault.</span>
+            <span class="pt-field__help">PDF, PNG, JPG up to 50MB. Stored in your document vault.</span>
         </div>
 
         <div class="pt-upload-indicator" data-upload-indicator hidden>

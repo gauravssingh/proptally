@@ -26,14 +26,14 @@
 <div class="pt-stack pt-gap-6">
     {{ ui.section_open(
         "Portfolios this account reaches",
-        "Doors, net equity and debt are reported per portfolio. Opening one makes it the portfolio every other screen reports on."
+        "Properties, net equity and debt are reported per portfolio. Opening one makes it the portfolio every other screen reports on."
     ) }}
         {{ ui.table_open(label="Portfolios this account reaches") }}
             <thead>
                 <tr>
                     {{ ui.th("Portfolio") }}
                     {{ ui.th("Your role") }}
-                    {{ ui.th("Doors", num=true) }}
+                    {{ ui.th("Properties", num=true) }}
                     {{ ui.th("Net equity", num=true) }}
                     {{ ui.th("Debt", num=true) }}
                     {{ ui.th("", cls="pt-table__actions pt-portfolio-actions") }}

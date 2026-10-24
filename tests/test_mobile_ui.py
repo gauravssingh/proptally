@@ -20,44 +20,47 @@ def test_manifest_json_endpoint(client):
     assert len(data["icons"]) > 0
 
 
-def test_mobile_meta_tags_and_pwa_headers(client):
+def test_mobile_meta_tags_and_pwa_headers(client, parse_html):
     res = client.get("/")
     assert res.status_code == 200
-    html = res.text
+    soup = parse_html(res)
 
     # Viewport fit cover for iOS notch/safe areas
-    assert "viewport-fit=cover" in html
+    viewport = soup.find("meta", attrs={"name": "viewport"})
+    assert viewport and "viewport-fit=cover" in viewport.get("content", "")
+
     # Standalone PWA theme tags
-    assert '<meta name="theme-color" content="#020617">' in html
-    assert '<meta name="apple-mobile-web-app-capable" content="yes">' in html
-    assert '<meta name="apple-mobile-web-app-title" content="PropTally">' in html
-    assert '<link rel="manifest" href="/static/manifest.json">' in html
+    theme_color = soup.find("meta", attrs={"name": "theme-color"})
+    assert theme_color and theme_color.get("content") == "#020617"
+    assert soup.find("meta", attrs={"name": "apple-mobile-web-app-capable", "content": "yes"}) is not None
+    assert soup.find("meta", attrs={"name": "apple-mobile-web-app-title", "content": "PropTally"}) is not None
+    assert soup.find("link", attrs={"rel": "manifest", "href": "/static/manifest.json"}) is not None
 
 
-def test_mobile_navigation_components(client):
+def test_mobile_navigation_components(client, parse_html):
     res = client.get("/")
     assert res.status_code == 200
-    html = res.text
+    soup = parse_html(res)
 
     # 1. Mobile top app bar with door switcher and drawer trigger
-    assert 'id="mobileMenuBtn"' in html
-    assert "All Doors (3)" in html
-    assert "12307 Larkspur" in html
-    assert "2718 Foxglove" in html
-    assert "3345 Elderberry" in html
+    assert soup.find(id="mobileMenuBtn") is not None
+    page_text = soup.get_text()
+    assert "All properties (3)" in page_text
+    assert "12307 Larkspur" in page_text
+    assert "2718 Foxglove" in page_text
+    assert "3345 Elderberry" in page_text
 
     # 2. Slide-over drawer
-    assert 'id="mobileDrawer"' in html
-    assert 'id="mobileDrawerClose"' in html
-    assert 'id="mobileDrawerOverlay"' in html
+    assert soup.find(id="mobileDrawer") is not None
+    assert soup.find(id="mobileDrawerClose") is not None
+    assert soup.find(id="mobileDrawerOverlay") is not None
 
     # 3. Mobile bottom navigation bar with primary touch targets
-    assert 'aria-label="Mobile Bottom Navigation"' in html
-    assert "Overview" in html
-    assert "Doors" in html
-    assert "Mortgages" in html
-    assert "Review" in html
-    assert "Tax / Sched E" in html
+    bottom_nav = soup.find(attrs={"aria-label": "Mobile Bottom Navigation"})
+    assert bottom_nav is not None
+    bottom_text = bottom_nav.get_text()
+    for item in ["Overview", "Properties", "Mortgages", "Review", "Tax / Sched E"]:
+        assert item in bottom_text
 
 
 def test_mobile_endpoints_health(client):
@@ -74,3 +77,47 @@ def test_mobile_endpoints_health(client):
     for endpoint in endpoints:
         res = client.get(endpoint)
         assert res.status_code == 200, f"Failed at {endpoint}: status {res.status_code}"
+
+
+def test_document_vault_and_statements_fluid_containers(client, parse_html):
+    # Document vault uses fluid full-width shell
+    res_docs = client.get("/documents")
+    assert res_docs.status_code == 200
+    soup_docs = parse_html(res_docs)
+    assert soup_docs.find(class_="pt-content--fluid") is not None
+    assert soup_docs.find(class_="pt-explorer") is not None
+
+    # Statement ingestion uses fluid full-width shell and has no hardcoded inline max-height
+    res_stmts = client.get("/statements")
+    assert res_stmts.status_code == 200
+    soup_stmts = parse_html(res_stmts)
+    assert soup_stmts.find(class_="pt-content--fluid") is not None
+    assert soup_stmts.find(class_="pt-statements-workspace") is not None
+    assert 'style="max-height: 28rem;"' not in res_stmts.text
+
+
+def test_high_res_fluid_css_rules():
+    from pathlib import Path
+    css_path = Path(__file__).resolve().parent.parent / "src" / "proptally" / "web" / "static" / "css" / "components.css"
+    content = css_path.read_text(encoding="utf-8")
+
+    # Fluid container rule
+    assert ".pt-content--fluid" in content
+
+    # High-resolution fluid explorer column rules
+    assert "min-width: 1440px" in content
+    assert "min-width: 1920px" in content
+    assert "min-width: 2560px" in content
+    assert ".pt-explorer--railed.pt-explorer--inspecting" in content
+    assert "clamp(" in content
+
+    # High-resolution fluid statements workspace split rules
+    assert ".pt-statements-workspace--split" in content
+    assert "pt-evidence-list--selectable" in content
+
+    # Full height utilization rules
+    assert "100dvh" in content
+    assert ".pt-explorer__main > .pt-table-wrap" in content
+    assert ".pt-explorer__main .pt-table-scroll" in content
+    assert ".pt-statements-workspace--split .pt-statement-table" in content
+

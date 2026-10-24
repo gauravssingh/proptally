@@ -235,6 +235,26 @@ class EscrowMovement(SQLModel, table=True):
 
 # --- 3. Documents, Statements & Extraction Versions ---
 
+#: Document types that represent legal contracts, deeds, policies or tax bills,
+#: which are filed in the vault and property records rather than reconciled as
+#: financial account statements.
+NON_STATEMENT_DOCUMENT_TYPES: set[str] = {
+    "LEASE_AGREEMENT",
+    "PROPERTY_DEED",
+    "INSURANCE_POLICY",
+    "PROPERTY_TAX",
+}
+
+#: Document types that represent financial ledger statements requiring balance
+#: or payment reconciliation.
+STATEMENT_DOCUMENT_TYPES: set[str] = {
+    "MORTGAGE_STATEMENT",
+    "CHECKING_STATEMENT",
+    "CREDIT_CARD_STATEMENT",
+    "HOA_STATEMENT",
+}
+
+
 class Document(SQLModel, table=True):
     __tablename__ = "documents"
 

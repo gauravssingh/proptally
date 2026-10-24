@@ -36,7 +36,7 @@ def record_opening_balances(
     # 1. Validate all balance specifications upfront before creating journal entry
     for b in balances:
         if b.amount_cents <= 0:
-            raise ValueError(f"Account {b.account_code} opening balance must be strictly positive cents.")
+            raise ValueError(f"Account {b.account_code} opening balance must be greater than zero.")
         if b.side not in ("DEBIT", "CREDIT"):
             raise ValueError(f"Side must be 'DEBIT' or 'CREDIT', got '{b.side}'.")
         acct = session.get(LedgerAccount, b.account_code)

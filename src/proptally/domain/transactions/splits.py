@@ -44,6 +44,7 @@ from proptally.domain.accounting.ledger import (
     post_journal_entry,
     reverse_journal_entry,
 )
+from proptally.domain.money import format_cents
 from proptally.domain.transactions.policy import (
     PostingPolicy,
     assert_posting_authorized,
@@ -114,12 +115,12 @@ def apply_transaction_splits(
 
     if sum_splits > target_total:
         raise InvalidSplitSumError(
-            f"Sum of split amounts ({sum_splits} cents) exceeds parent transaction total ({target_total} cents)."
+            f"Sum of split amounts ({format_cents(sum_splits)}) exceeds parent transaction total ({format_cents(target_total)})."
         )
 
     if not allow_partial and sum_splits != target_total:
         raise InvalidSplitSumError(
-            f"Sum of split amounts ({sum_splits} cents) does not equal parent transaction total ({target_total} cents)."
+            f"Sum of split amounts ({format_cents(sum_splits)}) does not equal parent transaction total ({format_cents(target_total)})."
         )
 
     # Clear existing splits for this transaction if re-splitting
@@ -389,8 +390,8 @@ def post_transaction_to_ledger(
     split_total = sum(s.amount_cents for s in splits)
     if split_total != abs(txn.amount_cents):
         raise InvalidSplitSumError(
-            f"Split total ({split_total} cents) does not equal transaction total "
-            f"({abs(txn.amount_cents)} cents); refusing to post."
+            f"Split total ({format_cents(split_total)}) does not equal transaction total "
+            f"({format_cents(abs(txn.amount_cents))}); refusing to post."
         )
 
     # Reject unclassified splits

@@ -12,3 +12,9 @@
 - 100% offline document ingestion and calculation. No external cloud LLM or OCR APIs during runtime processing.
 - Double-entry balance checks to the single penny (`Opening + Net == Closing`).
 - Tamper-evident vault storage with SHA-256 digests.
+
+## 3. Engineering Workflow & Anti-Overengineering Principles
+- **Proportional Execution (No Scope Inflation):** Match solution complexity strictly to task complexity. For localized UI, markup, or cosmetic fixes (e.g. padding, class flags, icon changes), diagnose the pinpoint cause and apply the direct fix. Do NOT inflate minor tweaks into multi-file defensive refactorings, global CSS changes, or speculative redesigns.
+- **Batched Inquiries (No Micro-Query Loops):** When answering informational questions or inspecting database state, write one consolidated, comprehensive query or search instead of chaining 10–15 piecemeal commands or incremental Python one-liners. Answer clearly once the fact is established.
+- **Right-Sized Verification:** Do not build heavy test harnesses, simulate authenticated web client sessions, or write redundant unit tests for trivial visual/markup adjustments. Use existing targeted test suites and design-system checks without over-complicating the verification loop.
+

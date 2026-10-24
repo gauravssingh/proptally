@@ -25,11 +25,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Test and static-analysis tooling. The suite itself only needs pytest; ruff is
-# advisory (see .github/workflows/tests.yml) because the repository has a
-# pre-existing lint baseline that is not part of this milestone.
+# Test and static-analysis tooling.
 dev = [
     "pytest>=8.0.0",
+    "pytest-xdist>=3.8.0",
+    "beautifulsoup4>=4.12.0",
     "ruff>=0.6.0",
 ]
 
@@ -42,6 +42,19 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = "-n auto"
+filterwarnings = [
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+    "ignore::DeprecationWarning:pymupdf.*",
+    "ignore::DeprecationWarning:fitz.*",
+    "ignore:builtin type SwigPy.* has no __module__ attribute",
+    "ignore:builtin type swigvarlink has no __module__ attribute",
+]
+markers = [
+    "accounting: accounting ledger, double-entry, and tie-out tests",
+    "web: web interface, templates, and routes",
+    "ingestion: statement parsers, extraction, and sidecars",
+]
 
 [tool.ruff]
 line-length = 120

@@ -38,7 +38,7 @@
     <div class="pt-stack pt-gap-4">
     {% if status_detail and status_detail.summary %}
     <div class="pt-summary-grid pt-summary-grid--4 pt-gap-3">
-        {{ ui.stat("Doors", status_detail.summary.properties, boxed=true) }}
+        {{ ui.stat("Properties", status_detail.summary.properties, boxed=true) }}
         {{ ui.stat("Loans", status_detail.summary.loans, boxed=true) }}
         {{ ui.stat("Documents", status_detail.summary.documents, boxed=true) }}
         {{ ui.stat("Transactions", status_detail.summary.transactions, boxed=true) }}

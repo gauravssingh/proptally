@@ -566,6 +566,26 @@
     .pt-content {
         padding: var(--pt-space-8) var(--pt-content-pad-x) var(--pt-space-10);
     }
+
+    .pt-content:has(.pt-explorer),
+    .pt-content:has(.pt-statements-workspace) {
+        padding-top: var(--pt-space-5);
+        padding-bottom: var(--pt-space-6);
+    }
+}
+
+.pt-content--fluid,
+.pt-content:has(.pt-explorer),
+.pt-content:has(.pt-statements-workspace) {
+    max-width: var(--pt-content-max-fluid);
+}
+
+@media (min-width: 1920px) {
+    .pt-content--fluid,
+    .pt-content:has(.pt-explorer),
+    .pt-content:has(.pt-statements-workspace) {
+        padding-inline: var(--pt-content-pad-x-wide);
+    }
 }
 
 .pt-content > * + * {
@@ -940,12 +960,41 @@
     gap: var(--pt-space-2);
 }
 
+.pt-code-break {
+    word-break: break-all;
+}
+
+.pt-code-block {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--pt-font-mono);
+    background-color: var(--pt-surface-sunken);
+    border: var(--pt-border-w) solid var(--pt-border);
+    border-radius: var(--pt-radius-md);
+    padding: var(--pt-space-4);
+    max-height: 34rem;
+    overflow: auto;
+    margin: 0;
+}
+
+.pt-notes-card__text {
+    white-space: pre-wrap;
+}
+
+.pt-upload-brief__copy {
+    min-width: 0;
+}
+
 .pt-section__body {
     padding: var(--pt-card-pad);
 }
 
 .pt-section__body--flush {
     padding: 0;
+}
+
+.pt-section__body--flush > .pt-alert {
+    margin: var(--pt-card-pad);
 }
 
 .pt-section__footer {
@@ -1571,7 +1620,7 @@
 /* Statement ingestion is a queue, not a report: keep the visible rows inside their
    own scroll region so the page, the rail and the inspector stay put. */
 .pt-statement-table .pt-table-scroll {
-    max-height: clamp(20rem, calc(100vh - 21rem), 34rem);
+    max-height: clamp(22rem, calc(100dvh - 20rem), 56rem);
     scrollbar-gutter: stable;
 }
 
@@ -2911,6 +2960,14 @@
     max-width: 100%;
 }
 
+/* The property header is a primary touch surface: keep every icon target at
+   44px even though the shared --sm icon button is 32px. */
+.pt-property-identity__actions .pt-btn--icon {
+    width: 2.75rem;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+}
+
 @media (max-width: 640px) {
     .pt-property-identity__actions {
         width: 100%;
@@ -3533,6 +3590,88 @@
 @media (min-width: 1024px) {
     .pt-explorer {
         grid-template-columns: 16rem minmax(0, 1fr);
+        height: calc(100dvh - 11rem);
+        min-height: 40rem;
+    }
+
+    .pt-explorer__rail {
+        height: 100%;
+        overflow-y: auto;
+        border-bottom: 0;
+        border-right: var(--pt-border-w) solid var(--pt-border);
+    }
+
+    .pt-explorer__main {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: var(--pt-space-3);
+        overflow: hidden;
+        min-height: 0;
+    }
+
+    .pt-explorer__main > * + * {
+        margin-top: 0;
+    }
+
+    .pt-explorer__main > .pt-breadcrumb,
+    .pt-explorer__main > .pt-titlebar,
+    .pt-explorer__main > .pt-explorer__toolbar {
+        flex-shrink: 0;
+    }
+
+    .pt-explorer__main > .pt-table-wrap {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        height: 100%;
+        overflow: hidden;
+    }
+
+    .pt-explorer__main .pt-table-scroll {
+        flex: 1;
+        max-height: none;
+        height: 100%;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: auto;
+    }
+
+    .pt-explorer__main > .pt-pagination,
+    .pt-explorer__main > p.pt-fs-caption {
+        flex-shrink: 0;
+    }
+
+    .pt-explorer__aside {
+        height: 100%;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        border-top: 0;
+        border-left: var(--pt-border-w) solid var(--pt-border);
+    }
+
+    .pt-explorer__aside .pt-inspector__body {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        min-height: 0;
+    }
+
+    .pt-explorer__aside .pt-preview {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 28rem;
+    }
+
+    .pt-explorer__aside .pt-preview__frame {
+        flex: 1;
+        width: 100%;
+        height: 100%;
+        min-height: 28rem;
     }
 }
 
@@ -3590,17 +3729,6 @@
     border-top: var(--pt-border-w) solid var(--pt-border);
 }
 
-@media (min-width: 1024px) {
-    .pt-explorer__rail {
-        border-bottom: 0;
-        border-right: var(--pt-border-w) solid var(--pt-border);
-    }
-
-    .pt-explorer__aside {
-        border-top: 0;
-        border-left: var(--pt-border-w) solid var(--pt-border);
-    }
-}
 
 /* Below the width where three real columns fit, a *selection* panel is drawn over the list
    rather than squeezing it — the same choice a file manager makes. The list keeps its
@@ -3627,7 +3755,7 @@
 /* An always-on context pane is a real third column as soon as there is room for one, and
    it stacks beneath the list when there is not — it never covers what it describes. */
 @media (min-width: 1024px) and (max-width: 1199px) {
-    .pt-explorer--railed .pt-explorer__aside {
+    .pt-explorer--railed.pt-explorer--inspecting .pt-explorer__aside {
         grid-column: 1 / -1;
         border-top: var(--pt-border-w) solid var(--pt-border);
     }
@@ -3635,10 +3763,14 @@
 
 @media (min-width: 1200px) {
     .pt-explorer--railed {
-        grid-template-columns: 13.5rem minmax(0, 1fr) 20rem;
+        grid-template-columns: 16rem minmax(0, 1fr);
     }
 
-    .pt-explorer--railed .pt-explorer__aside {
+    .pt-explorer--railed.pt-explorer--inspecting {
+        grid-template-columns: 16rem minmax(0, 1fr) auto var(--pt-inspector-w, 24rem);
+    }
+
+    .pt-explorer--railed.pt-explorer--inspecting .pt-explorer__aside {
         border-top: 0;
         border-left: var(--pt-border-w) solid var(--pt-border);
         grid-column: auto;
@@ -3647,8 +3779,136 @@
 
 @media (min-width: 1440px) {
     .pt-explorer--railed {
-        grid-template-columns: 14rem minmax(0, 1fr) 21.5rem;
+        grid-template-columns: 16rem minmax(0, 1fr);
     }
+
+    .pt-explorer--railed.pt-explorer--inspecting {
+        grid-template-columns: 16rem minmax(20rem, 1fr) auto var(--pt-inspector-w, 28rem);
+    }
+}
+
+@media (min-width: 1680px) {
+    .pt-explorer--railed {
+        grid-template-columns: 17rem minmax(0, 1fr);
+    }
+
+    .pt-explorer--railed.pt-explorer--inspecting {
+        grid-template-columns: 17rem minmax(22rem, 1fr) auto var(--pt-inspector-w, 32rem);
+    }
+}
+
+@media (min-width: 1920px) {
+    .pt-explorer--railed {
+        grid-template-columns: 18rem minmax(0, 1fr);
+    }
+
+    .pt-explorer--railed.pt-explorer--inspecting {
+        grid-template-columns: 18rem minmax(24rem, 1fr) auto var(--pt-inspector-w, 36rem);
+    }
+}
+
+@media (min-width: 2560px) {
+    .pt-explorer--railed {
+        grid-template-columns: 20rem minmax(0, 1fr);
+    }
+
+    .pt-explorer--railed.pt-explorer--inspecting {
+        grid-template-columns: 20rem minmax(28rem, 1fr) auto var(--pt-inspector-w, 42rem);
+    }
+}
+
+/* Inspector draggable resizer */
+.pt-explorer__resizer {
+    display: none;
+    width: 6px;
+    cursor: col-resize;
+    background-color: transparent;
+    transition: background-color var(--pt-motion-fast);
+    touch-action: none;
+    user-select: none;
+}
+
+@media (min-width: 1200px) {
+    .pt-explorer--inspecting .pt-explorer__resizer:not([hidden]) {
+        display: block;
+        background-color: var(--pt-border);
+    }
+
+    .pt-explorer__resizer:hover,
+    .pt-explorer__resizer:focus-visible,
+    .pt-explorer__resizer.is-resizing {
+        background-color: var(--pt-accent);
+        outline: none;
+    }
+}
+
+body.is-resizing {
+    cursor: col-resize !important;
+    user-select: none !important;
+}
+
+/* Document table columns */
+.pt-col-doc,
+.pt-col-location,
+.pt-col-uploaded,
+.pt-col-size,
+.pt-col-status,
+.pt-col-actions {
+    vertical-align: middle;
+}
+
+/* Document table row clickability and selection */
+.pt-table__row--clickable {
+    cursor: pointer;
+    transition: background-color var(--pt-motion-fast);
+}
+
+.pt-table__row--clickable:hover td {
+    background-color: var(--pt-surface-hover);
+}
+
+.pt-table__row--clickable.is-active td {
+    background-color: var(--pt-surface-selected);
+}
+
+.pt-table__row--clickable:focus-visible {
+    outline: 2px solid var(--pt-accent);
+    outline-offset: -2px;
+}
+
+.pt-table__row--clickable:focus-visible td {
+    background-color: var(--pt-surface-hover);
+}
+
+/* Column visibility preferences */
+.pt-doc-table[data-hide-location="true"] .pt-col-location,
+.pt-doc-table[data-hide-uploaded="true"] .pt-col-uploaded,
+.pt-doc-table[data-hide-size="true"] .pt-col-size,
+.pt-doc-table[data-hide-status="true"] .pt-col-status {
+    display: none !important;
+}
+
+.pt-bulk-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--pt-space-2);
+    padding: 0 var(--pt-space-2);
+}
+
+.pt-check-item {
+    display: flex;
+    align-items: center;
+    gap: var(--pt-space-2);
+    cursor: pointer;
+    padding: var(--pt-space-2) var(--pt-space-3);
+    font-size: var(--pt-fs-caption);
+    user-select: none;
+}
+
+.pt-file-ext-badge {
+    font-size: 0.6875rem;
+    padding: 0 var(--pt-space-1);
+    letter-spacing: var(--pt-tracking-wide);
 }
 
 .pt-rail__heading {
@@ -3662,6 +3922,12 @@
     letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--pt-text-muted);
+}
+
+.pt-rail__heading:not(:first-child) {
+    margin-top: var(--pt-space-3);
+    padding-top: var(--pt-space-2);
+    border-top: var(--pt-border-w) solid var(--pt-border-subtle);
 }
 
 .pt-rail__storage {
@@ -3764,6 +4030,21 @@
 .pt-menu__item:hover {
     color: var(--pt-text);
     background-color: var(--pt-surface-hover);
+}
+
+.pt-menu__divider {
+    height: var(--pt-border-w);
+    margin: var(--pt-space-1) 0;
+    background-color: var(--pt-border);
+}
+
+.pt-col-reset-btn {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: var(--pt-fs-caption);
 }
 
 /* The disclosure row: a native <details> element, so folders open and close with no
@@ -3968,7 +4249,7 @@
     display: flex;
     align-items: center;
     gap: var(--pt-space-3);
-    padding: var(--pt-space-4) var(--pt-space-4) var(--pt-space-2);
+    padding: var(--pt-space-3) var(--pt-space-4);
 }
 
 .pt-inspector__glyph {
@@ -3984,15 +4265,38 @@
 }
 
 .pt-inspector__name {
+    flex: 1;
     min-width: 0;
     font-size: var(--pt-fs-subsection);
     font-weight: var(--pt-fw-semibold);
     color: var(--pt-text);
-    overflow-wrap: anywhere;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pt-inspector__nav {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--pt-space-2);
+    flex-shrink: 0;
+}
+
+.pt-inspector__position {
+    font-size: var(--pt-fs-caption);
+    font-family: var(--pt-font-mono);
+    color: var(--pt-text-muted);
+    white-space: nowrap;
+}
+
+.pt-inspector__nav-btns {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
 }
 
 .pt-inspector__close {
-    margin-left: auto;
     flex-shrink: 0;
 }
 
@@ -4013,9 +4317,16 @@
 .pt-preview__frame {
     display: block;
     width: 100%;
-    height: 21rem;
+    height: clamp(28rem, 68vh, 60rem);
+    min-height: 24rem;
     background-color: var(--pt-surface);
     border: 0;
+}
+
+.pt-preview img {
+    display: block;
+    max-width: 100%;
+    height: auto;
 }
 
 .pt-preview__fallback {
@@ -4695,6 +5006,26 @@
     display: flex;
     flex-direction: column;
     gap: var(--pt-space-3);
+}
+
+.pt-notes-card__footer {
+    margin-top: auto;
+    padding-top: var(--pt-space-3);
+    border-top: var(--pt-border-w) solid var(--pt-border-subtle);
+}
+
+.pt-vault-summary-card__info {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pt-space-2);
+}
+
+.pt-vault-summary-card__actions {
+    display: flex;
+    align-items: center;
+    gap: var(--pt-space-3);
+    flex-wrap: wrap;
+    margin-top: var(--pt-space-4);
 }
 
 .pt-hover-lift {
@@ -5415,6 +5746,35 @@
     margin-top: auto;
     padding-top: var(--pt-space-3);
     border-top: var(--pt-border-w) solid var(--pt-divider);
+}
+
+/* Servicer statements: keep a long backlog scrollable inside the section and
+   keep the action column compact until the owner chooses to apply a statement. */
+.pt-mortgage-statements {
+    max-height: 26rem;
+    overflow-y: auto;
+}
+
+.pt-mortgage-statements thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background-color: var(--pt-surface);
+}
+
+.pt-statement-apply summary {
+    display: inline-flex;
+    list-style: none;
+    cursor: pointer;
+}
+
+.pt-statement-apply summary::-webkit-details-marker {
+    display: none;
+}
+
+.pt-statement-apply form {
+    min-width: 16rem;
+    margin-top: var(--pt-space-2);
 }
 
 .pt-overview-card__empty {
@@ -7265,6 +7625,38 @@ a.pt-journey-pill:hover {
     }
 }
 
+@media (min-width: 1280px) {
+    .pt-statements-workspace--split {
+        grid-template-columns: minmax(0, 1.15fr) minmax(28rem, 34rem);
+    }
+}
+
+@media (min-width: 1440px) {
+    .pt-statements-workspace--split {
+        grid-template-columns: minmax(0, 1fr) minmax(36rem, 1fr);
+        gap: var(--pt-space-6);
+    }
+}
+
+@media (min-width: 1680px) {
+    .pt-statements-workspace--split {
+        grid-template-columns: minmax(0, 1fr) minmax(42rem, 1.15fr);
+    }
+}
+
+@media (min-width: 1920px) {
+    .pt-statements-workspace--split {
+        grid-template-columns: minmax(0, 1fr) minmax(48rem, 1.25fr);
+        gap: var(--pt-space-8);
+    }
+}
+
+@media (min-width: 2560px) {
+    .pt-statements-workspace--split {
+        grid-template-columns: minmax(0, 1fr) minmax(56rem, 1.35fr);
+    }
+}
+
 .pt-statements-main {
     min-width: 0;
     width: 100%;
@@ -7279,6 +7671,110 @@ a.pt-journey-pill:hover {
     top: var(--pt-space-4);
     max-height: calc(100vh - var(--pt-space-8));
     overflow-y: auto;
+}
+
+@media (min-width: 1024px) {
+    .pt-statements-workspace--split {
+        min-height: calc(100dvh - 14rem);
+        align-items: stretch;
+    }
+
+    .pt-statements-workspace--split .pt-statements-main {
+        display: flex;
+        flex-direction: column;
+        gap: var(--pt-space-3);
+        height: calc(100dvh - var(--pt-space-6));
+        min-height: 0;
+    }
+
+    .pt-statements-workspace--split .pt-statements-main > * + * {
+        margin-top: 0;
+    }
+
+    .pt-statements-workspace--split .pt-statements-toolbar {
+        flex-shrink: 0;
+    }
+
+    .pt-statements-workspace--split .pt-statement-table {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        height: 100%;
+        overflow: hidden;
+    }
+
+    .pt-statements-workspace--split .pt-statement-table .pt-table-scroll {
+        flex: 1;
+        max-height: none;
+        height: 100%;
+        min-height: 0;
+        overflow-y: auto;
+    }
+
+    .pt-statements-workspace--split .pt-statements-main > .pt-pagination,
+    .pt-statements-workspace--split .pt-statements-main > p.pt-fs-caption {
+        flex-shrink: 0;
+    }
+
+    .pt-statements-inspector {
+        position: sticky;
+        top: var(--pt-space-3);
+        height: calc(100dvh - var(--pt-space-6));
+        max-height: calc(100dvh - var(--pt-space-6));
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .pt-statements-inspector .pt-inspector__head,
+    .pt-statements-inspector .pt-tabs {
+        flex-shrink: 0;
+    }
+
+    .pt-statements-inspector .pt-inspector__body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+    }
+
+    .pt-statements-inspector .pt-action-tiles {
+        flex-shrink: 0;
+    }
+
+    .pt-statements-inspector .pt-pdf-viewer {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .pt-statements-inspector .pt-pdf-viewer__toolbar,
+    .pt-statements-inspector .pt-pdf-viewer__status {
+        flex-shrink: 0;
+    }
+
+    .pt-statements-inspector .pt-pdf-viewer__viewport {
+        flex: 1;
+        height: 100%;
+        min-height: 28rem;
+        max-height: none;
+        overflow: auto;
+    }
+}
+
+@media (min-width: 1440px) {
+    .pt-statements-inspector .pt-evidence-list--selectable {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+        gap: var(--pt-space-2);
+    }
+
+    .pt-statements-inspector .pt-evidence-list--selectable .pt-evidence-item {
+        margin-bottom: 0;
+    }
 }
 
 .pt-statements-inspector .pt-statement__row {

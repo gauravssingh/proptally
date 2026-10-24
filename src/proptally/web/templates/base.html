@@ -62,7 +62,7 @@
     </div>
     {% endif %}
 
-    <div class="pt-content">
+    <div class="pt-content{% if content_fluid or active_page in ['documents', 'statements'] %} pt-content--fluid{% endif %}">
         {% block content %}{% endblock %}
     </div>
 </main>

@@ -72,9 +72,9 @@
         </div>
 
         <div class="pt-field">
-            <label class="pt-field__label" for="filter-property">Property / Door</label>
+            <label class="pt-field__label" for="filter-property">Property</label>
             <select id="filter-property" name="property_id">
-                <option value="ALL"{% if current_filters.property_id == 'ALL' %} selected{% endif %}>All Doors</option>
+                <option value="ALL"{% if current_filters.property_id == 'ALL' %} selected{% endif %}>All properties</option>
                 {% for p in properties %}
                 <option value="{{ p.id }}"{% if current_filters.property_id == p.id %} selected{% endif %}>{{ p.name }}</option>
                 {% endfor %}
@@ -189,7 +189,7 @@
                     {% if state.posting_status == 'POSTED' %}
                         {{ ui.badge("Posted", variant="success", pill=true, dot=true, title="Reconciled & posted to double-entry ledger") }}
                     {% elif state.allocation_status == 'FULLY_ALLOCATED' %}
-                        {{ ui.badge("Allocated", variant="info", pill=true, dot=true, title="Allocated across doors; awaiting ledger post") }}
+                        {{ ui.badge("Allocated", variant="info", pill=true, dot=true, title="Allocated across properties; awaiting ledger post") }}
                     {% elif state.allocation_status == 'PARTIALLY_ALLOCATED' %}
                         {{ ui.badge("Partial (" ~ (state.residual_cents | format_cents) ~ ")", variant="warning", pill=true, dot=true, title="Partial allocation; residual remains") }}
                     {% else %}

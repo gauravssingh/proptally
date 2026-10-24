@@ -154,6 +154,7 @@ def get_properties_router(templates, get_session_dep):
             select(LoanAccount).where(LoanAccount.property_id == property_id, LoanAccount.is_active == True)
         ).first()
 
+        fin_acct = None
         escrow = None
         institution_name = "Mortgage Servicer"
         mortgage_periods = []
@@ -162,6 +163,7 @@ def get_properties_router(templates, get_session_dep):
         ledger_calculated_principal_cents = None
         reported_escrow_balance_cents = None
         calculated_escrow_balance_cents = 0
+        outstanding_clearing_balance_cents = 0
 
         if loan:
             fin_acct = session.get(FinancialAccount, loan.financial_account_id) if loan.financial_account_id else None
@@ -197,6 +199,18 @@ def get_properties_router(templates, get_session_dep):
                     ledger_calculated_principal_cents = max(
                         0, sum(l.credit_cents for l in posted_lines) - sum(l.debit_cents for l in posted_lines)
                     )
+
+            # Funds settled by the bank and waiting for a servicer application.
+            if loan.clearing_ledger_code is not None:
+                clearing_lines = session.exec(
+                    select(JournalEntryLine)
+                    .join(JournalEntry, JournalEntryLine.journal_entry_id == JournalEntry.id)
+                    .where(JournalEntry.status == "POSTED")
+                    .where(JournalEntryLine.ledger_account_code == loan.clearing_ledger_code)
+                ).all()
+                outstanding_clearing_balance_cents = sum(
+                    l.debit_cents - l.credit_cents for l in clearing_lines
+                )
 
             # Escrow calculated balance
             movements = []
@@ -235,6 +249,67 @@ def get_properties_router(templates, get_session_dep):
         financials = calculate_property_financials(session, property_id=property_id)
 
         today = date.today()
+
+        lease_progress_percent = None
+        lease_progress_meta = None
+        lease_days_elapsed = None
+        lease_days_total = None
+        lease_days_remaining = None
+        lease_month_number = None
+        lease_total_months = None
+        if lease and lease.start_date and lease.end_date and lease.end_date > lease.start_date:
+            total_days = (lease.end_date - lease.start_date).days
+            elapsed_days = max(0, min(total_days, (today - lease.start_date).days))
+            remaining_days = max(0, (lease.end_date - today).days)
+            lease_progress_percent = round(elapsed_days / total_days * 100, 1)
+            lease_days_elapsed = elapsed_days
+            lease_days_total = total_days
+            lease_days_remaining = remaining_days
+
+            # The bar is day-accurate; the label uses numbered lease months so the
+            # owner can read it the way rent is actually billed. The final month is
+            # counted when the lease ends after the start-day anniversary.
+            total_months = (
+                (lease.end_date.year - lease.start_date.year) * 12
+                + lease.end_date.month
+                - lease.start_date.month
+            )
+            if lease.end_date.day > lease.start_date.day:
+                total_months += 1
+            total_months = max(1, total_months)
+            months_elapsed = (
+                (today.year - lease.start_date.year) * 12
+                + today.month
+                - lease.start_date.month
+            )
+            if today.day < lease.start_date.day:
+                months_elapsed -= 1
+            month_number = min(total_months, max(1, months_elapsed + 1))
+            lease_total_months = total_months
+            lease_month_number = month_number
+
+            if today < lease.start_date:
+                lease_progress_meta = (
+                    f"Month 1 of {total_months} · "
+                    f"starts in {(lease.start_date - today).days} days"
+                )
+            elif today == lease.start_date:
+                lease_progress_meta = f"Month 1 of {total_months} · starts today"
+            elif today > lease.end_date:
+                lease_progress_meta = (
+                    f"Month {total_months} of {total_months} · "
+                    f"expired {abs((today - lease.end_date).days)} days ago"
+                )
+            elif today == lease.end_date:
+                lease_progress_meta = (
+                    f"Month {total_months} of {total_months} · ends today"
+                )
+            else:
+                lease_progress_meta = (
+                    f"Month {month_number} of {total_months} · "
+                    f"{remaining_days} days remaining"
+                )
+
         valuation_age_months = None
         if val and val.valuation_date:
             valuation_age_months = (
@@ -320,14 +395,21 @@ def get_properties_router(templates, get_session_dep):
         last_payment_date = (
             last_payment_period.payment_due_date if last_payment_period else None
         )
-        unsettled_periods = [
-            period for period in mortgage_periods if period.status != "FULLY_SETTLED"
+        valid_due_periods = [
+            period for period in mortgage_periods
+            if period.status != "FULLY_SETTLED" and period.payment_due_date is not None
         ]
-        next_period = (
-            min(unsettled_periods, key=lambda period: period.payment_due_date)
-            if unsettled_periods
-            else None
-        )
+        upcoming_unsettled = [
+            period for period in valid_due_periods
+            if period.payment_due_date >= today
+        ]
+        if upcoming_unsettled:
+            next_period = min(upcoming_unsettled, key=lambda period: period.payment_due_date)
+        elif valid_due_periods:
+            next_period = max(valid_due_periods, key=lambda period: period.payment_due_date)
+        else:
+            next_period = None
+
         next_payment_due = next_period.payment_due_date if next_period else None
         next_payment_overdue = bool(
             next_payment_due is not None and next_payment_due < today
@@ -506,6 +588,7 @@ def get_properties_router(templates, get_session_dep):
                 "authoritative_principal_cents": authoritative_principal_cents,
                 "reported_escrow_balance_cents": reported_escrow_balance_cents,
                 "calculated_escrow_balance_cents": calculated_escrow_balance_cents,
+                "outstanding_clearing_balance_cents": outstanding_clearing_balance_cents,
                 "net_equity_cents": net_equity_cents,
                 "ltv_percent": ltv_percent,
                 "equity_percent": equity_percent,
@@ -550,6 +633,13 @@ def get_properties_router(templates, get_session_dep):
                 "address_short": address_short,
                 "property_type_label": property_type_label,
                 "lease": lease,
+                "lease_progress_percent": lease_progress_percent,
+                "lease_progress_meta": lease_progress_meta,
+                "lease_days_elapsed": lease_days_elapsed,
+                "lease_days_total": lease_days_total,
+                "lease_days_remaining": lease_days_remaining,
+                "lease_month_number": lease_month_number,
+                "lease_total_months": lease_total_months,
                 "lease_document": lease_document,
                 "property_documents": property_documents,
                 "vault_filters": vault_filters,
@@ -560,6 +650,12 @@ def get_properties_router(templates, get_session_dep):
                 "google_maps_url": maps_url,
                 "photos": photos,
                 "cover_photo": cover_photo,
+                "loan_account": fin_acct,
+                "loan_rate_type_options": [
+                    {"value": "FIXED", "label": "Fixed"},
+                    {"value": "ARM", "label": "Adjustable (ARM)"},
+                ],
+                "message": request.query_params.get("message"),
                 "error": request.query_params.get("error"),
             },
         )

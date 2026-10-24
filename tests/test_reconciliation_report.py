@@ -18,6 +18,7 @@ from proptally.db.models import (
     Property,
     Statement,
     Transaction,
+    TransactionProcessingState,
 )
 from proptally.domain.accounting.controls import build_reconciliation_report
 
@@ -138,6 +139,29 @@ def test_missing_basis_and_account_drift_are_named(session):
     account_row = next(row for row in report.accounts if row.account_id == "acct_checking")
     assert account_row.difference_cents == -15000
     assert account_row.status == "DRIFT"
+    assert "cents" not in checks["account_reconciliation"].samples[0]
+    assert checks["account_reconciliation"].samples[0].endswith("-$150.00")
+
+
+def test_control_summaries_use_dollars_not_cents(session):
+    session.add(LedgerAccount(code=1500, name="Checking", account_type="ASSET", normal_balance="DEBIT"))
+    session.flush()
+    _account(session, "acct_cents", "Operating Checking", "CHECKING", 1500)
+    _statement(session, "stmt_cents", "acct_cents", "CHECKING", 0, 0, [-8_378_187])
+    session.add(
+        TransactionProcessingState(
+            transaction_id="txn_stmt_cents_0",
+            residual_cents=8_378_187,
+        )
+    )
+    session.commit()
+
+    checks = _by_key(build_reconciliation_report(session))
+    unposted = checks["unposted_transactions"]
+    assert unposted.passed is False
+    assert unposted.summary == "1 transaction (-$83,781.87) is unposted."
+    assert "$" in checks["ledger_balanced"].summary
+    assert "cents" not in checks["ledger_balanced"].summary
 
 
 def test_ledger_imbalance_is_blocking(session):

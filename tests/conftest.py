@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import pytest
+from bs4 import BeautifulSoup
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlmodel import Session
@@ -52,6 +53,19 @@ def create_test_app(*, db_url=None, system_db_url=None, storage_root=None):
         return create_app(system_db_url=system_db_url, storage_root=storage_root)
     finally:
         web_app.TenantManager = original
+
+
+def parse_html(content: str | object) -> BeautifulSoup:
+    """Parse HTML response or string into a BeautifulSoup DOM tree for semantic querying."""
+    if hasattr(content, "text"):
+        content = content.text
+    return BeautifulSoup(content, "html.parser")
+
+
+@pytest.fixture(name="parse_html")
+def parse_html_fixture():
+    """Provides a callable to parse HTTP responses or raw HTML strings into BeautifulSoup."""
+    return parse_html
 
 
 @pytest.fixture(name="engine")
@@ -103,6 +117,11 @@ class SignedInOwner:
     def post(self, url: str, data: dict, **kwargs):
         """POSTs with the session's CSRF token attached."""
         return self.client.post(url, data={**data, "csrf_token": self.csrf()}, **kwargs)
+
+    def soup(self, url: str, **kwargs) -> BeautifulSoup:
+        """GET a URL and return parsed BeautifulSoup DOM for semantic assertions."""
+        res = self.client.get(url, **kwargs)
+        return BeautifulSoup(res.text, "html.parser")
 
     def seed_reference_portfolio(self) -> None:
         """Puts the synthetic reference portfolio into this owner's database.

@@ -15,6 +15,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
+from proptally.domain.money import format_cents
+
 
 @dataclass
 class BankTransaction:
@@ -235,7 +237,7 @@ def parse_bofa_checking(path: Path) -> BankStatementExtraction | None:
     if opening_balance_cents + net_cents != closing_balance_cents:
         extraction.status = "NEEDS_REVIEW"
         extraction.review_reasons.append(
-            f"Checking balance discrepancy: opening ({opening_balance_cents}) + net ({net_cents}) != closing ({closing_balance_cents})"
+            f"Checking balance discrepancy: opening ({format_cents(opening_balance_cents)}) + net ({format_cents(net_cents)}) != closing ({format_cents(closing_balance_cents)})"
         )
     else:
         extraction.status = "VALIDATED"
@@ -409,7 +411,7 @@ def parse_bofa_credit_card(path: Path) -> BankStatementExtraction | None:
     if opening_balance_cents - net_cents != closing_balance_cents:
         extraction.status = "NEEDS_REVIEW"
         extraction.review_reasons.append(
-            f"Credit card balance discrepancy: opening ({opening_balance_cents}) - net ({net_cents}) != closing ({closing_balance_cents})"
+            f"Credit card balance discrepancy: opening ({format_cents(opening_balance_cents)}) - net ({format_cents(net_cents)}) != closing ({format_cents(closing_balance_cents)})"
         )
     else:
         extraction.status = "VALIDATED"
@@ -589,7 +591,7 @@ def parse_apple_card(path: Path) -> BankStatementExtraction | None:
     if opening_balance_cents - net_cents != closing_balance_cents:
         extraction.status = "NEEDS_REVIEW"
         extraction.review_reasons.append(
-            f"Apple Card balance discrepancy: opening ({opening_balance_cents}) - net ({net_cents}) != closing ({closing_balance_cents})"
+            f"Apple Card balance discrepancy: opening ({format_cents(opening_balance_cents)}) - net ({format_cents(net_cents)}) != closing ({format_cents(closing_balance_cents)})"
         )
     else:
         extraction.status = "VALIDATED"

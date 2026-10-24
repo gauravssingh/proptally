@@ -33,6 +33,8 @@ def test_dashboard_overview_renders_successfully(client: TestClient):
     assert "Total Debt Outstanding" in html
     assert "Rental Portfolio NOI" in html
     assert "Net Cash Flow (CADS)" in html
+    assert "Other operating expenses" in html
+    assert "Sch. E line 15" in html
     assert "12307 Larkspur St" in html
     assert "2718 Foxglove Ct" in html
     assert "3345 Elderberry Dr" in html
@@ -51,7 +53,7 @@ def test_property_detail_views(client: TestClient):
     resp_alder = client.get("/properties/prop_tinsley_huntley")
     assert resp_alder.status_code == 200
     assert "12307 Larkspur St" in resp_alder.text
-    assert "RENTAL DOOR" in resp_alder.text
+    assert "RENTAL PROPERTY" in resp_alder.text
     assert "Riley Alvarez" in resp_alder.text
     assert "Rocket Mortgage" in resp_alder.text or "Account 0700000001" in resp_alder.text
     assert "Net Operating Income (NOI)" in resp_alder.text

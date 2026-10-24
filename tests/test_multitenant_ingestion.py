@@ -614,3 +614,59 @@ def test_a_bank_statement_with_no_registered_account_registers_it_from_the_dialo
     dialog = _dialog_block(page, f"review-{extraction.id}")
     assert 'name="register_observed_account"' in dialog
     assert f'action="/statements/extractions/{extraction.id}/update"' in dialog
+
+
+def test_non_statement_documents_excluded_from_statements_queue_and_actions(owner, tmp_path):
+    """Leases, deeds, and other legal documents must never appear in the statements queue or actions."""
+    from proptally.ingestion.service import reprocess_document, reprocess_unrecognized_documents
+
+    signed_in = owner()
+    lease_pdf_path = tmp_path / "582_Cimmaron_Residential_Lease.pdf"
+    _write_pdf(lease_pdf_path, "Residential Lease Agreement\nLandlord and Tenant agreement for 582 Cimmaron Cir")
+
+    with Session(signed_in.engine) as session:
+        doc = Document(
+            id="doc_lease_test_1",
+            file_sha256="fake_sha_lease_12345",
+            original_filename="582 Cimmaron Residential Lease.pdf",
+            storage_path=str(lease_pdf_path),
+            file_size_bytes=lease_pdf_path.stat().st_size,
+            mime_type="application/pdf",
+            document_type="LEASE_AGREEMENT",
+        )
+        session.add(doc)
+        session.commit()
+
+    # 1. Non-statement document does not appear in /statements queue
+    resp = signed_in.client.get("/statements")
+    assert resp.status_code == 200
+    assert "582 Cimmaron Residential Lease.pdf" not in resp.text
+
+    # 2. Direct navigation to /statements?doc=<lease_id> redirects to /documents
+    resp_direct = signed_in.client.get("/statements?doc=doc_lease_test_1", follow_redirects=False)
+    assert resp_direct.status_code == 303
+    assert resp_direct.headers["location"].startswith("/documents?doc=doc_lease_test_1")
+
+    # 3. Attempting to reprocess a lease via /statements/documents/{id}/reprocess redirects to /documents with warning
+    resp_reprocess = signed_in.post("/statements/documents/doc_lease_test_1/reprocess", {}, follow_redirects=False)
+    assert resp_reprocess.status_code == 303
+    assert resp_reprocess.headers["location"].startswith("/documents?doc=doc_lease_test_1")
+
+    # 4. Ingestion service prevents reprocessing lease documents
+    with Session(signed_in.engine) as session:
+        doc_in_db = session.get(Document, "doc_lease_test_1")
+        with pytest.raises(ValueError, match="cannot be reprocessed as"):
+            reprocess_document(session, doc_in_db)
+
+        # Bulk retry does not scan the lease
+        report = reprocess_unrecognized_documents(session, commit=True)
+        assert report["scanned"] == 0
+
+    # 5. Document Vault inspection shows Vaulted status, not statement review prompts
+    resp_vault = signed_in.client.get("/documents?doc=doc_lease_test_1")
+    assert resp_vault.status_code == 200
+    assert "582 Cimmaron Residential Lease.pdf" in resp_vault.text
+    assert "Vaulted" in resp_vault.text
+    assert "Needs review" not in resp_vault.text
+    assert "/statements?status=review" not in resp_vault.text
+    assert "/statements?doc=doc_lease_test_1" not in resp_vault.text

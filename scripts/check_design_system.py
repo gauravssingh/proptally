@@ -128,7 +128,8 @@ def css_blocks(css: str) -> list[tuple[str, str, str]]:
     return blocks
 
 
-def main() -> int:
+def check_design_system() -> list[str]:
+    """Inspect all templates and stylesheets, returning any rule violations found."""
     defined = defined_classes()
     failures: list[str] = []
 
@@ -222,6 +223,11 @@ def main() -> int:
                 )
             seen[key] = body
 
+    return failures
+
+
+def main() -> int:
+    failures = check_design_system()
     if failures:
         print(f"design-system check FAILED ({len(failures)} issue(s)):\n")
         for failure in failures:

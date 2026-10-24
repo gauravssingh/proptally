@@ -235,6 +235,28 @@ def test_create_custom_vendor_rule(queue_env):
     assert sugg.category == "PERSONAL"
 
 
+def test_create_vendor_rule_with_apply_to_existing_does_not_500(queue_env):
+    """The internal batch-apply call must not inherit a FastAPI Form default as rule_id."""
+    signed_in, _ = queue_env
+
+    res = signed_in.post(
+        "/reconciliation/vendor-rules/create",
+        data={
+            "pattern": "APPLE.COM",
+            "vendor_name": "Apple Services",
+            "service_type": "Digital subscriptions",
+            "default_category": "PERSONAL",
+            "default_property_id": "",
+            "confidence": "0.95",
+            "apply_to_existing": "true",
+        },
+        follow_redirects=False,
+    )
+
+    assert res.status_code == 303
+    assert "applied=3" in res.headers["location"]
+
+
 def test_a_rule_requiring_confirmation_stages_instead_of_authorising(queue_env):
     """Requirement flags are policy; they must never be supplied as authorization."""
     signed_in, db_uri = queue_env

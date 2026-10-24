@@ -201,8 +201,8 @@
     "no_posted":    ("neutral", "NO POSTED LINES","No posted journal lines for this account yet."),
     "movement":     ("neutral", "FROM MOVEMENTS","Accumulated from recorded escrow movements."),
     "estimated":    ("neutral", "ESTIMATED",    "Based on manual input or an external valuation."),
-    "allocated":    ("success", "FULLY ALLOCATED","Every cent of this transaction is allocated."),
-    "partial":      ("warning", "PARTIALLY ALLOCATED","Residual cents remain unallocated."),
+    "allocated":    ("success", "FULLY ALLOCATED","The full transaction amount is allocated."),
+    "partial":      ("warning", "PARTIALLY ALLOCATED","A residual amount remains unallocated."),
     "unallocated":  ("error",   "UNALLOCATED",  "No allocation recorded; cannot post to the ledger."),
     "needs_review": ("warning", "NEEDS REVIEW", "Awaiting a human decision before posting."),
     "awaiting_post":("info",    "AWAITING POST","Allocated but not yet posted to the ledger."),
@@ -290,11 +290,11 @@
 {%- endmacro %}
 
 
-{% macro section_open(title=None, subtitle=None, actions="", flush=false, cls="") -%}
+{% macro section_open(title=None, subtitle=None, actions="", flush=false, cls="", id=None) -%}
 {#- Card with an optional header. Content follows, then `section_close()`.
     `actions` is a pre-rendered HTML string:
         {% set actions %}{{ ui.btn("Export", ...) }}{% endset %} -#}
-<div class="pt-card pt-card--flush {{ cls }}">
+<div class="pt-card pt-card--flush {{ cls }}"{% if id %} id="{{ id }}"{% endif %}>
     {%- if title %}
     <div class="pt-section__header">
         <div class="pt-section__heading">

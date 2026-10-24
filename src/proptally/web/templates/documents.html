@@ -28,7 +28,9 @@
     {% endcall %}
 
     <form class="pt-flex pt-items-center pt-gap-2" method="get" action="/documents" role="search">
-        {% if current_property %}<input type="hidden" name="property" value="{{ current_property.key }}">{% endif %}
+        {% if current_property %}<input type="hidden" name="property" value="{{ current_property.key }}">{% elif is_inbox %}<input type="hidden" name="property" value="unfiled">{% endif %}
+        {% if current_account %}<input type="hidden" name="account" value="{{ current_account.key }}">{% endif %}
+        {% if current_account_group %}<input type="hidden" name="account_group" value="{{ current_account_group.key }}">{% endif %}
         {% if current_type %}<input type="hidden" name="type" value="{{ current_type.key }}">{% endif %}
         {{ ui.search_field("q", "Search documents, folders, or content", value=q,
                            placeholder="Search documents, folders, or content…", cls="pt-flex-1",
@@ -41,20 +43,23 @@
 
         {# ---- The rail: every folder, and what the vault is using. ---------------- #}
         <div class="pt-explorer__rail">
-            <div class="pt-rail__heading">Folders</div>
             <div class="pt-tree">
-                {% set at_root = not current_property %}
+                {% set at_root = is_whole_vault and not is_searching %}
                 <a class="pt-tree__link{% if at_root %} is-active{% endif %}" href="{{ vault_href }}"{% if at_root %} aria-current="page"{% endif %}>
                     <span class="pt-tree__icon">{{ ui.icon("folder-open" if at_root else "folder", "sm") }}</span>
                     <span class="pt-tree__name">Whole vault</span>
                     <span class="pt-tree__count">{{ vault_total }}</span>
                 </a>
-                {% for node in tree %}
+            </div>
+
+            <div class="pt-rail__heading">Properties</div>
+            <div class="pt-tree">
+                {% for node in property_tree %}
                 {% set node_open = current_property and current_property.key == node.key %}
                 <details class="pt-tree__node"{% if node_open %} open{% endif %}>
                     <summary class="pt-tree__link{% if node_open and not current_type %} is-active{% endif %}"{% if node_open and not current_type %} aria-current="page"{% endif %}>
                         <span class="pt-tree__chevron">{{ ui.icon("chevron-right", "sm") }}</span>
-                        <span class="pt-tree__icon">{{ ui.icon("folder-open" if node_open else "folder", "sm") }}</span>
+                        <span class="pt-tree__icon">{{ ui.icon(node.icon, "sm") }}</span>
                         <a class="pt-tree__name" href="{{ node.href }}">{{ node.label }}</a>
                         <span class="pt-tree__count">{{ node.count }}</span>
                     </summary>
@@ -69,11 +74,68 @@
                         {% endfor %}
                     </div>
                 </details>
+                {% else %}
+                <p class="pt-fs-supporting pt-text-muted">No property folders</p>
                 {% endfor %}
             </div>
-            {% if not tree %}
-            <p class="pt-fs-supporting pt-text-muted">No folders yet. Upload a document and the folder it belongs to appears here.</p>
-            {% endif %}
+
+            <div class="pt-rail__heading">Financial Accounts</div>
+            <div class="pt-tree">
+                {% for group in financial_tree %}
+                {% set group_open = (current_account_group and current_account_group.key == group.key) or (current_account and current_account.group == group.key) %}
+                <details class="pt-tree__node"{% if group_open %} open{% endif %}>
+                    <summary class="pt-tree__link{% if current_account_group and current_account_group.key == group.key and not current_account and not current_type %} is-active{% endif %}"{% if current_account_group and current_account_group.key == group.key and not current_account and not current_type %} aria-current="page"{% endif %}>
+                        <span class="pt-tree__chevron">{{ ui.icon("chevron-right", "sm") }}</span>
+                        <span class="pt-tree__icon">{{ ui.icon(group.icon, "sm") }}</span>
+                        <a class="pt-tree__name" href="{{ group.href }}">{{ group.label }}</a>
+                        <span class="pt-tree__count">{{ group.count }}</span>
+                    </summary>
+                    <div class="pt-tree__group">
+                        {% for child in group.children %}
+                        {% set child_active = current_account and current_account.key == child.key %}
+                        <a class="pt-tree__link{% if child_active %} is-active{% endif %}" href="{{ child.href }}"{% if child_active %} aria-current="page"{% endif %}>
+                            <span class="pt-tree__icon">{{ ui.icon(child.icon, "sm") }}</span>
+                            <span class="pt-tree__name">{{ child.label }}</span>
+                            <span class="pt-tree__count">{{ child.count }}</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                </details>
+                {% else %}
+                <p class="pt-fs-supporting pt-text-muted">No financial accounts</p>
+                {% endfor %}
+            </div>
+
+            <div class="pt-rail__heading">Unfiled</div>
+            <div class="pt-tree">
+                {% set inbox_active = is_inbox and not current_type %}
+                {% if inbox_node.children %}
+                <details class="pt-tree__node"{% if is_inbox %} open{% endif %}>
+                    <summary class="pt-tree__link{% if inbox_active %} is-active{% endif %}"{% if inbox_active %} aria-current="page"{% endif %}>
+                        <span class="pt-tree__chevron">{{ ui.icon("chevron-right", "sm") }}</span>
+                        <span class="pt-tree__icon">{{ ui.icon(inbox_node.icon, "sm") }}</span>
+                        <a class="pt-tree__name" href="{{ inbox_node.href }}">{{ inbox_node.label }}</a>
+                        <span class="pt-tree__count">{{ inbox_node.count }}</span>
+                    </summary>
+                    <div class="pt-tree__group">
+                        {% for child in inbox_node.children %}
+                        {% set child_here = is_inbox and current_type and current_type.key == child.key %}
+                        <a class="pt-tree__link{% if child_here %} is-active{% endif %}" href="{{ child.href }}"{% if child_here %} aria-current="page"{% endif %}>
+                            <span class="pt-tree__icon">{{ ui.icon("folder-open" if child_here else "folder", "sm") }}</span>
+                            <span class="pt-tree__name">{{ child.label }}</span>
+                            <span class="pt-tree__count">{{ child.count }}</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                </details>
+                {% else %}
+                <a class="pt-tree__link{% if inbox_active %} is-active{% endif %}" href="{{ inbox_node.href }}"{% if inbox_active %} aria-current="page"{% endif %}>
+                    <span class="pt-tree__icon">{{ ui.icon(inbox_node.icon, "sm") }}</span>
+                    <span class="pt-tree__name">{{ inbox_node.label }}</span>
+                    <span class="pt-tree__count">{{ inbox_node.count }}</span>
+                </a>
+                {% endif %}
+            </div>
 
             <div class="pt-rail__storage">
                 <div class="pt-rail__heading">Storage</div>
@@ -93,11 +155,10 @@
                 {%- endfor %}
             </nav>
 
-            {% set here = current_type.label if current_type else (current_property.label if current_property else ("Search results" if is_searching else "The whole vault")) %}
             {% set here_meta = folder_documents ~ " document" ~ ('' if folder_documents == 1 else 's')
                                ~ " · " ~ folder_size
                                ~ (" matching “" ~ q ~ "”" if is_searching else "") %}
-            {{ ui.titlebar("folder", here, here_meta) }}
+            {{ ui.titlebar(here_icon, here, here_meta) }}
 
             <div class="pt-explorer__toolbar">
                 <div class="pt-toolbar-group">
@@ -105,20 +166,125 @@
                     {{ ui.segmented(kind_chips, label="Filter documents by kind") }}
                 </div>
                 <div class="pt-toolbar-group">
+                    {# Bulk selection action bar #}
+                    <div class="pt-bulk-bar" id="doc-bulk-bar" hidden>
+                        <span class="pt-badge pt-badge--info pt-badge--pill" id="bulk-selected-count">0 selected</span>
+                        {% if total_items > rows|length %}
+                        <button type="button" class="pt-btn pt-btn--ghost pt-btn--xs" id="bulk-scope-btn">
+                            Select all {{ total_items }} matching documents
+                        </button>
+                        {% endif %}
+                        <button type="button" class="pt-btn pt-btn--secondary pt-btn--xs" id="bulk-download-btn">
+                            {{ ui.icon("download", "xs") }}
+                            <span>Download (.zip)</span>
+                        </button>
+                        <button type="button" class="pt-btn pt-btn--ghost pt-btn--xs" id="bulk-clear-btn">
+                            <span>Deselect all</span>
+                        </button>
+                    </div>
+
+                    {# Column visibility menu #}
+                    <details class="pt-menu" id="col-visibility-menu">
+                        <summary class="pt-btn pt-btn--secondary pt-btn--xs" aria-label="Customize columns">
+                            {{ ui.icon("sliders", "xs") }}
+                            <span>Columns</span>
+                        </summary>
+                        <div class="pt-menu__list" role="menu">
+                            <label class="pt-menu__item pt-check-item">
+                                <input type="checkbox" class="pt-check" checked disabled aria-disabled="true">
+                                <span>Document <span class="pt-fs-caption pt-text-muted">(Required)</span></span>
+                            </label>
+                            <label class="pt-menu__item pt-check-item">
+                                <input type="checkbox" data-col-toggle="location" class="pt-check">
+                                <span>Location</span>
+                            </label>
+                            <label class="pt-menu__item pt-check-item">
+                                <input type="checkbox" data-col-toggle="uploaded" class="pt-check" checked>
+                                <span>Uploaded</span>
+                            </label>
+                            <label class="pt-menu__item pt-check-item">
+                                <input type="checkbox" data-col-toggle="size" class="pt-check" checked>
+                                <span>Size</span>
+                            </label>
+                            <label class="pt-menu__item pt-check-item">
+                                <input type="checkbox" data-col-toggle="status" class="pt-check" checked>
+                                <span>Status</span>
+                            </label>
+                            <div class="pt-menu__divider"></div>
+                            <button type="button" class="pt-menu__item pt-col-reset-btn" id="col-reset-btn">
+                                <span class="pt-text-secondary">Reset to defaults</span>
+                            </button>
+                        </div>
+                    </details>
+
                     <span class="pt-fs-caption pt-text-muted">Showing {{ start_item }}–{{ end_item }} of {{ total_items }}</span>
                 </div>
             </div>
 
-            {{ ui.table_open(compact=true, label="Files") }}
+            <form id="bulk-download-form" method="POST" action="/documents/bulk/download" class="pt-sr-only">
+                {{ csrf_field() }}
+                <input type="hidden" name="scope" id="bulk-download-scope" value="selected">
+                <input type="hidden" name="doc_ids" id="bulk-download-ids" value="">
+                <input type="hidden" name="property" value="{{ current_property.key if current_property else ('unfiled' if is_inbox else '') }}">
+                <input type="hidden" name="account" value="{{ current_account.key if current_account else '' }}">
+                <input type="hidden" name="account_group" value="{{ current_account_group.key if current_account_group else '' }}">
+                <input type="hidden" name="type" value="{{ current_type.key if current_type else '' }}">
+                <input type="hidden" name="q" value="{{ q }}">
+                <input type="hidden" name="kind" value="{{ kind }}">
+            </form>
+
+            {{ ui.table_open(compact=true, label="Files", cls="pt-doc-table") }}
                     <thead>
                     <tr>
-                        {{ ui.th('<span class="pt-sr-only">Details</span>', cls="pt-table__pick") }}
-                        {{ ui.th("Name", sort_href=sort_urls.name, sort_active=(sort == 'name'), sort_dir=('asc' if sort == 'name' else 'none')) }}
-                        {{ ui.th("Type") }}
-                        {{ ui.th("Size", num=true, sort_href=sort_urls.size, sort_active=(sort == 'size'), sort_dir=('desc' if sort == 'size' else 'none')) }}
-                        {{ ui.th("Uploaded", sort_href=sort_urls.date, sort_active=(sort == 'date'), sort_dir=('desc' if sort == 'date' else 'none')) }}
-                        {{ ui.th("State") }}
-                        {{ ui.th('<span class="pt-sr-only">Actions</span>') }}
+                        <th scope="col" class="pt-table__pick">
+                            <input type="checkbox" class="pt-check" id="doc-select-all" aria-label="Select all documents" title="Select all">
+                        </th>
+                        {{ ui.th("Document", sort_href=sort_urls.name, sort_active=(sort == 'name'), sort_dir=sort_dir, cls="pt-col-doc") }}
+                        <th scope="col" class="pt-col-location" data-col="location"
+                            {% if sort == 'location' %} aria-sort="{{ 'ascending' if sort_dir == 'asc' else 'descending' }}"{% endif %}>
+                            <a class="pt-table__sort{% if sort == 'location' %} is-active{% endif %}" href="{{ sort_urls.location }}" title="Sort by Location">
+                                <span>Location</span>
+                                {%- if sort == 'location' -%}
+                                    {{ ui.icon("chevron-up" if sort_dir == 'asc' else "chevron-down", "sm", "pt-table__sort-icon") }}
+                                {%- else -%}
+                                    {{ ui.icon("sort", "sm", "pt-table__sort-icon pt-table__sort-icon--idle") }}
+                                {%- endif -%}
+                            </a>
+                        </th>
+                        <th scope="col" class="pt-col-uploaded" data-col="uploaded"
+                            {% if sort == 'date' %} aria-sort="{{ 'ascending' if sort_dir == 'asc' else 'descending' }}"{% endif %}>
+                            <a class="pt-table__sort{% if sort == 'date' %} is-active{% endif %}" href="{{ sort_urls.date }}" title="Sort by Upload date">
+                                <span>Uploaded</span>
+                                {%- if sort == 'date' -%}
+                                    {{ ui.icon("chevron-up" if sort_dir == 'asc' else "chevron-down", "sm", "pt-table__sort-icon") }}
+                                {%- else -%}
+                                    {{ ui.icon("sort", "sm", "pt-table__sort-icon pt-table__sort-icon--idle") }}
+                                {%- endif -%}
+                            </a>
+                        </th>
+                        <th scope="col" class="pt-table__th-num pt-col-size" data-col="size"
+                            {% if sort == 'size' %} aria-sort="{{ 'ascending' if sort_dir == 'asc' else 'descending' }}"{% endif %}>
+                            <a class="pt-table__sort{% if sort == 'size' %} is-active{% endif %}" href="{{ sort_urls.size }}" title="Sort by Size">
+                                <span>Size</span>
+                                {%- if sort == 'size' -%}
+                                    {{ ui.icon("chevron-up" if sort_dir == 'asc' else "chevron-down", "sm", "pt-table__sort-icon") }}
+                                {%- else -%}
+                                    {{ ui.icon("sort", "sm", "pt-table__sort-icon pt-table__sort-icon--idle") }}
+                                {%- endif -%}
+                            </a>
+                        </th>
+                        <th scope="col" class="pt-col-status" data-col="status"
+                            {% if sort == 'status' %} aria-sort="{{ 'ascending' if sort_dir == 'asc' else 'descending' }}"{% endif %}>
+                            <a class="pt-table__sort{% if sort == 'status' %} is-active{% endif %}" href="{{ sort_urls.status }}" title="Sort by Status">
+                                <span>Status</span>
+                                {%- if sort == 'status' -%}
+                                    {{ ui.icon("chevron-up" if sort_dir == 'asc' else "chevron-down", "sm", "pt-table__sort-icon") }}
+                                {%- else -%}
+                                    {{ ui.icon("sort", "sm", "pt-table__sort-icon pt-table__sort-icon--idle") }}
+                                {%- endif -%}
+                            </a>
+                        </th>
+                        {{ ui.th('<span class="pt-sr-only">Actions</span>', cls="pt-col-actions") }}
                     </tr>
                     </thead>
                         <tbody>
@@ -129,7 +295,7 @@
                                     <span class="pt-text-muted">{{ ui.icon("corner-left-up", "sm") }}</span>
                                 </a>
                             </td>
-                            <td class="pt-table__name">
+                            <td class="pt-table__name pt-col-doc">
                                 <div class="pt-flex pt-items-center pt-gap-2">
                                     <a class="pt-table__primary pt-table__parent-link" href="{{ parent_href }}" title="Up to {{ parent_label }}">
                                         <span class="pt-table__parent-dots">..</span>
@@ -137,11 +303,11 @@
                                     </a>
                                 </div>
                             </td>
-                            <td class="pt-table__sub"><span class="pt-text-muted">Parent</span></td>
-                            <td class="pt-table__num"><span class="pt-text-muted">—</span></td>
-                            <td class="pt-table__date"><span class="pt-text-muted">—</span></td>
-                            <td><span class="pt-text-muted">—</span></td>
-                            <td class="pt-table__actions">
+                            <td class="pt-col-location" data-col="location"><span class="pt-text-muted">—</span></td>
+                            <td class="pt-col-uploaded" data-col="uploaded"><span class="pt-text-muted">—</span></td>
+                            <td class="pt-table__num pt-col-size" data-col="size"><span class="pt-text-muted">—</span></td>
+                            <td class="pt-col-status" data-col="status"><span class="pt-text-muted">—</span></td>
+                            <td class="pt-table__actions pt-col-actions">
                                 <a class="pt-btn pt-btn--secondary pt-btn--xs" href="{{ parent_href }}" title="Up to {{ parent_label }}">
                                     {{ ui.icon("corner-left-up", "xs") }}
                                     <span>Up</span>
@@ -151,31 +317,36 @@
                         {% endif %}
                         {% for row in rows %}
                         {% set chosen = selected and selected.id == row.id %}
-                        <tr{% if chosen %} class="is-active"{% endif %}>
-                            <td class="pt-table__pick">
-                                {% set row_href = row.folder_href ~ "&doc=" ~ row.id %}
-                                <a class="pt-pick{% if chosen %} is-active{% endif %}"
-                                   href="{{ row_href }}"
-                                   {% if chosen %}aria-current="true"{% else %}aria-label="Show details for {{ row.filename }}"{% endif %}>
-                                    {% if chosen %}{{ ui.icon("check", "sm") }}{% endif %}
-                                </a>
+                        {% set row_href = row.select_href %}
+                        <tr class="pt-table__row--clickable{% if chosen %} is-active{% endif %}"
+                            tabindex="0"
+                            role="row"
+                            aria-selected="{{ 'true' if chosen else 'false' }}"
+                            data-row-click="true"
+                            data-doc-href="{{ row_href }}"
+                            data-doc-id="{{ row.id }}">
+                            <td class="pt-table__pick" data-stop-propagation="true">
+                                <input type="checkbox" class="pt-check"
+                                       data-doc-checkbox
+                                       value="{{ row.id }}"
+                                       aria-label="Select {{ row.filename }}">
                             </td>
-                            <td class="pt-table__name">
+                            <td class="pt-table__name pt-col-doc">
                                 <div class="pt-flex pt-items-center pt-gap-2">
                                     <span class="pt-text-muted">{{ ui.icon(row.file_icon, "sm") }}</span>
                                     <a class="pt-table__primary" href="{{ row_href }}" title="{{ row.filename }}">{{ row.filename }}</a>
-                                </div>
-                                <span class="pt-table__sub" title="{{ row.property_name }} / {{ row.type_label }}">{{ row.property_name }} / {{ row.type_label }}</span>
-                            </td>
-                            <td class="pt-table__sub">{{ row.type_short }}</td>
-                            <td class="pt-table__num">{{ row.size }}</td>
-                            <td class="pt-table__date">{{ row.uploaded }}</td>
-                            <td>
-                                <div class="pt-status-cluster">
-                                    {{ ui.badge(row.state_label, variant=row.state_variant, pill=true, dot=true) }}
+                                    <span class="pt-badge pt-badge--neutral pt-badge--mono pt-file-ext-badge">{{ row.type_short }}</span>
                                 </div>
                             </td>
-                            <td class="pt-table__actions">
+                            <td class="pt-col-location" data-col="location">
+                                <span class="pt-table__sub" title="{{ row.location_label }}">{{ row.location_label }}</span>
+                            </td>
+                            <td class="pt-table__date pt-col-uploaded" data-col="uploaded">{{ row.uploaded }}</td>
+                            <td class="pt-table__num pt-col-size" data-col="size">{{ row.size }}</td>
+                            <td class="pt-col-status" data-col="status">
+                                {{ ui.badge(row.state_label, variant=row.state_variant, pill=true, dot=true, mono=false) }}
+                            </td>
+                            <td class="pt-table__actions pt-col-actions" data-stop-propagation="true">
                                 <details class="pt-menu">
                                     <summary class="pt-menu__trigger" aria-label="Actions for {{ row.filename }}">
                                         {{ ui.icon("more-vertical", "sm") }}
@@ -213,20 +384,48 @@
                 {% endif %}
         </div>
 
-        {# ---- The right: the document you chose, or the vault itself. ------------- #}
-        {# An empty panel would waste the width this layout just won, so when nothing is
-           chosen the pane states what the vault holds and what is waiting for a person. #}
-        <div class="pt-explorer__aside pt-inspector">
+        {# ---- The right: the document you chose and resizer handle. --------------- #}
+        <div class="pt-explorer__resizer" id="explorer-resizer" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize inspector" aria-label="Resize document inspector"{% if not selected %} hidden{% endif %}></div>
         {% if selected %}
+        <div class="pt-explorer__aside pt-inspector">
             <div class="pt-inspector__head">
                 <span class="pt-inspector__glyph">{{ ui.icon(selected.file_icon, "md") }}</span>
-                <span class="pt-inspector__name">{{ selected.filename }}</span>
-                <a class="pt-inspector__close pt-btn pt-btn--ghost pt-btn--sm" href="{{ inspector_close_href }}" aria-label="Close details">{{ ui.icon("close", "sm") }}</a>
+                <span class="pt-inspector__name" title="{{ selected.filename }}">{{ selected.filename }}</span>
+                <div class="pt-inspector__nav">
+                    {% if doc_position %}
+                    <span class="pt-inspector__position" id="inspector-position" aria-label="Document {{ doc_position }}">{{ doc_position }}</span>
+                    {% endif %}
+                    <div class="pt-inspector__nav-btns">
+                        <a class="pt-btn pt-btn--ghost pt-btn--xs{% if not prev_doc_url %} is-disabled{% endif %}"
+                           id="inspector-prev-btn"
+                           href="{{ prev_doc_url or '#' }}"
+                           {% if not prev_doc_url %}tabindex="-1" aria-disabled="true"{% endif %}
+                           aria-label="Previous document"
+                           title="Previous document (K or ↑)">
+                            {{ ui.icon("chevron-left", "xs") }}
+                        </a>
+                        <a class="pt-btn pt-btn--ghost pt-btn--xs{% if not next_doc_url %} is-disabled{% endif %}"
+                           id="inspector-next-btn"
+                           href="{{ next_doc_url or '#' }}"
+                           {% if not next_doc_url %}tabindex="-1" aria-disabled="true"{% endif %}
+                           aria-label="Next document"
+                           title="Next document (J or ↓)">
+                            {{ ui.icon("chevron-right", "xs") }}
+                        </a>
+                    </div>
+                    <a class="pt-inspector__close pt-btn pt-btn--ghost pt-btn--xs"
+                       id="inspector-close-btn"
+                       href="{{ inspector_close_href }}"
+                       aria-label="Close details"
+                       title="Close inspector (Esc)">
+                        {{ ui.icon("close", "xs") }}
+                    </a>
+                </div>
             </div>
             {{ ui.tabs(inspector_tabs, active_tab) }}
             <div class="pt-inspector__body">
                 <div class="pt-action-tiles">
-                    {% if selected.state == 'review' %}
+                    {% if selected.state == 'review' and selected.extraction_id %}
                     {{ ui.action_tile("Review", "alert_triangle", "/statements?status=review&doc=" ~ selected.id, variant="warning") }}
                     {% endif %}
                     {{ ui.action_tile("Open", "eye", "/documents/" ~ selected.id ~ "/view",
@@ -264,9 +463,13 @@
                     {{ ui.statement_row("Name", selected.filename) }}
                     {{ ui.statement_row("Type", selected.mime_type or "unknown type") }}
                     {{ ui.statement_row("Size", selected.size ~ " (" ~ selected.size_bytes ~ " bytes)") }}
-                    {{ ui.statement_row("Folder", selected.property_name ~ " / " ~ selected.type_label) }}
+                    {{ ui.statement_row("Folder", selected.location_label) }}
                     {{ ui.statement_row("Uploaded", selected.uploaded) }}
+                    {% if selected.extraction_id %}
                     {{ ui.statement_row("Extraction", selected.state_label) }}
+                    {% else %}
+                    {{ ui.statement_row("Status", selected.state_label) }}
+                    {% endif %}
                 {{ ui.statement_close() }}
                 {% else %}
                 {% if selected.can_preview %}
@@ -284,48 +487,13 @@
                 <div class="pt-stack-2">
                     <h3 class="pt-section__title">Tags</h3>
                     <div class="pt-inspector__tags">
-                        {{ ui.chip(selected.property_name) }}
+                        {{ ui.chip(selected.tag_folder) }}
                         {{ ui.chip(selected.type_label) }}
                     </div>
                 </div>
             </div>
-        {% else %}
-            <div class="pt-inspector__head">
-                <span class="pt-inspector__glyph">{{ ui.icon("folder", "md") }}</span>
-                <span class="pt-inspector__name">Vault at a glance</span>
-            </div>
-            <div class="pt-inspector__body">
-                {{ ui.statement_open() }}
-                    {{ ui.statement_row("Documents", portfolio_documents) }}
-                    {{ ui.statement_row("Stored", portfolio_size) }}
-                    {{ ui.statement_row("Properties", tree | length) }}
-                    {{ ui.statement_row("Awaiting review", awaiting_review) }}
-                {{ ui.statement_close() }}
-
-                {% if awaiting_review %}
-                <div class="pt-stack-2">
-                    {{ ui.alert(
-                        variant="warning",
-                        title=awaiting_review ~ " document" ~ ('' if awaiting_review == 1 else 's') ~ " awaiting review",
-                        text="The parser extracted data that requires human verification before ledger import.",
-                        icon_name="alert_triangle"
-                    ) }}
-                    {{ ui.btn("Review in queue", variant="primary", size="sm",
-                              href="/statements?status=review", icon_after="arrow_right", block=true) }}
-                </div>
-                {% endif %}
-
-                <div class="pt-stack-2">
-                    <h3 class="pt-section__title">Which folder holds what</h3>
-                    {{ ui.statement_open() }}
-                        {% for node in tree %}
-                        {{ ui.statement_row(node.label, node.count) }}
-                        {% endfor %}
-                    {{ ui.statement_close() }}
-                </div>
-            </div>
-        {% endif %}
         </div>
+        {% endif %}
     </div>
 </div>
 
@@ -335,16 +503,16 @@
 {{ ui.modal_open(
     "upload-documents",
     "Add documents",
-    "Filed in " ~ (current_property.label if current_property else "the vault")
-        ~ ((" / " ~ current_type.label) if current_type else "")
-        ~ ". Files are fingerprinted on arrival: a file already in the vault is reported rather than stored twice, and a statement the parser recognises is staged for review on the statements screen.",
+    "Filed in " ~ here ~ ". Files are fingerprinted on arrival: a file already in the vault is reported rather than stored twice, and a statement the parser recognises is staged for review on the statements screen.",
     size="md"
 ) }}
 <form method="POST" action="/documents/upload" enctype="multipart/form-data" class="pt-modal__form" data-upload-form>
     {{ csrf_field() }}
     <input type="hidden" name="per_page" value="{{ per_page }}">
     {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
-    {% if current_property %}<input type="hidden" name="property" value="{{ current_property.key }}">{% endif %}
+    {% if current_property %}<input type="hidden" name="property" value="{{ current_property.key }}">{% elif is_inbox %}<input type="hidden" name="property" value="unfiled">{% endif %}
+    {% if current_account %}<input type="hidden" name="account" value="{{ current_account.key }}">{% endif %}
+    {% if current_account_group %}<input type="hidden" name="account_group" value="{{ current_account_group.key }}">{% endif %}
     {% if current_type %}<input type="hidden" name="type" value="{{ current_type.key }}">{% endif %}
     <div class="pt-modal__body">
         <div class="pt-stack pt-gap-4">
@@ -566,6 +734,478 @@
             if (e.dataTransfer && e.dataTransfer.files.length) {
                 addFiles(e.dataTransfer.files);
             }
+        });
+    }
+
+    /* --- Explorer Resizer (Draggable & Keyboard) ------------------------- */
+    const explorerEl = document.querySelector('.pt-explorer');
+    const resizerEl = document.getElementById('explorer-resizer');
+    const STORAGE_RESIZER_KEY = 'proptally_inspector_width';
+
+    if (explorerEl) {
+        const savedW = localStorage.getItem(STORAGE_RESIZER_KEY);
+        if (savedW) {
+            explorerEl.style.setProperty('--pt-inspector-w', savedW);
+        }
+    }
+
+    if (resizerEl && explorerEl) {
+        let isDragging = false;
+
+        const onPointerMove = (e) => {
+            if (!isDragging) return;
+            const rect = explorerEl.getBoundingClientRect();
+            const newW = Math.max(260, Math.min(rect.width - 320, rect.right - e.clientX));
+            explorerEl.style.setProperty('--pt-inspector-w', `${newW}px`);
+        };
+
+        const onPointerUp = () => {
+            if (!isDragging) return;
+            isDragging = false;
+            resizerEl.classList.remove('is-resizing');
+            document.body.classList.remove('is-resizing');
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+            const currentW = explorerEl.style.getPropertyValue('--pt-inspector-w');
+            if (currentW) {
+                localStorage.setItem(STORAGE_RESIZER_KEY, currentW);
+            }
+        };
+
+        resizerEl.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            isDragging = true;
+            resizerEl.classList.add('is-resizing');
+            document.body.classList.add('is-resizing');
+            window.addEventListener('pointermove', onPointerMove);
+            window.addEventListener('pointerup', onPointerUp);
+        });
+
+        resizerEl.addEventListener('keydown', (e) => {
+            const currentW = parseInt(getComputedStyle(explorerEl).getPropertyValue('--pt-inspector-w'), 10) || 384;
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                const nextW = Math.min(800, currentW + 20);
+                explorerEl.style.setProperty('--pt-inspector-w', `${nextW}px`);
+                localStorage.setItem(STORAGE_RESIZER_KEY, `${nextW}px`);
+            } else if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                const nextW = Math.max(260, currentW - 20);
+                explorerEl.style.setProperty('--pt-inspector-w', `${nextW}px`);
+                localStorage.setItem(STORAGE_RESIZER_KEY, `${nextW}px`);
+            }
+        });
+    }
+
+    /* --- In-Place Inspector Loading ------------------------------------- */
+    let isFetchingInspector = false;
+
+    const getActiveInspectorTab = () => {
+        const activeTabEl = document.querySelector('.pt-inspector .pt-tab.is-active');
+        if (!activeTabEl) return null;
+        try {
+            const u = new URL(activeTabEl.href, window.location.origin);
+            return u.searchParams.get('tab');
+        } catch (e) {
+            return null;
+        }
+    };
+
+    const updateActiveRowHighlight = (docId) => {
+        document.querySelectorAll('.pt-table__row--clickable').forEach(r => {
+            const isMatch = docId && r.getAttribute('data-doc-id') === docId;
+            r.classList.toggle('is-active', isMatch);
+            r.setAttribute('aria-selected', isMatch ? 'true' : 'false');
+        });
+    };
+
+    const loadInspector = async (url, pushHistory = true) => {
+        if (!url || url === '#' || isFetchingInspector || !explorerEl) return;
+        isFetchingInspector = true;
+
+        const activeTab = getActiveInspectorTab();
+        let targetUrl = url;
+        if (activeTab && !targetUrl.includes('tab=')) {
+            targetUrl += (targetUrl.includes('?') ? '&' : '?') + 'tab=' + encodeURIComponent(activeTab);
+        }
+
+        try {
+            const resp = await fetch(targetUrl);
+            if (!resp.ok) {
+                window.location.href = targetUrl;
+                return;
+            }
+            const html = await resp.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            const newAside = doc.querySelector('.pt-explorer__aside');
+            const currentAside = explorerEl.querySelector('.pt-explorer__aside');
+            const resizer = document.getElementById('explorer-resizer');
+
+            if (newAside) {
+                if (currentAside) {
+                    currentAside.replaceWith(newAside);
+                } else if (resizer) {
+                    resizer.after(newAside);
+                } else {
+                    explorerEl.appendChild(newAside);
+                }
+                explorerEl.classList.add('pt-explorer--inspecting');
+                if (resizer) resizer.hidden = false;
+            } else {
+                if (currentAside) currentAside.remove();
+                explorerEl.classList.remove('pt-explorer--inspecting');
+                if (resizer) resizer.hidden = true;
+            }
+
+            try {
+                const u = new URL(targetUrl, window.location.origin);
+                const docId = u.searchParams.get('doc');
+                updateActiveRowHighlight(docId);
+            } catch (e) {}
+
+            if (pushHistory) {
+                history.pushState({ docUrl: targetUrl }, '', targetUrl);
+            }
+
+            wireInspectorNav();
+        } catch (err) {
+            window.location.href = targetUrl;
+        } finally {
+            isFetchingInspector = false;
+        }
+    };
+
+    const closeInspector = () => {
+        const closeBtn = document.getElementById('inspector-close-btn');
+        const closeHref = closeBtn ? closeBtn.getAttribute('href') : null;
+        const currentAside = explorerEl.querySelector('.pt-explorer__aside');
+        const resizer = document.getElementById('explorer-resizer');
+
+        if (currentAside) currentAside.remove();
+        explorerEl.classList.remove('pt-explorer--inspecting');
+        if (resizer) resizer.hidden = true;
+        updateActiveRowHighlight(null);
+
+        if (closeHref) {
+            history.pushState(null, '', closeHref);
+        }
+    };
+
+    const wireInspectorNav = () => {
+        const prevBtn = document.getElementById('inspector-prev-btn');
+        if (prevBtn && !prevBtn.classList.contains('is-disabled')) {
+            prevBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                loadInspector(prevBtn.getAttribute('href'));
+            });
+        }
+
+        const nextBtn = document.getElementById('inspector-next-btn');
+        if (nextBtn && !nextBtn.classList.contains('is-disabled')) {
+            nextBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                loadInspector(nextBtn.getAttribute('href'));
+            });
+        }
+
+        const closeBtn = document.getElementById('inspector-close-btn');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeInspector();
+            });
+        }
+
+        document.querySelectorAll('.pt-inspector .pt-tab').forEach(tabLink => {
+            tabLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                loadInspector(tabLink.getAttribute('href'));
+            });
+        });
+    };
+
+    wireInspectorNav();
+
+    window.addEventListener('popstate', () => {
+        loadInspector(window.location.href, false);
+    });
+
+    /* --- Keyboard Shortcuts --------------------------------------------- */
+    window.addEventListener('keydown', (e) => {
+        const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' || (e.target && e.target.isContentEditable)) {
+            return;
+        }
+
+        if (e.key === 'Escape') {
+            const openMenu = document.querySelector('.pt-menu[open]');
+            if (openMenu) {
+                openMenu.removeAttribute('open');
+                const summary = openMenu.querySelector('summary');
+                if (summary) summary.focus();
+                return;
+            }
+            if (explorerEl && explorerEl.classList.contains('pt-explorer--inspecting')) {
+                e.preventDefault();
+                closeInspector();
+                return;
+            }
+        }
+
+        if (explorerEl && explorerEl.classList.contains('pt-explorer--inspecting')) {
+            if (e.key === 'j' || e.key === 'J' || e.key === 'ArrowDown') {
+                const nextBtn = document.getElementById('inspector-next-btn');
+                if (nextBtn && !nextBtn.classList.contains('is-disabled')) {
+                    e.preventDefault();
+                    loadInspector(nextBtn.getAttribute('href'));
+                }
+            } else if (e.key === 'k' || e.key === 'K' || e.key === 'ArrowUp') {
+                const prevBtn = document.getElementById('inspector-prev-btn');
+                if (prevBtn && !prevBtn.classList.contains('is-disabled')) {
+                    e.preventDefault();
+                    loadInspector(prevBtn.getAttribute('href'));
+                }
+            }
+        }
+    });
+
+    /* --- Row Click & Keyboard Interaction ------------------------------- */
+    document.querySelectorAll('[data-row-click="true"]').forEach((row) => {
+        const docHref = row.getAttribute('data-doc-href');
+        const docId = row.getAttribute('data-doc-id');
+        const cb = row.querySelector('[data-doc-checkbox]');
+
+        row.addEventListener('click', (e) => {
+            if (e.target.closest('input, button, a, details, summary, [data-stop-propagation]')) {
+                return;
+            }
+            if (e.metaKey || e.ctrlKey) {
+                window.open(`/documents/${docId}/view`, '_blank');
+                return;
+            }
+            e.preventDefault();
+            loadInspector(docHref);
+        });
+
+        row.addEventListener('keydown', (e) => {
+            if (e.target !== row) return;
+
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                loadInspector(docHref);
+            } else if (e.key === ' ' || e.code === 'Space') {
+                e.preventDefault();
+                if (cb) {
+                    cb.checked = !cb.checked;
+                    cb.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            }
+        });
+    });
+
+    /* --- Bulk Selection & Actions --------------------------------------- */
+    const selectAll = document.getElementById('doc-select-all');
+    const rowCheckboxes = document.querySelectorAll('[data-doc-checkbox]');
+    const bulkBar = document.getElementById('doc-bulk-bar');
+    const bulkCount = document.getElementById('bulk-selected-count');
+    const bulkScopeBtn = document.getElementById('bulk-scope-btn');
+    const bulkDownloadBtn = document.getElementById('bulk-download-btn');
+    const bulkDownloadForm = document.getElementById('bulk-download-form');
+    const bulkDownloadIds = document.getElementById('bulk-download-ids');
+    const bulkDownloadScope = document.getElementById('bulk-download-scope');
+    const bulkClearBtn = document.getElementById('bulk-clear-btn');
+
+    const TOTAL_ITEMS = {{ total_items }};
+    let bulkScope = 'selected';
+    const STORAGE_SELECTED_KEY = 'proptally_vault_selected_ids';
+
+    let selectedDocIds = new Set();
+    try {
+        const raw = sessionStorage.getItem(STORAGE_SELECTED_KEY);
+        if (raw) {
+            selectedDocIds = new Set(JSON.parse(raw));
+        }
+    } catch (e) {}
+
+    const saveSelectedIds = () => {
+        try {
+            sessionStorage.setItem(STORAGE_SELECTED_KEY, JSON.stringify(Array.from(selectedDocIds)));
+        } catch (e) {}
+    };
+
+    const syncCheckboxesFromSet = () => {
+        rowCheckboxes.forEach(cb => {
+            cb.checked = selectedDocIds.has(cb.value);
+        });
+    };
+
+    const updateBulkBar = () => {
+        const totalSelected = selectedDocIds.size;
+        const pageBoxes = Array.from(rowCheckboxes);
+        const checkedOnPage = pageBoxes.filter(cb => cb.checked).length;
+
+        if (bulkScope === 'all_matching') {
+            if (bulkBar) bulkBar.hidden = false;
+            if (bulkCount) bulkCount.textContent = `All ${TOTAL_ITEMS} matching selected`;
+            if (bulkScopeBtn) {
+                bulkScopeBtn.textContent = `Select only current page (${checkedOnPage})`;
+            }
+            if (selectAll) {
+                selectAll.checked = true;
+                selectAll.indeterminate = false;
+            }
+        } else {
+            if (totalSelected > 0) {
+                if (bulkBar) bulkBar.hidden = false;
+                if (bulkCount) bulkCount.textContent = `${totalSelected} selected`;
+                if (bulkScopeBtn) {
+                    bulkScopeBtn.textContent = `Select all ${TOTAL_ITEMS} matching documents`;
+                }
+            } else {
+                if (bulkBar) bulkBar.hidden = true;
+            }
+
+            if (selectAll) {
+                selectAll.checked = pageBoxes.length > 0 && checkedOnPage === pageBoxes.length;
+                selectAll.indeterminate = checkedOnPage > 0 && checkedOnPage < pageBoxes.length;
+            }
+        }
+    };
+
+    syncCheckboxesFromSet();
+    updateBulkBar();
+
+    if (selectAll) {
+        selectAll.addEventListener('change', () => {
+            bulkScope = 'selected';
+            rowCheckboxes.forEach(cb => {
+                cb.checked = selectAll.checked;
+                if (selectAll.checked) {
+                    selectedDocIds.add(cb.value);
+                } else {
+                    selectedDocIds.delete(cb.value);
+                }
+            });
+            saveSelectedIds();
+            updateBulkBar();
+        });
+    }
+
+    rowCheckboxes.forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (bulkScope === 'all_matching') {
+                bulkScope = 'selected';
+            }
+            if (cb.checked) {
+                selectedDocIds.add(cb.value);
+            } else {
+                selectedDocIds.delete(cb.value);
+            }
+            saveSelectedIds();
+            updateBulkBar();
+        });
+    });
+
+    if (bulkScopeBtn) {
+        bulkScopeBtn.addEventListener('click', () => {
+            if (bulkScope === 'selected') {
+                bulkScope = 'all_matching';
+                rowCheckboxes.forEach(cb => {
+                    cb.checked = true;
+                    selectedDocIds.add(cb.value);
+                });
+            } else {
+                bulkScope = 'selected';
+            }
+            saveSelectedIds();
+            updateBulkBar();
+        });
+    }
+
+    if (bulkClearBtn) {
+        bulkClearBtn.addEventListener('click', () => {
+            bulkScope = 'selected';
+            selectedDocIds.clear();
+            saveSelectedIds();
+            rowCheckboxes.forEach(cb => { cb.checked = false; });
+            if (selectAll) {
+                selectAll.checked = false;
+                selectAll.indeterminate = false;
+            }
+            updateBulkBar();
+        });
+    }
+
+    if (bulkDownloadBtn && bulkDownloadForm && bulkDownloadIds && bulkDownloadScope) {
+        bulkDownloadBtn.addEventListener('click', () => {
+            if (bulkScope === 'all_matching') {
+                bulkDownloadScope.value = 'all_matching';
+                bulkDownloadIds.value = '';
+                bulkDownloadForm.submit();
+            } else {
+                if (selectedDocIds.size === 0) return;
+                bulkDownloadScope.value = 'selected';
+                bulkDownloadIds.value = Array.from(selectedDocIds).join(',');
+                bulkDownloadForm.submit();
+            }
+        });
+    }
+
+    /* --- Column Visibility Preferences ---------------------------------- */
+    const isWholeVault = {{ "true" if is_whole_vault else "false" }};
+    const docTable = document.querySelector('.pt-doc-table');
+    const STORAGE_COL_KEY = isWholeVault ? 'proptally_doc_cols_whole' : 'proptally_doc_cols_folder';
+
+    const defaultPrefs = {
+        location: isWholeVault,
+        uploaded: true,
+        size: true,
+        status: true,
+    };
+
+    let colPrefs = { ...defaultPrefs };
+    try {
+        const saved = localStorage.getItem(STORAGE_COL_KEY);
+        if (saved) {
+            colPrefs = { ...defaultPrefs, ...JSON.parse(saved) };
+        }
+    } catch (err) {}
+
+    const applyColPrefs = () => {
+        if (!docTable) return;
+        ['location', 'uploaded', 'size', 'status'].forEach(col => {
+            const isVisible = !!colPrefs[col];
+            docTable.setAttribute(`data-hide-${col}`, isVisible ? 'false' : 'true');
+            const toggleInput = document.querySelector(`[data-col-toggle="${col}"]`);
+            if (toggleInput) {
+                toggleInput.checked = isVisible;
+            }
+        });
+    };
+
+    applyColPrefs();
+
+    document.querySelectorAll('[data-col-toggle]').forEach(input => {
+        input.addEventListener('change', () => {
+            const col = input.getAttribute('data-col-toggle');
+            colPrefs[col] = input.checked;
+            try {
+                localStorage.setItem(STORAGE_COL_KEY, JSON.stringify(colPrefs));
+            } catch (err) {}
+            applyColPrefs();
+        });
+    });
+
+    const resetColBtn = document.getElementById('col-reset-btn');
+    if (resetColBtn) {
+        resetColBtn.addEventListener('click', () => {
+            try {
+                localStorage.removeItem(STORAGE_COL_KEY);
+            } catch (err) {}
+            colPrefs = { ...defaultPrefs };
+            applyColPrefs();
         });
     }
 

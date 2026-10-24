@@ -1231,7 +1231,7 @@ def get_onboarding_router(templates, control_engine, tenant_manager, get_session
             if proposal.entity_type == ENTITY_PROPERTY
         ]
         if not accepted_properties:
-            problems.append("Accept at least one property; a portfolio needs a door.")
+            problems.append("Accept at least one property; a portfolio cannot be created without one.")
         for proposal in accepted:
             problem = _acceptance_problem(proposal)
             if problem:

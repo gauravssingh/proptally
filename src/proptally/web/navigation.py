@@ -69,7 +69,7 @@ _STREET_SUFFIXES = {
 
 def _derived_short_label(property_record: Property) -> str:
     """Street number plus street name, e.g. "12307 Larkspur St" -> "12307 Larkspur"."""
-    tokens = (property_record.name or property_record.address_line1 or "Door").split()
+    tokens = (property_record.name or property_record.address_line1 or "Property").split()
     if len(tokens) > 1 and tokens[-1].lower().strip(".,") in _STREET_SUFFIXES:
         tokens = tokens[:-1]
     return " ".join(tokens) if tokens else property_record.id

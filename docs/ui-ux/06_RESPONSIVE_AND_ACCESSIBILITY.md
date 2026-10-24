@@ -40,8 +40,10 @@ CSS custom properties cannot be used in media queries, so `tokens.css` records t
   both at `--pt-z-drawer`.
 * Content reserves space for the bottom bar: `padding-bottom: var(--pt-bottomnav-h) +
   var(--pt-space-6)` below 1024px, reset above.
-* Page padding: 16px mobile, 32px desktop; the content column is fluid beside the sidebar
-  and capped at `--pt-content-max` (1920px) on ultra-wide displays.
+* Page padding: 16px mobile, 32px desktop; the content column is fluid beside the sidebar.
+  Standard analytical screens cap at `--pt-content-max` (1920px), while document-intensive
+  workspaces (Document Vault and Statement Ingestion) utilize `.pt-content--fluid` to scale
+  fluidly across ultra-wide, 1440p, and 4K displays with responsive multi-pane proportions.
 
 ### 2.2 Navigation
 
@@ -64,6 +66,10 @@ CSS custom properties cannot be used in media queries, so `tokens.css` records t
   (provenance sub-labels, notes) are the ones that scroll away first.
 * Rows are 40px (32px compact) so a 44px touch target is not required for read-only data,
   but every row action is at least 32px and reachable without hover.
+* Document Vault (`.pt-explorer__main`) and Statement Register (`.pt-statements-workspace--split`) tables
+  dynamically flex to utilize the full vertical height of the workspace (`flex: 1; height: 100%`) with
+  sticky headers (`position: sticky; top: 0; z-index: 2`), allowing hundreds of document rows to be
+  inspected seamlessly without artificial 544px / 34rem clipping on high-res displays.
 
 ### 2.4 KPI and metric layouts
 
