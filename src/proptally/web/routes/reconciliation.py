@@ -8,6 +8,7 @@ straight through to the domain posting service as a second line of defence.
 
 import math
 from typing import Optional
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -15,7 +16,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from proptally.core.exceptions import GovernanceAuthorizationError, InvalidSplitSumError
+from proptally.core.exceptions import (
+    DuplicatePostingError,
+    GovernanceAuthorizationError,
+    InvalidSplitSumError,
+)
 from proptally.db.models import (
     FinancialAccount,
     Property,
@@ -30,7 +35,15 @@ from proptally.domain.transactions.policy import (
     classification_status_for,
     evaluate_posting_policy,
 )
-from proptally.domain.transactions.rent import bulk_apply_rent_payments
+from proptally.domain.transactions.rent import (
+    RentApplyReport,
+    apply_rent_row,
+    apply_rent_selection,
+    dismiss_rent_candidate,
+    dismissed_rent_transactions,
+    find_rent_candidates,
+    restore_rent_candidate,
+)
 from proptally.domain.transactions.splits import (
     SplitItem,
     apply_transaction_splits,
@@ -80,6 +93,83 @@ def find_matching_vendor_rule(rules: list[VendorRule], pattern_or_name: Optional
     return None
 
 
+def _posting_http_error(exc: Exception) -> HTTPException:
+    """Map a posting refusal onto the status the operator should see."""
+    if isinstance(exc, GovernanceAuthorizationError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, InvalidSplitSumError):
+        return HTTPException(status_code=400, detail=str(exc))
+    # DuplicatePostingError, "already POSTED", and any other allocation conflict:
+    # the transaction cannot be posted as asked, and saying so is not a crash.
+    return HTTPException(status_code=409, detail=str(exc))
+
+
+def _queue_notice(notice: Optional[str], applied: Optional[int]) -> tuple[Optional[str], str]:
+    """The toast a queue action leaves behind, derived from its redirect token."""
+    count = applied or 0
+    plural = "" if count == 1 else "s"
+    if notice == "assign":
+        return ("Assigned and posted to the ledger.", "success")
+    if notice == "split":
+        return ("Split saved and posted to the ledger.", "success")
+    if notice == "suggestion":
+        return ("Suggestion applied and posted to the ledger.", "success")
+    if notice == "rule":
+        return ("Vendor rule saved.", "success")
+    if notice == "batch":
+        if count:
+            return (f"Vendor rule applied; posted {count} transaction{plural} to the ledger.", "success")
+        return (
+            "Vendor rule applied; matching transactions were classified and now need a sign-off.",
+            "info",
+        )
+    return (None, "success")
+
+
+def _rent_notice(params) -> tuple[Optional[str], str]:
+    """The toast a rent-classification run leaves behind."""
+    notice = (params.get("notice") or "").strip()
+    if notice == "dismissed":
+        return (
+            "Removed from rent candidates; the transaction stays in the review queue.",
+            "success",
+        )
+    if notice == "restored":
+        return ("Restored to rent candidates.", "success")
+
+    try:
+        posted = int(params.get("posted") or 0)
+        allocated = int(params.get("allocated") or 0)
+        skipped = int(params.get("skipped") or 0)
+        errors = int(params.get("error") or 0)
+    except (TypeError, ValueError):
+        return (None, "success")
+    if not any((posted, allocated, skipped, errors)):
+        return (None, "success")
+
+    parts = []
+    if posted:
+        parts.append(f"posted {posted} payment{'' if posted == 1 else 's'}")
+    if allocated:
+        parts.append(f"allocated {allocated} awaiting a sign-off")
+    if skipped:
+        parts.append(f"left {skipped} in the queue")
+    if errors:
+        parts.append(f"{errors} failed")
+    variant = "error" if errors and not posted else ("warning" if not posted else "success")
+    return ("Rent received: " + "; ".join(parts) + ".", variant)
+
+
+def _rent_redirect(report: RentApplyReport):
+    params = urlencode({
+        "posted": len(report.posted),
+        "allocated": len(report.allocated),
+        "skipped": len(report.skipped),
+        "error": len(report.errors),
+    })
+    return RedirectResponse(url=f"/reconciliation/rent?{params}", status_code=303)
+
+
 def get_reconciliation_router(templates, get_session_dep):
     router = APIRouter()
 
@@ -115,8 +205,31 @@ def get_reconciliation_router(templates, get_session_dep):
         page: int = Query(default=1, ge=1),
         per_page: int = Query(default=25, ge=1, le=500),
         applied: Optional[int] = Query(None),
+        notice: Optional[str] = Query(None),
+        posted: Optional[int] = Query(None),
+        held: Optional[int] = Query(None),
+        skipped: Optional[int] = Query(None),
         session: Session = Depends(get_session_dep),
     ):
+        notice_message, notice_variant = _queue_notice(notice, applied)
+        if notice == "bulk":
+            posted_n, held_n, skipped_n = posted or 0, held or 0, skipped or 0
+            parts = []
+            if posted_n:
+                parts.append(f"posted {posted_n}")
+            if held_n:
+                parts.append(f"held {held_n} for sign-off")
+            if skipped_n:
+                parts.append(f"skipped {skipped_n}")
+            notice_message = (
+                "Bulk classification: " + ", ".join(parts) + "."
+                if parts
+                else "Bulk classification: nothing changed."
+            )
+            notice_variant = (
+                "error" if skipped_n and not posted_n
+                else ("warning" if held_n and not posted_n else "success")
+            )
         # 1. Fetch unallocated states
         unallocated_states = session.exec(
             select(TransactionProcessingState)
@@ -129,7 +242,9 @@ def get_reconciliation_router(templates, get_session_dep):
         # 2. Pre-fetch financial accounts and vendor rules to avoid N+1 queries
         accounts_map = {a.id: a for a in session.exec(select(FinancialAccount)).all()}
         vendor_rules = session.exec(select(VendorRule).where(VendorRule.is_active == True)).all()
-        properties = session.exec(select(Property).where(Property.is_active == True)).all()
+        all_properties = session.exec(select(Property)).all()
+        properties_by_id = {p.id: p for p in all_properties}
+        properties = [p for p in all_properties if p.is_active]
         state_ids = [state.transaction_id for state in unallocated_states]
         transactions_map = {
             txn.id: txn
@@ -199,9 +314,16 @@ def get_reconciliation_router(templates, get_session_dep):
             if account_id and txn.financial_account_id != account_id:
                 continue
 
-            # Vendor Pattern Filter
+            # Vendor Pattern Filter: a chip carries the display vendor name
+            # ("Retail / Dining"), which is not always a substring of the rule
+            # description or the bank text, so match the suggestion's vendor too.
             if vendor_pattern_upper:
-                if vendor_pattern_upper not in desc_upper and (not sugg or vendor_pattern_upper not in sugg.rule_name.upper()):
+                match_desc = vendor_pattern_upper in desc_upper
+                match_sugg = bool(sugg) and (
+                    vendor_pattern_upper in (sugg.rule_name or "").upper()
+                    or vendor_pattern_upper in (sugg.vendor_name or "").upper()
+                )
+                if not (match_desc or match_sugg):
                     continue
 
             # Governance Gate Filter
@@ -268,17 +390,7 @@ def get_reconciliation_router(templates, get_session_dep):
                 "splits": splits,
             })
 
-        # 7. Batch Action Metadata (if vendor pattern is active and matching items exist)
-        batch_action_info = None
-        if vendor_pattern_upper and filtered_items:
-            matching_rule = find_matching_vendor_rule(vendor_rules, vendor_pattern)
-            batch_action_info = {
-                "pattern": vendor_pattern,
-                "count": filtered_count,
-                "rule": matching_rule,
-                "suggested_category": matching_rule.default_category if matching_rule else "PERSONAL",
-                "suggested_property_id": matching_rule.default_property_id if matching_rule else None,
-            }
+        prop_name_lookup = {door.id: door.name for door in properties}
 
         return templates.TemplateResponse(
             request=request,
@@ -294,10 +406,12 @@ def get_reconciliation_router(templates, get_session_dep):
                 "suggested_count": suggested_count,
                 "accounts": list(accounts_map.values()),
                 "properties": properties,
+                "properties_by_id": properties_by_id,
                 "top_vendors": top_vendors,
                 "vendor_rules": vendor_rules,
-                "batch_action_info": batch_action_info,
-                "applied_count": applied,
+                "prop_name_lookup": prop_name_lookup,
+                "message": notice_message,
+                "message_variant": notice_variant,
                 "pagination": {
                     "page": current_page,
                     "per_page": per_page,
@@ -345,52 +459,212 @@ def get_reconciliation_router(templates, get_session_dep):
             )
         ]
 
+        if txn.amount_cents == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="This bank record carries no amount; there is nothing to allocate.",
+            )
+
         policy = evaluate_posting_policy(session, txn, splits)
         try:
             assert_posting_authorized(
                 policy, client_confirmed=client_confirmed, user_attested_cpa_review=user_attested_cpa_review
             )
-        except GovernanceAuthorizationError as exc:
-            raise HTTPException(status_code=403, detail=str(exc))
-
-        apply_transaction_splits(session, txn.id, splits)
-        try:
+            # One unit of work: a rejected posting must not leave a rewritten
+            # allocation behind.
+            apply_transaction_splits(session, txn.id, splits, commit=False)
             post_transaction_to_ledger(
                 session=session,
                 transaction_id=txn.id,
                 client_confirmed=client_confirmed,
                 user_attested_cpa_review=user_attested_cpa_review,
+                commit=False,
                 **posting_actor_kwargs(),
             )
-        except GovernanceAuthorizationError as exc:
-            raise HTTPException(status_code=403, detail=str(exc))
+            session.commit()
+        except (GovernanceAuthorizationError, DuplicatePostingError, InvalidSplitSumError, ValueError) as exc:
+            session.rollback()
+            raise _posting_http_error(exc) from exc
 
-        return RedirectResponse(url="/reconciliation", status_code=303)
+        return RedirectResponse(url="/reconciliation?notice=assign", status_code=303)
 
-    @router.post("/reconciliation/bulk-rent")
-    def bulk_classify_rent(
-        property_id: str = Form(...),
-        tenant_name: str = Form(...),
-        dry_run: bool = Form(False),
+    @router.get("/reconciliation/rent", response_class=HTMLResponse)
+    def view_rent_received(
+        request: Request,
+        q: Optional[str] = Query(None),
+        property_id: Optional[str] = Query(None),
+        state: Optional[str] = Query(None),
         session: Session = Depends(get_session_dep),
     ):
-        """Classify and post rent inflows for one tenant and rental door."""
-        property_id = property_id.strip()
-        tenant_name = tenant_name.strip()
-        if not property_id or not tenant_name:
-            raise HTTPException(status_code=400, detail="Choose a rental property and enter the tenant name.")
-        prop = session.get(Property, property_id)
-        if prop is None or prop.property_type != "RENTAL_INVESTMENT":
-            raise HTTPException(status_code=400, detail="Choose an active rental property.")
+        """Rent received: every inflow with the evidence for or against calling it rent."""
+        view = (state or "pending").strip().lower()
+        dismissed = dismissed_rent_transactions(session)
+        if view == "dismissed":
+            candidates = [
+                candidate
+                for candidate in find_rent_candidates(
+                    session,
+                    q=q,
+                    property_id=(property_id or "").strip() or None,
+                    include_settled=True,
+                    include_dismissed=True,
+                    include_all=True,
+                    max_scan=5000,
+                )
+                if candidate.transaction.id in dismissed
+            ]
+        else:
+            candidates = find_rent_candidates(
+                session,
+                q=q,
+                property_id=(property_id or "").strip() or None,
+                include_settled=view == "all",
+            )
+        rows = []
+        for candidate in candidates:
+            policy = None
+            if not candidate.is_settled and candidate.category:
+                policy = evaluate_posting_policy(
+                    session,
+                    candidate.transaction,
+                    [
+                        SplitItem(
+                            property_id=candidate.door.id if candidate.door else None,
+                            category=candidate.category,
+                            amount_cents=candidate.amount_cents,
+                        )
+                    ],
+                )
+            rows.append({
+                "candidate": candidate,
+                "policy": policy,
+                "dismissed": candidate.transaction.id in dismissed,
+            })
 
-        report = bulk_apply_rent_payments(
-            session,
-            property_id=property_id,
-            tenant_name=tenant_name,
-            dry_run=dry_run,
+        doors = session.exec(
+            select(Property)
+            .where(
+                Property.property_type == "RENTAL_INVESTMENT",
+                Property.is_active == True,  # noqa: E712
+            )
+            .order_by(Property.name)
+        ).all()
+        ready_ids = [
+            candidate.transaction.id
+            for candidate in candidates
+            if candidate.is_actionable
+            and not candidate.is_settled
+            and candidate.transaction.id not in dismissed
+        ]
+        selectable_count = sum(
+            1
+            for candidate in candidates
+            if not candidate.is_settled and candidate.transaction.id not in dismissed
         )
-        target = "/reconciliation" if dry_run else f"/reconciliation?applied={len(report.applied)}"
-        return RedirectResponse(url=target, status_code=303)
+        message, message_variant = _rent_notice(request.query_params)
+
+        return templates.TemplateResponse(
+            request=request,
+            name="rent.html",
+            context={
+                "active_page": "reconciliation",
+                "rows": rows,
+                "properties": doors,
+                "candidate_count": len(candidates),
+                "ready_count": len(ready_ids),
+                "selectable_count": selectable_count,
+                "needs_door_count": sum(
+                    1 for candidate in candidates
+                    if not candidate.is_settled and candidate.door is None
+                ),
+                "active_filters": {
+                    "q": q or "",
+                    "property_id": property_id or "",
+                    "state": view if view in ("all", "dismissed") else "pending",
+                },
+                "message": message,
+                "message_variant": message_variant,
+            },
+        )
+
+    @router.post("/reconciliation/rent/apply")
+    def apply_selected_rent_payments(
+        transaction_ids: str = Form(""),
+        transaction_id: list[str] = Form(default=[]),
+        property_id: Optional[str] = Form(None),
+        category: Optional[str] = Form(None),
+        client_confirmed: bool = Form(False),
+        user_attested_cpa_review: bool = Form(False),
+        session: Session = Depends(get_session_dep),
+    ):
+        """Apply one door and category to the selected payments, or each one's proposal."""
+        ids = [txn_id.strip() for txn_id in transaction_ids.split(",") if txn_id.strip()]
+        ids.extend(txn_id.strip() for txn_id in transaction_id if txn_id.strip())
+        unique: list[str] = []
+        for txn_id in ids:
+            if txn_id and txn_id not in unique:
+                unique.append(txn_id)
+        if not unique:
+            raise HTTPException(status_code=400, detail="Select at least one payment.")
+
+        try:
+            report = apply_rent_selection(
+                session,
+                unique,
+                property_id=(property_id or "").strip() or None,
+                category=(category or "").strip() or None,
+                client_confirmed=client_confirmed,
+                user_attested_cpa_review=user_attested_cpa_review,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _rent_redirect(report)
+
+    @router.post("/reconciliation/rent/row")
+    def classify_rent_row(
+        transaction_id: str = Form(...),
+        property_id: str = Form(...),
+        category: str = Form(...),
+        client_confirmed: bool = Form(False),
+        user_attested_cpa_review: bool = Form(False),
+        session: Session = Depends(get_session_dep),
+    ):
+        """Classify one inflow with the door and category a person chose."""
+        try:
+            report = apply_rent_row(
+                session,
+                transaction_id=transaction_id.strip(),
+                property_id=property_id.strip(),
+                category=category.strip(),
+                client_confirmed=client_confirmed,
+                user_attested_cpa_review=user_attested_cpa_review,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _rent_redirect(report)
+
+    @router.post("/reconciliation/rent/dismiss")
+    def dismiss_rent_row(
+        transaction_id: str = Form(...),
+        session: Session = Depends(get_session_dep),
+    ):
+        """Rule a payment out as rent; it stays in the review queue."""
+        try:
+            dismiss_rent_candidate(session, transaction_id.strip(), reason="Not rent (owner)")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(url="/reconciliation/rent?notice=dismissed", status_code=303)
+
+    @router.post("/reconciliation/rent/restore")
+    def restore_rent_row(
+        transaction_id: str = Form(...),
+        session: Session = Depends(get_session_dep),
+    ):
+        """Undo a "not rent" decision."""
+        restore_rent_candidate(session, transaction_id.strip())
+        return RedirectResponse(
+            url="/reconciliation/rent?state=dismissed&notice=restored", status_code=303
+        )
 
     @router.post("/reconciliation/split")
     def split_review_item(
@@ -421,11 +695,12 @@ def get_reconciliation_router(templates, get_session_dep):
         if not splits:
             raise HTTPException(status_code=400, detail="At least one positive split required.")
 
-        state = apply_transaction_splits(session, txn.id, splits, allow_partial=True)
-
-        if post_if_fully_allocated and state.allocation_status == "FULLY_ALLOCATED":
-            policy = evaluate_posting_policy(session, txn, splits)
-            try:
+        try:
+            state = apply_transaction_splits(
+                session, txn.id, splits, allow_partial=True, commit=False
+            )
+            if post_if_fully_allocated and state.allocation_status == "FULLY_ALLOCATED":
+                policy = evaluate_posting_policy(session, txn, splits)
                 assert_posting_authorized(
                     policy, client_confirmed=client_confirmed, user_attested_cpa_review=user_attested_cpa_review
                 )
@@ -434,12 +709,15 @@ def get_reconciliation_router(templates, get_session_dep):
                     transaction_id=txn.id,
                     client_confirmed=client_confirmed,
                     user_attested_cpa_review=user_attested_cpa_review,
+                    commit=False,
                     **posting_actor_kwargs(),
                 )
-            except GovernanceAuthorizationError as exc:
-                raise HTTPException(status_code=403, detail=str(exc))
+            session.commit()
+        except (GovernanceAuthorizationError, DuplicatePostingError, InvalidSplitSumError, ValueError) as exc:
+            session.rollback()
+            raise _posting_http_error(exc) from exc
 
-        return RedirectResponse(url="/reconciliation", status_code=303)
+        return RedirectResponse(url="/reconciliation?notice=split", status_code=303)
 
     @router.post("/reconciliation/apply-suggestion")
     def apply_suggested_classification(
@@ -467,23 +745,31 @@ def get_reconciliation_router(templates, get_session_dep):
             )
         ]
 
+        if txn.amount_cents == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="This bank record carries no amount; there is nothing to allocate.",
+            )
+
         policy = evaluate_posting_policy(session, txn, splits)
         try:
             assert_posting_authorized(
                 policy, client_confirmed=client_confirmed, user_attested_cpa_review=user_attested_cpa_review
             )
-        except GovernanceAuthorizationError as exc:
-            raise HTTPException(status_code=403, detail=str(exc))
-
-        apply_transaction_splits(session, txn.id, splits)
-        post_transaction_to_ledger(
-            session=session,
-            transaction_id=txn.id,
-            client_confirmed=client_confirmed,
-            user_attested_cpa_review=user_attested_cpa_review,
-            **posting_actor_kwargs(),
-        )
-        return RedirectResponse(url="/reconciliation", status_code=303)
+            apply_transaction_splits(session, txn.id, splits, commit=False)
+            post_transaction_to_ledger(
+                session=session,
+                transaction_id=txn.id,
+                client_confirmed=client_confirmed,
+                user_attested_cpa_review=user_attested_cpa_review,
+                commit=False,
+                **posting_actor_kwargs(),
+            )
+            session.commit()
+        except (GovernanceAuthorizationError, DuplicatePostingError, InvalidSplitSumError, ValueError) as exc:
+            session.rollback()
+            raise _posting_http_error(exc) from exc
+        return RedirectResponse(url="/reconciliation?notice=suggestion", status_code=303)
 
     @router.post("/reconciliation/batch-apply-rule")
     def batch_apply_vendor_rule(
@@ -532,7 +818,8 @@ def get_reconciliation_router(templates, get_session_dep):
 
         for state in unallocated_states:
             txn = session.get(Transaction, state.transaction_id)
-            if not txn:
+            if not txn or txn.amount_cents == 0:
+                # A record that moved no money has nothing to allocate.
                 continue
 
             desc_upper = txn.raw_description.upper()
@@ -598,20 +885,121 @@ def get_reconciliation_router(templates, get_session_dep):
                     # than aborting the batch.
                     continue
 
-                apply_transaction_splits(session, txn.id, splits)
                 try:
+                    apply_transaction_splits(session, txn.id, splits, commit=False)
                     post_transaction_to_ledger(
                         session=session,
                         transaction_id=txn.id,
                         client_confirmed=client_confirmed,
                         user_attested_cpa_review=user_attested_cpa_review,
+                        commit=False,
                         **posting_actor_kwargs(),
                     )
+                    session.commit()
                     applied_count += 1
-                except (GovernanceAuthorizationError, InvalidSplitSumError):
+                except (
+                    GovernanceAuthorizationError,
+                    DuplicatePostingError,
+                    InvalidSplitSumError,
+                    ValueError,
+                ):
+                    # One refused row must not abort the batch, and must not
+                    # leave its allocation rewritten.
+                    session.rollback()
                     continue
 
-        return RedirectResponse(url=f"/reconciliation?applied={applied_count}", status_code=303)
+        return RedirectResponse(
+            url=f"/reconciliation?applied={applied_count}&notice=batch", status_code=303
+        )
+
+    @router.post("/reconciliation/bulk-classify")
+    def bulk_classify_selected(
+        transaction_id: list[str] = Form(default=[]),
+        property_id: Optional[str] = Form(None),
+        category: str = Form(...),
+        client_confirmed: bool = Form(False),
+        user_attested_cpa_review: bool = Form(False),
+        session: Session = Depends(get_session_dep),
+    ):
+        """Classify every selected transaction with one door and category.
+
+        A row whose policy needs an authorization that was not supplied is
+        allocated and left unposted, exactly as the batch-rule path does, so one
+        gated item cannot block a bulk action or post without its gate.
+        """
+        ids = [txn_id.strip() for txn_id in transaction_id if txn_id.strip()]
+        if not ids:
+            raise HTTPException(status_code=400, detail="Select at least one transaction.")
+
+        prop_target = property_id if property_id and property_id.strip() else None
+        posted_count = held_count = skipped_count = 0
+
+        for txn_id in ids:
+            txn = session.get(Transaction, txn_id)
+            if not txn or txn.amount_cents == 0:
+                skipped_count += 1
+                continue
+
+            splits = [
+                SplitItem(
+                    property_id=prop_target,
+                    category=category,
+                    amount_cents=abs(txn.amount_cents),
+                    tax_review_status=classification_status_for(
+                        client_confirmed, user_attested_cpa_review
+                    ),
+                )
+            ]
+            policy = evaluate_posting_policy(session, txn, splits)
+            unmet_gate = (
+                policy.requires_client_confirmation and not client_confirmed
+            ) or (policy.requires_cpa_review and not user_attested_cpa_review)
+
+            try:
+                apply_transaction_splits(session, txn.id, splits, commit=False)
+                if unmet_gate:
+                    txn.requires_client_confirmation = (
+                        txn.requires_client_confirmation or policy.requires_client_confirmation
+                    )
+                    txn.requires_cpa_review = (
+                        txn.requires_cpa_review or policy.requires_cpa_review
+                    )
+                    session.add(txn)
+                    session.commit()
+                    held_count += 1
+                    continue
+
+                assert_posting_authorized(
+                    policy,
+                    client_confirmed=client_confirmed,
+                    user_attested_cpa_review=user_attested_cpa_review,
+                )
+                post_transaction_to_ledger(
+                    session=session,
+                    transaction_id=txn.id,
+                    client_confirmed=client_confirmed,
+                    user_attested_cpa_review=user_attested_cpa_review,
+                    commit=False,
+                    **posting_actor_kwargs(),
+                )
+                session.commit()
+                posted_count += 1
+            except (
+                GovernanceAuthorizationError,
+                DuplicatePostingError,
+                InvalidSplitSumError,
+                ValueError,
+            ):
+                session.rollback()
+                skipped_count += 1
+
+        return RedirectResponse(
+            url=(
+                "/reconciliation?notice=bulk"
+                f"&posted={posted_count}&held={held_count}&skipped={skipped_count}"
+            ),
+            status_code=303,
+        )
 
     @router.post("/reconciliation/vendor-rules/create")
     def create_vendor_rule(
@@ -661,6 +1049,6 @@ def get_reconciliation_router(templates, get_session_dep):
                 session=session,
             )
 
-        return RedirectResponse(url="/reconciliation", status_code=303)
+        return RedirectResponse(url="/reconciliation?notice=rule", status_code=303)
 
     return router

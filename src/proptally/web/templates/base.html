@@ -49,11 +49,11 @@
 {{ shell.sidebar(doors, active_page, active_property, review_count) }}
 
 <main class="pt-main" id="main-content">
-    {% if review_count and review_count > 0 %}
+    {% if review_count and review_count > 0 and active_page != 'reconciliation' %}
     <div class="pt-no-print">
         {{ ui.alert(
             variant="warning",
-            title="CBD REVIEW",
+            title="REVIEW NEEDED",
             text=("<strong>" ~ review_count ~ ((" item" if review_count == 1 else " items")) ~ "</strong> awaiting classification in the review queue."),
             action_label="Open queue →",
             action_href="/reconciliation",

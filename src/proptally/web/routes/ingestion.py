@@ -1307,13 +1307,18 @@ def get_ingestion_router(templates, get_session_dep):
             # Bank imports are where rent arrives. Classify only payments the
             # extractor can attribute to one door (memo address or a single
             # active lease); anything ambiguous stays in the review queue.
-            from proptally.domain.transactions.rent import bulk_apply_rent_payments
+            from proptally.domain.transactions.rent import apply_automatic_rent_payments
 
-            report = bulk_apply_rent_payments(session, create_leases=True)
-            if report.applied:
+            report = apply_automatic_rent_payments(session)
+            posted = len(report.posted)
+            if posted:
                 rent_note = (
-                    f" Auto-classified {len(report.applied)} tenant payment"
-                    f"{'' if len(report.applied) == 1 else 's'}."
+                    f" Auto-classified {posted} tenant payment"
+                    f"{'' if posted == 1 else 's'}."
+                )
+            if report.allocated:
+                rent_note += (
+                    f" {len(report.allocated)} need a governance sign-off in the rent queue."
                 )
         return _redirect(
             f"Statement imported as {statement.statement_type} on {statement.statement_date}.{rent_note}"

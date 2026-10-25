@@ -15,68 +15,31 @@
    =========================================================================== #}
 {% block content %}
 
-{%- set header_meta %}
-    {{ ui.badge(total_unallocated_count ~ " Pending", variant="error",
-                title="Every transaction awaiting classification, sign-off or posting. This is the whole queue, not the current filter.") }}
-{%- endset %}
-
 {% call ui.page_header(
     "Reconciliation & Review Queue" | safe,
-    "Classify repeat vendors, verify property allocations, and enforce client & CPA governance gates (CBD-1 & CBD-2).",
-    meta=header_meta
+    "Categorize repeat merchants, assign each transaction to the right property, and record the client and CPA sign-offs it needs."
 ) %}
     {{ ui.btn("Vendor Classification Rules (" ~ (vendor_rules | length) ~ ")",
               variant="subtle", icon_name="sliders",
               attrs='data-modal-open="vendor-rules-modal"') }}
-    {{ ui.btn("Bulk Classify Rent",
+    {{ ui.btn("Rent received",
               variant="subtle", icon_name="home",
-              attrs='data-modal-open="bulk-rent-modal"') }}
+              href="/reconciliation/rent") }}
 {% endcall %}
 
-{# --- Batch classification outcome (redirect back with ?applied=N) -------- #}
-{% if applied_count is not none and applied_count > 0 %}
-    {# `role="status"` so the outcome is announced (05 §4); ui.alert marks
-       warning/error itself, success stays an inline region. #}
-    <div role="status">
-        {{ ui.alert(
-            variant="success",
-            title="Batch classification applied",
-            text=("Applied the vendor classification rule and posted <strong>" ~ applied_count ~ "</strong> transaction" ~ ("" if applied_count == 1 else "s") ~ " to the ledger."),
-            action_label="Dismiss",
-            action_href="/reconciliation"
-        ) }}
-    </div>
-{% endif %}
-
-{# --- Headline metrics. The queue total and the filtered match count are
-       separate figures, and each says which it is (05 §5). ---------------- #}
-<div class="pt-grid pt-sm-grid-cols-2 pt-lg-grid-cols-4 pt-gap-4">
-    {{ ui.kpi(
-        "Total unallocated",
-        total_unallocated_count,
-        sub=ui.amount(total_pending_cents, mode="plain") ~ " awaiting classification",
-        evidence_kind="unallocated",
-        evidence_title="No allocation recorded on these transactions; none of them can post to the ledger yet."
-    ) }}
-
-    {{ ui.kpi(
-        "Filtered matches",
-        filtered_count,
-        sub=ui.amount(filtered_cents, mode="plain") ~ " in the current view"
-    ) }}
-
-    {{ ui.kpi(
-        "Rules auto-suggested",
-        suggested_count,
-        sub="Ready to one-click post",
-        evidence_kind="rule_match"
-    ) }}
-
-    {{ ui.kpi(
-        "Active vendor rules",
-        vendor_rules | length,
-        sub="Repeat merchant models"
-    ) }}
+{# --- One line of totals. The cards that used to sit here repeated the queue
+       badge, the section count and the rule button; only the money and the
+       suggestion count were not said elsewhere. ---------------------------- #}
+<div class="pt-flex pt-flex-wrap pt-items-baseline pt-gap-4">
+    <span class="pt-fs-caption pt-text-secondary">
+        <strong>{{ total_unallocated_count }}</strong> awaiting classification
+    </span>
+    <span class="pt-fs-caption pt-text-secondary">
+        {{ ui.amount(total_pending_cents, mode="plain") }} pending
+    </span>
+    <span class="pt-fs-caption pt-text-secondary">
+        <strong>{{ suggested_count }}</strong> with a rule suggestion
+    </span>
 </div>
 
 {# --- Filter options ------------------------------------------------------ #}
@@ -91,8 +54,8 @@
 {% set gate_options = [
     {"value": "ALL", "label": "All Statuses"},
     {"value": "SUGGESTED", "label": "Has Rule Suggestion"},
-    {"value": "CBD1", "label": "Needs CBD-1 (Client Sign-Off)"},
-    {"value": "CBD2", "label": "Needs CBD-2 (CPA Review)"},
+    {"value": "CBD1", "label": "Needs client sign-off"},
+    {"value": "CBD2", "label": "Needs CPA review"},
     {"value": "UNSUGGESTED", "label": "Manual Review Needed"}
 ] %}
 
@@ -126,7 +89,7 @@
             {{ ui.select_field("account_id", "Account", account_options,
                                selected=active_filters.account_id, cls="pt-field--sm") }}
 
-            {{ ui.select_field("gate", "Governance status", gate_options,
+            {{ ui.select_field("gate", "Sign-off needed", gate_options,
                                selected=active_filters.gate, cls="pt-field--sm") }}
 
             {{ ui.select_field("direction", "Transaction type", direction_options,
@@ -184,42 +147,26 @@
 </div>
 
 {# --- Batch classification options ---------------------------------------- #}
-{% set batch_category_options = [
-    {"value": "PERSONAL", "label": "Personal Draw (Non-Op)"},
-    {"value": "REPAIRS", "label": "Repairs & Maintenance (Line 14)"},
-    {"value": "SUPPLIES", "label": "Supplies (Line 15)"},
-    {"value": "UTILITIES", "label": "Utilities (Line 17)"},
-    {"value": "MANAGEMENT", "label": "Management Fees (Line 11)"},
-    {"value": "COMMISSIONS", "label": "Tenant Placement (Line 8)"},
-    {"value": "HOA", "label": "HOA Assessments (Line 19)"},
-    {"value": "MORTGAGE", "label": "Mortgage Payment (Loan Clearing)"},
-    {"value": "RENT_INCOME", "label": "Rent Income (Line 3)"},
-    {"value": "SECURITY_DEPOSIT", "label": "Tenant Security Deposit (Liability)"}
-] %}
-
-{% set batch_property_options = [{"value": "", "label": "Personal / None"}] %}
-{% for p in properties %}
-    {% set _ = batch_property_options.append({"value": p.id, "label": p.name}) %}
-{% endfor %}
-
 {% set assign_category_options = [
-    {"value": "PERSONAL", "label": "Personal Draw (Non-Op)"},
-    {"value": "RENT_INCOME", "label": "Rent Income (Line 3)"},
-    {"value": "SECURITY_DEPOSIT", "label": "Tenant Security Deposit (Liability)"},
-    {"value": "REPAIRS", "label": "Repairs & Maintenance (Line 14)"},
-    {"value": "MANAGEMENT", "label": "Management Fees (Line 11)"},
-    {"value": "COMMISSIONS", "label": "Tenant Placement (Line 8)"},
-    {"value": "HOA", "label": "HOA Assessments (Line 19)"},
-    {"value": "SUPPLIES", "label": "Supplies (Line 15)"},
-    {"value": "UTILITIES", "label": "Utilities (Line 17)"},
-    {"value": "TAXES", "label": "Property Taxes (Line 16)"},
-    {"value": "MORTGAGE", "label": "Mortgage Payment (Loan Clearing)"}
+    {"value": "PERSONAL", "label": "Personal"},
+    {"value": "RENT_INCOME", "label": "Rent income"},
+    {"value": "SECURITY_DEPOSIT", "label": "Security deposit"},
+    {"value": "REPAIRS", "label": "Repairs"},
+    {"value": "MANAGEMENT", "label": "Management"},
+    {"value": "COMMISSIONS", "label": "Commissions"},
+    {"value": "HOA", "label": "HOA"},
+    {"value": "SUPPLIES", "label": "Supplies"},
+    {"value": "UTILITIES", "label": "Utilities"},
+    {"value": "TAXES", "label": "Property taxes"},
+    {"value": "MORTGAGE", "label": "Mortgage"}
 ] %}
 
-{% set assign_property_options = [{"value": "", "label": "Personal / Non-Deductible"}] %}
+{% set assign_property_options = [{"value": "", "label": "Personal"}] %}
 {% for p in properties %}
     {% set _ = assign_property_options.append({"value": p.id, "label": p.name}) %}
 {% endfor %}
+
+{% set bulk_category_options = [{"value": "", "label": "Choose…"}] + assign_category_options %}
 
 {% set queue_actions %}
     {{ ui.badge("Showing " ~ filtered_count ~ " of " ~ total_unallocated_count, variant="neutral",
@@ -229,191 +176,141 @@
 
 {{ ui.section_open(
     "Review queue",
-    "Classify, satisfy a governance gate, or allocate by hand. Posted items leave the queue.",
-    actions=queue_actions
+    "Assign a property and category, or post a matching rule suggestion. Posted items leave the queue.",
+    actions=queue_actions,
+    cls="pt-queue-section"
 ) }}
 <div class="pt-stack-5">
 
-    {# --- Batch action bar: one rule applied to every matching row --------- #}
-    {% if batch_action_info and batch_action_info.count > 0 %}
-    <div class="pt-batchbar">
-        <div>
-            <div class="pt-flex pt-items-center pt-gap-2">
-                {{ ui.badge("Batch action", variant="chrome", upper=true) }}
-                <h3 class="pt-batchbar__title">
-                    Found {{ batch_action_info.count }} unallocated transactions matching "{{ batch_action_info.pattern }}"
-                </h3>
+    {% if review_items %}
+        <div class="pt-batchbar pt-queue-bulkbar">
+            <div>
+                <div class="pt-flex pt-items-center pt-gap-2">
+                    {{ ui.badge("Bulk classify", variant="chrome", upper=true) }}
+                    <h3 class="pt-batchbar__title">Select rows, then apply one property and category</h3>
+                </div>
+                <p class="pt-batchbar__note">
+                    {{ filtered_count }} in this view &middot; <span data-bulk-count>0 selected</span>
+                    <button type="button" class="pt-queue-bulkbar__clear" data-clear-selection hidden>Clear selection</button><span class="pt-queue-bulkbar__hint">. Rows that need a sign-off are left unposted.</span>
+                </p>
             </div>
-            {% if batch_action_info.rule %}
-            <p class="pt-batchbar__note">
-                Classified as <strong>{{ batch_action_info.rule.vendor_name }}</strong>
-                &middot; <em>{{ batch_action_info.rule.service_type }}</em>
-            </p>
-            {% endif %}
-            <p class="pt-batchbar__note">
-                Posts every matching transaction to the ledger in one action. Posted entries are never deleted, only compensated.
-            </p>
+            <form id="queueBulkForm" action="/reconciliation/bulk-classify" method="POST"
+                  class="pt-flex pt-flex-wrap pt-items-end pt-gap-3">
+                {{ csrf_field() }}
+                {{ ui.select_field("property_id", "Property", assign_property_options, cls="pt-field--sm") }}
+                {{ ui.select_field("category", "Category", bulk_category_options, required=true, cls="pt-field--sm") }}
+                {{ ui.btn("Select all", variant="secondary", size="sm", type="button", attrs="data-select-all") }}
+                {{ ui.btn("Apply to selected", variant="primary", size="sm", type="submit",
+                          attrs="data-bulk-submit") }}
+            </form>
         </div>
 
-        <form action="/reconciliation/batch-apply-rule" method="POST"
-              class="pt-flex pt-flex-wrap pt-items-end pt-gap-3">
-        {{ csrf_field() }}
-            <input type="hidden" name="vendor_pattern" value="{{ batch_action_info.pattern }}">
-            {% if batch_action_info.rule %}
-            <input type="hidden" name="rule_id" value="{{ batch_action_info.rule.id }}">
-            {% endif %}
-
-            {{ ui.select_field("category", "Category", batch_category_options,
-                               selected=batch_action_info.suggested_category, cls="pt-field--sm") }}
-
-            {{ ui.select_field("property_id", "Property", batch_property_options,
-                               selected=(batch_action_info.suggested_property_id or ""), cls="pt-field--sm") }}
-
-            {% set batch_confirm %}data-confirm="Classify and post all {{ batch_action_info.count }} matching transactions to the ledger? Posted entries can only be reversed by a compensating entry."{% endset %}
-            {{ ui.btn("Batch Post All " ~ batch_action_info.count, variant="primary", type="submit",
-                      icon_name="bolt", attrs=batch_confirm) }}
-        </form>
-    </div>
-    {% endif %}
-
-    {% if review_items %}
+        <div class="pt-queue-sticky-gap" aria-hidden="true"></div>
+        {% set gate_ns = namespace(any=false) %}
         {% for item in review_items %}
-        {% set txn = item.transaction %}
-        {% set state = item.state %}
-
-        {{ ui.review_item_open() }}
-
-            {# --- Row 1: evidence badges, merchant, date and amount -------- #}
-            <div class="pt-review-item__head">
-                <div class="pt-review-item__badges">
-                    {% if 'CBD-1' in txn.raw_description %}
-                    {{ ui.badge("CBD-1 CASH RENT", variant="warning", upper=true,
-                                title="Client authorisation (CBD-1) is required before this item can post.") }}
-                    {% elif 'CBD-2' in txn.raw_description or (item.account and item.account.mixed_use_status == 'MIXED_USE') %}
-                    {{ ui.badge("CBD-2 MIXED CARD", variant="rule", upper=true,
-                                title="Mixed-use card charge: external review (CBD-2) applies before posting.") }}
-                    {% elif state.allocation_status != 'FULLY_ALLOCATED' %}
-                    {{ ui.evidence("unallocated") }}
-                    {% elif state.posting_status != 'POSTED' %}
-                    {{ ui.evidence("awaiting_post") }}
-                    {% else %}
-                    {{ ui.evidence("posted") }}
-                    {% endif %}
-
-                    {% if item.suggestion and item.suggestion.vendor_name %}
-                    {{ ui.badge(item.suggestion.vendor_name, variant="outline", upper=false, mono=false) }}
-                    {% endif %}
-
-                    <span class="pt-review-item__merchant">{{ txn.raw_description }}</span>
-                </div>
-
-                <div class="pt-review-item__amount">
-                    <span class="pt-fs-caption pt-text-muted pt-num">{{ txn.transaction_date | format_date }}</span>
-                    {{ ui.amount(txn.amount_cents, mode="signed", strong=true) }}
-                </div>
-            </div>
-
-            {# --- Row 2: account, service type, residual ------------------- #}
-            <div class="pt-review-item__facts">
-                {{ ui.stat("Financial account", item.account_name, boxed=true) }}
-                {{ ui.stat("Service type",
-                           (item.suggestion.service_type if item.suggestion and item.suggestion.service_type else "Unclassified merchant"),
-                           boxed=true) }}
-                {{ ui.stat("Residual unallocated", ui.amount(state.residual_cents, mode="plain"), boxed=true) }}
-            </div>
-
-            {# --- Row 3: rule suggestion → ACCEPT SUGGESTION --------------- #}
-            {% if item.suggestion %}
-            <div class="pt-review-item__suggestion">
-                <div>
-                    <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-2">
-                        {{ ui.evidence("rule_match") }}
-                        <strong>{{ item.suggestion.rule_name }}</strong>
-                    </div>
-                    <span class="pt-fs-caption">
-                        Target category: <code>{{ item.suggestion.category }}</code>
-                        &middot; Property: <code>{{ item.suggestion.property_id or 'Personal (Non-Op)' }}</code>
-                    </span>
-                </div>
-
-                <form action="/reconciliation/apply-suggestion" method="POST"
-                      class="pt-flex pt-flex-wrap pt-items-center pt-gap-3">
-        {{ csrf_field() }}
-                    <input type="hidden" name="transaction_id" value="{{ txn.id }}">
-
-                    {% if item.suggestion.requires_client_confirmation or item.policy.requires_client_confirmation %}
-                    {{ ui.cbd_gate(
-                        "cbd1", "client_confirmed",
-                        "Confirm CBD-1 (client sign-off)",
-                        "suggestion-cbd1-" ~ txn.id,
-                        required=true,
-                        hint="Explicit client authorization must be on record before this suggestion posts."
-                    ) }}
-                    {% endif %}
-
-                    {% if item.suggestion.requires_cpa_review or item.policy.should_offer_review %}
-                    {{ ui.cbd_gate(
-                        "cbd2", "user_attested_cpa_review",
-                        "CPA review",
-                        "suggestion-cbd2-" ~ txn.id,
-                        hint="Self-attestation that external review occurred — not verified CPA approval."
-                    ) }}
-                    {% endif %}
-
-                    {{ ui.btn("Accept Suggestion", variant="primary", type="submit", icon_after="chevron_right") }}
-                </form>
-            </div>
+            {% if item.state.posting_status != 'POSTED' and item.policy
+                  and (item.policy.requires_client_confirmation or item.policy.should_offer_review) %}
+                {% set gate_ns.any = true %}
             {% endif %}
-
-            {# --- Row 4: manual assignment → Assign & Post ----------------- #}
-            <form action="/reconciliation/assign" method="POST" class="pt-stack-3">
-        {{ csrf_field() }}
-                <input type="hidden" name="transaction_id" value="{{ txn.id }}">
-
-                <div class="pt-review-item__actions">
-                    <div class="pt-flex pt-flex-wrap pt-items-end pt-gap-3">
+        {% endfor %}
+        {{ ui.table_open(compact=true, label="Review queue",
+                         cls="pt-table-wrap--page" ~ (" pt-gated-actions" if gate_ns.any else "")) }}
+            <thead>
+                <tr>
+                    <th scope="col"><span class="pt-sr-only">Select</span></th>
+                    {{ ui.th("Date", cls="pt-table__date pt-table__date--tight") }}
+                    {{ ui.th("Transaction") }}
+                    {{ ui.th("Amount", num=true) }}
+                    {{ ui.th("Suggestion", cls="pt-table__suggestion") }}
+                    {{ ui.th("Property", cls="pt-table__door") }}
+                    {{ ui.th("Category", cls="pt-table__category") }}
+                    {{ ui.th("Action", cls="pt-table__queue-action") }}
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in review_items %}
+                {% set txn = item.transaction %}
+                {% set state = item.state %}
+                {% set split = item.splits[0] if item.splits | length == 1 else none %}
+                <tr{% if state.posting_status != 'POSTED' %} data-queue-row{% endif %}>
+                    <td>
+                        {% if state.posting_status != 'POSTED' %}
+                        <input type="checkbox" name="transaction_id" value="{{ txn.id }}"
+                               form="queueBulkForm" data-bulk-pick
+                               aria-label="Select {{ txn.raw_description }}">
+                        {% endif %}
+                    </td>
+                    <td class="pt-table__date pt-table__date--tight" title="{{ txn.transaction_date | format_date }}">{{ txn.transaction_date | format_date_numeric }}</td>
+                    <td class="pt-table__primary" title="{{ item.account_name }} — {{ txn.raw_description }}">
+                        {{ txn.raw_description }}
+                        <span class="pt-fs-caption pt-text-muted">{{ item.account_name }}</span>
+                    </td>
+                    <td class="pt-table__num">{{ ui.amount(txn.amount_cents, mode="signed") }}</td>
+                    <td class="pt-table__suggestion">
+                        {% if item.suggestion %}
+                        <span title="{{ item.suggestion.vendor_name }}">{{ ui.evidence("rule_match") }}</span>
+                        {% elif state.posting_status != 'POSTED' and state.allocation_status == 'FULLY_ALLOCATED' %}
+                        {{ ui.evidence("awaiting_post") }}
+                        {% else %}
+                        <span class="pt-text-muted">&mdash;</span>
+                        {% endif %}
+                    </td>
+                    <td class="pt-table__door">
                         {{ ui.select_field(
-                            "property_id", "Assign to", assign_property_options,
-                            selected=(item.suggestion.property_id if item.suggestion and item.suggestion.property_id else ""),
-                            cls="pt-field--sm"
+                            "property_id", "Property", assign_property_options,
+                            selected=(split.property_id if split else (item.suggestion.property_id if item.suggestion and item.suggestion.property_id else "")),
+                            cls="pt-field--sm", hidden_label=true,
+                            extra='form="rowForm_' ~ txn.id ~ '"'
                         ) }}
+                    </td>
+                    <td class="pt-table__category">
                         {{ ui.select_field(
                             "category", "Category", assign_category_options,
-                            selected=(item.suggestion.category if item.suggestion else none),
-                            cls="pt-field--sm"
+                            selected=(split.category if split else (item.suggestion.category if item.suggestion else none)),
+                            cls="pt-field--sm", hidden_label=true,
+                            extra='form="rowForm_' ~ txn.id ~ '"'
                         ) }}
-                    </div>
-
-                    <div class="pt-flex pt-flex-wrap pt-items-center pt-gap-2">
-                        {% set new_rule_attrs %}data-new-rule="{{ txn.raw_description }}"{% endset %}
-                        {{ ui.btn("Save as Rule", variant="ghost", size="sm", attrs=new_rule_attrs,
-                                  title="Open the vendor rule manager with a pattern derived from this description.") }}
-                        {{ ui.btn("Assign & Post", variant="neutral", type="submit", icon_after="chevron_right") }}
-                    </div>
-                </div>
-
-                {% if item.policy.requires_client_confirmation %}
-                {{ ui.cbd_gate(
-                    "cbd1", "client_confirmed",
-                    "I confirm explicit client authorization before this transaction is posted (CBD-1 Gate).",
-                    "confirm_cbd1_" ~ txn.id,
-                    required=true,
-                    hint="CBD-1 is client authorisation. It does not satisfy CBD-2."
-                ) }}
-                {% endif %}
-
-                {% if item.policy.should_offer_review %}
-                {{ ui.cbd_gate(
-                    "cbd2", "user_attested_cpa_review",
-                    "I attest that external review of this charge has occurred (CPA review for mixed-use card, or classification of unclassified card).",
-                    "confirm_cbd2_" ~ txn.id,
-                    hint="This is a self-attestation, not verified CPA approval."
-                ) }}
-                {% endif %}
-            </form>
-
-        {{ ui.review_item_close() }}
-        {% endfor %}
+                    </td>
+                    <td class="pt-table__queue-action">
+                        <form id="rowForm_{{ txn.id }}" action="/reconciliation/assign" method="POST">
+                            {{ csrf_field() }}
+                            <input type="hidden" name="transaction_id" value="{{ txn.id }}">
+                        </form>
+                        <div class="pt-table__actionstack{% if state.posting_status != 'POSTED' and item.policy
+                              and (item.policy.requires_client_confirmation or item.policy.should_offer_review) %} pt-table__actionstack--gated{% endif %}">
+                            <div class="pt-table__actionrow">
+                                {% set rule_attrs %}data-new-rule="{{ txn.raw_description }}"{% endset %}
+                                {{ ui.btn("Rule", variant="secondary", size="sm", attrs=rule_attrs,
+                                          title="Open the rule manager with this description.") }}
+                                {{ ui.btn("Post", variant="neutral", size="sm", type="submit",
+                                          attrs='form="rowForm_' ~ txn.id ~ '"',
+                                          title="Assign this property and category, then post to the ledger.") }}
+                            </div>
+                            {% if state.posting_status != 'POSTED' and item.policy
+                                  and (item.policy.requires_client_confirmation or item.policy.should_offer_review) %}
+                            <div class="pt-table__gates">
+                                {% if item.policy.requires_client_confirmation %}
+                                <label class="pt-check pt-fs-caption" for="row_client_{{ txn.id }}">
+                                    <input type="checkbox" id="row_client_{{ txn.id }}" name="client_confirmed"
+                                           form="rowForm_{{ txn.id }}">
+                                    <span class="pt-check__label">Client OK</span>
+                                </label>
+                                {% endif %}
+                                {% if item.policy.should_offer_review %}
+                                <label class="pt-check pt-fs-caption" for="row_cpa_{{ txn.id }}">
+                                    <input type="checkbox" id="row_cpa_{{ txn.id }}" name="user_attested_cpa_review"
+                                           form="rowForm_{{ txn.id }}">
+                                    <span class="pt-check__label">CPA OK</span>
+                                </label>
+                                {% endif %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        {{ ui.table_close() }}
 
         {# --- Pagination, filter-preserving --------------------------- #}
         {% set filter_qs = "per_page=" ~ active_filters.per_page
@@ -509,7 +406,7 @@
                         <td>{{ r.vendor_name }}</td>
                         <td class="pt-text-secondary">{{ r.service_type }}</td>
                         <td>{{ ui.badge(r.default_category, variant="neutral", upper=true) }}</td>
-                        <td class="pt-text-muted">{{ r.default_property_id or 'Personal (None)' }}</td>
+                        <td class="pt-text-muted">{{ prop_name_lookup.get(r.default_property_id, r.default_property_id) if r.default_property_id else 'Personal (None)' }}</td>
                         <td class="pt-table__actions">
                             <a class="pt-row-action" href="/reconciliation?vendor_pattern={{ r.pattern | urlencode }}">Filter →</a>
                         </td>
@@ -534,51 +431,6 @@
 </form>
 {{ ui.modal_close() }}
 
-{# =========================================================================
-   Bulk tenant rent classification. Reads the remitter and memo from Zelle
-   inflows; deposits and mixed deposit/rent memos are deliberately skipped.
-   ========================================================================= #}
-{% set rental_properties = properties | selectattr('property_type', 'equalto', 'RENTAL_INVESTMENT') | list %}
-{{ ui.modal_open(
-    "bulk-rent-modal",
-    "Bulk Classify Rent",
-    "Reads tenant names and memos from Zelle inflows, attributes rent to one rental property, posts Rental Income, and creates a lease when the payment history supports it.",
-    size="lg"
-) }}
-<form class="pt-modal__form" action="/reconciliation/bulk-rent" method="POST">
-    {{ csrf_field() }}
-    <div class="pt-modal__body">
-        <div class="pt-form-grid pt-form-grid--2">
-            <div class="pt-field">
-                <label class="pt-field__label" for="bulkRentProperty">Rental property</label>
-                <select id="bulkRentProperty" name="property_id" required>
-                    <option value="">Choose a rental property</option>
-                    {% for p in rental_properties %}
-                    <option value="{{ p.id }}">{{ p.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            {{ ui.text_field("tenant_name", "Tenant name", id="bulkRentTenant", required=true,
-                             placeholder="e.g. Tyler J Saxsma") }}
-        </div>
-
-        {{ ui.checkbox_field(
-            "dry_run",
-            "Preview only — classify and report without posting",
-            help="Dry runs never create splits, journal entries, or leases."
-        ) }}
-
-        <p class="pt-text-muted pt-fs-body">
-            Security deposits post to the tenant-deposit liability, never rental income. Memos that mix a deposit with rent are skipped for manual splitting.
-        </p>
-    </div>
-
-    <div class="pt-modal__footer pt-modal__footer--split">
-        {{ ui.btn("Cancel", variant="secondary", attrs="data-modal-close") }}
-        {{ ui.btn("Classify & Post Rent", variant="primary", type="submit") }}
-    </div>
-</form>
-{{ ui.modal_close() }}
 {% endblock %}
 
 {% block scripts %}
@@ -600,6 +452,77 @@
             }
         });
     });
+
+    /* Bulk selection: keep the count and the submit state in step with the ticks. */
+    (function () {
+        var form = document.getElementById('queueBulkForm');
+        if (!form) return;
+        var picks = Array.prototype.slice.call(document.querySelectorAll('[data-bulk-pick]'));
+        var submit = form.querySelector('[data-bulk-submit]');
+        var count = document.querySelector('[data-bulk-count]');
+
+        function refresh() {
+            var selected = 0;
+            picks.forEach(function (box) {
+                if (box.checked) selected += 1;
+                var row = box.closest('tr');
+                if (row) row.classList.toggle('is-selected', box.checked);
+            });
+            if (count) count.textContent = selected + ' selected';
+            if (submit) submit.disabled = selected === 0;
+            var clear = document.querySelector('[data-clear-selection]');
+            if (clear) clear.hidden = selected === 0;
+        }
+
+        picks.forEach(function (box) { box.addEventListener('change', refresh); });
+
+        /* The whole row is the toggle; controls inside it keep their own behaviour. */
+        document.querySelectorAll('tr[data-queue-row]').forEach(function (row) {
+            row.addEventListener('click', function (event) {
+                if (event.target.closest('a, button, input, select, textarea, label, form')) return;
+                var box = row.querySelector('[data-bulk-pick]');
+                if (!box) return;
+                box.checked = !box.checked;
+                refresh();
+            });
+        });
+
+        var all = document.querySelector('[data-select-all]');
+        if (all) all.addEventListener('click', function () {
+            var target = picks.length > 0 && picks.every(function (box) { return box.checked; });
+            picks.forEach(function (box) { box.checked = !target; });
+            refresh();
+        });
+
+        var clear = document.querySelector('[data-clear-selection]');
+        if (clear) clear.addEventListener('click', function () {
+            picks.forEach(function (box) { box.checked = false; });
+            refresh();
+        });
+
+        refresh();
+    })();
+
+    /* The bulk bar floats while the queue scrolls; the column header floats
+       directly beneath it. Offsets are measured because the bar's height
+       changes when its form wraps. */
+    (function () {
+        var bar = document.querySelector('.pt-queue-bulkbar');
+        if (!bar) return;
+
+        function syncOffsets() {
+            var appbar = document.querySelector('.pt-appbar');
+            var appbarVisible = appbar && getComputedStyle(appbar).display !== 'none';
+            var top = appbarVisible ? appbar.offsetHeight : 0;
+            var gap = 12;
+            document.documentElement.style.setProperty('--queue-bar-top', top + 'px');
+            document.documentElement.style.setProperty('--queue-bar-bottom', (top + bar.offsetHeight) + 'px');
+            document.documentElement.style.setProperty('--queue-head-top', (top + bar.offsetHeight + gap) + 'px');
+        }
+
+        syncOffsets();
+        window.addEventListener('resize', syncOffsets);
+    })();
 
     /* "Save as Rule": prefill the pattern from the transaction description and
        open the rules manager (focus moves to the prefilled field). */

@@ -90,7 +90,9 @@ CREATE TABLE property_valuations (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Tenant lease agreements
+-- Tenant lease agreements. Rent attribution reads this term: a payment is
+-- attributed to a lease only when its date falls inside start_date..end_date, so a
+-- previous tenant's payments are never reassigned to the tenant who followed.
 CREATE TABLE leases (
     id TEXT PRIMARY KEY,
     property_id TEXT NOT NULL REFERENCES properties(id) ON DELETE RESTRICT,
@@ -100,6 +102,32 @@ CREATE TABLE leases (
     monthly_rent_cents INTEGER NOT NULL,       -- e.g. 260000 ($2,600.00)
     security_deposit_cents INTEGER NOT NULL,   -- e.g. 200000 ($2,000.00)
     is_active BOOLEAN NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- The bridge between what a bank prints and who actually pays. Written when a
+-- person confirms a rent inflow; later payments from the same remitter are
+-- attributed to that door without asking again. alias_key is the remitter
+-- normalised (lower case, single-letter initials and company suffixes dropped),
+-- so "TYLER J SAXSMA", "Tyler Saxsma" and "SAXSMA, TYLER" share one identity.
+CREATE TABLE tenant_aliases (
+    id TEXT PRIMARY KEY,                       -- "alias_<sha1(alias_key)[:16]>"
+    alias_key TEXT NOT NULL,                   -- normalised remitter
+    display_name TEXT NOT NULL,                -- as the bank printed it
+    tenant_name TEXT NOT NULL,                 -- as the lease records it
+    property_id TEXT NOT NULL REFERENCES properties(id) ON DELETE RESTRICT,
+    lease_id TEXT REFERENCES leases(id) ON DELETE SET NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX ix_tenant_aliases_alias_key ON tenant_aliases (alias_key);
+
+-- A payment a person has ruled out as rent received. The rent workbench derives
+-- candidates from bank wording and confirmed remitters; an amount equal to a
+-- door's rent is a hint, not evidence. A dismissal removes the suggestion only:
+-- the transaction stays in the review queue for its real classification.
+CREATE TABLE rent_candidate_dismissals (
+    transaction_id TEXT PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
+    reason TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 ```

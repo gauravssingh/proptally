@@ -12,6 +12,7 @@ from proptally.db.models import (
     AuditLog,
     FinancialAccount,
     JournalEntry,
+    JournalEntryLine,
     LoanAccount,
     PostingAuthorization,
     Transaction,
@@ -41,6 +42,7 @@ from proptally.domain.accounting.coa import (
 from proptally.domain.accounting.ledger import (
     add_journal_line,
     create_journal_entry,
+    is_entry_reversed,
     post_journal_entry,
     reverse_journal_entry,
 )
@@ -341,6 +343,55 @@ def check_governance_authorization(
     return policy
 
 
+
+def _entry_matches_splits(
+    session: Session,
+    txn: Transaction,
+    entry: JournalEntry,
+    splits: list[TransactionSplit],
+    is_settlement: bool,
+) -> bool:
+    """Whether an existing ledger entry records exactly this allocation.
+
+    Used when the processing state has lost track of a posting: the entry is
+    the authority, and re-posting is only safe when it says the same thing the
+    transaction now says.
+    """
+    lines = session.exec(
+        select(JournalEntryLine).where(JournalEntryLine.journal_entry_id == entry.id)
+    ).all()
+    if not lines:
+        return False
+    total = abs(txn.amount_cents)
+
+    if is_settlement:
+        # A settlement is a transfer between a card and a deposit account; the
+        # splits are reporting attribution only.
+        return len(lines) == 2 and sum(line.debit_cents for line in lines) == total
+
+    if txn.direction == "INFLOW":
+        posted = sorted(
+            (line.ledger_account_code, line.property_id or "", line.credit_cents)
+            for line in lines
+            if line.credit_cents > 0
+        )
+    else:
+        posted = sorted(
+            (line.ledger_account_code, line.property_id or "", line.debit_cents)
+            for line in lines
+            if line.debit_cents > 0
+        )
+    expected = sorted(
+        (
+            _resolve_split_account_code(session, split.category, split.property_id),
+            split.property_id or "",
+            split.amount_cents,
+        )
+        for split in splits
+    )
+    return posted == expected
+
+
 def post_transaction_to_ledger(
     session: Session,
     transaction_id: str,
@@ -428,6 +479,35 @@ def post_transaction_to_ledger(
         entry_type = "REVENUE_POST"
     base_key = f"TXN_POST:{txn.id}"
     key = f"{base_key}:{idempotency_suffix}" if idempotency_suffix else base_key
+
+    # The processing state is a projection of the ledger, and it can lose that
+    # projection (an interrupted attempt, a repair, an old import). The ledger is
+    # the authority: an entry already posted for this transaction is returned
+    # when it records the same allocation, and refused when it records another.
+    if not idempotency_suffix:
+        existing_entry = session.exec(
+            select(JournalEntry).where(JournalEntry.idempotency_key == base_key)
+        ).first()
+        if existing_entry is not None:
+            if (
+                existing_entry.status == "POSTED"
+                and not is_entry_reversed(session, existing_entry.id)
+                and _entry_matches_splits(session, txn, existing_entry, splits, is_settlement)
+            ):
+                proc_state.posting_status = "POSTED"
+                proc_state.journal_entry_id = existing_entry.id
+                session.add(proc_state)
+                if commit:
+                    session.commit()
+                    session.refresh(proc_state)
+                else:
+                    session.flush()
+                return existing_entry
+            raise ValueError(
+                f"Transaction {transaction_id} already has ledger entry {existing_entry.id} "
+                f"({existing_entry.status}) that does not match these allocations. "
+                "Reverse it with reclassify_and_repost_transaction before posting again."
+            )
 
     # Create journal entry
     je = create_journal_entry(

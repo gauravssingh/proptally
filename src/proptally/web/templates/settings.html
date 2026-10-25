@@ -349,7 +349,7 @@
             <td>{{ ui.badge(rule.default_category, variant="neutral", upper=true) }}</td>
             <td class="pt-text-muted">
                 {% if rule.default_property_id %}
-                    {% for p in properties %}{% if p.id == rule.default_property_id %}{{ p.name }}{% endif %}{% endfor %}
+                    {% for p in properties %}{% if p.id == rule.default_property_id %}{{ p.short_label or p.name }}{% endif %}{% endfor %}
                 {% else %}
                     Personal / unassigned
                 {% endif %}

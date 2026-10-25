@@ -1617,6 +1617,101 @@
     overflow-y: auto;
 }
 
+/* The queue scrolls with the page: one scrollbar for the window, and the
+   column header sticks to the viewport beneath the floating bulk bar. */
+.pt-table-wrap--page .pt-table-scroll {
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+@media (min-width: 1024px) {
+    .pt-table-wrap--page,
+    .pt-table-wrap--page .pt-table-scroll {
+        overflow: visible;
+    }
+}
+
+/* The queue scrolls with the page, so its column header must stick to the
+   viewport; the section card's corner clipping would otherwise capture it. */
+.pt-queue-section {
+    overflow: visible;
+}
+
+/* The bulk bar floats over the rows while the page scrolls, so the selection
+   count and Apply button stay reachable far down the queue. */
+.pt-queue-bulkbar {
+    position: sticky;
+    top: var(--queue-bar-top, 0);
+    z-index: 3;
+}
+
+/* Rows scroll behind this opaque strip between the bar and the header. */
+.pt-queue-sticky-gap {
+    position: sticky;
+    top: var(--queue-bar-bottom, 0);
+    height: 12px;
+    background-color: var(--pt-surface);
+    z-index: 2;
+}
+
+@media (max-width: 1023px) {
+    .pt-queue-bulkbar__hint {
+        display: none;
+    }
+
+    .pt-queue-bulkbar form {
+        width: 100%;
+    }
+
+    .pt-queue-bulkbar .pt-field {
+        flex: 1 1 7rem;
+        min-width: 0;
+    }
+
+    .pt-queue-bulkbar .pt-field select {
+        width: 100%;
+    }
+}
+
+/* A link-weight control inside the dark bulk bar, for clearing a selection
+   without adding another full-width button beside Select all. */
+.pt-queue-bulkbar__clear {
+    appearance: none;
+    background: none;
+    border: 0;
+    padding: 0;
+    margin-left: var(--pt-space-2);
+    font: inherit;
+    color: var(--pt-text-on-dark-muted);
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.pt-queue-bulkbar__clear::before {
+    content: "·";
+    margin-right: var(--pt-space-1);
+    text-decoration: none;
+}
+
+.pt-queue-bulkbar__clear:hover {
+    color: var(--pt-text-on-dark);
+}
+
+/* The header sticks to the viewport beneath the floating bar; the offset is
+   measured from the bar's height so rows cannot show through the gap. */
+.pt-table-wrap--page .pt-table thead th {
+    top: var(--queue-head-top, 0);
+}
+
+.pt-table tbody tr[data-queue-row] {
+    cursor: pointer;
+}
+
+.pt-table tbody tr.is-selected > td {
+    background-color: var(--pt-accent-soft);
+}
+
 /* Statement ingestion is a queue, not a report: keep the visible rows inside their
    own scroll region so the page, the rail and the inspector stay put. */
 .pt-statement-table .pt-table-scroll {
@@ -1763,6 +1858,13 @@
     font-variant-numeric: tabular-nums;
 }
 
+.pt-table th.pt-table__date--tight,
+.pt-table td.pt-table__date--tight,
+.pt-table__date--tight {
+    width: 6rem;
+    min-width: 6rem;
+}
+
 .pt-table th.pt-table__actions,
 .pt-table thead th.pt-table__actions,
 .pt-table__actions {
@@ -1791,6 +1893,141 @@
 .pt-portfolio-actions {
     width: 11rem;
     min-width: 11rem;
+}
+
+/* Inline assignment columns in the compact review queue. The select has to fit
+   a door name ("12307 TINSLEY ST"), so the cell is sized to the control rather
+   than left to the transaction description. */
+.pt-table__suggestion {
+    width: 7.5rem;
+    min-width: 7.5rem;
+}
+
+.pt-table__queue-action {
+    width: 9rem;
+    min-width: 9rem;
+}
+
+.pt-table__door {
+    width: 9rem;
+    min-width: 9rem;
+}
+
+.pt-table__category {
+    width: 7.75rem;
+    min-width: 7.75rem;
+}
+
+/* Wide desktops have the slack to show full street/category labels; the
+   >=1360 action budget and 1280 shell do not. */
+@media (min-width: 1440px) {
+    .pt-table__door {
+        width: 10.5rem;
+        min-width: 10.5rem;
+    }
+
+    .pt-table__category {
+        width: 8.5rem;
+        min-width: 8.5rem;
+    }
+}
+
+/* Rent rows carry two actions beside the inline form (Post and Not rent), so
+   the column needs a little more room than the queue's Post/Rule pair. */
+.pt-table__rent-action {
+    width: 10.5rem;
+    min-width: 10.5rem;
+}
+
+.pt-table th.pt-table__queue-action,
+.pt-table th.pt-table__rent-action {
+    text-align: right;
+}
+
+.pt-table__actionrow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--pt-space-2);
+}
+
+.pt-table__actionstack {
+    display: flex;
+    flex-direction: column;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: flex-end;
+    gap: var(--pt-space-1);
+}
+
+/* The queue and rent rows are a single line of controls: text, selects, and
+   buttons share the row's vertical centre rather than hanging from the top. */
+.pt-table-wrap--page .pt-table tbody td,
+.pt-table-wrap--page .pt-table tbody th {
+    vertical-align: middle;
+}
+
+/* Enough room for the sign-off, the secondary button and the primary button on
+   one line. Below this width the action cell stacks the sign-off under the
+   buttons so the transaction column keeps its text width. */
+@media (min-width: 1360px) {
+    .pt-gated-actions .pt-table__queue-action {
+        width: 15.5rem;
+        min-width: 15.5rem;
+    }
+
+    .pt-gated-actions .pt-table__rent-action {
+        width: 16.5rem;
+        min-width: 16.5rem;
+    }
+
+    .pt-gated-actions .pt-table__actionstack {
+        flex-direction: row;
+        align-items: center;
+        gap: var(--pt-space-2);
+    }
+
+    .pt-gated-actions .pt-table__actionstack .pt-table__gates {
+        order: -1;
+    }
+}
+
+/* Below the inline breakpoint the sign-off sits under the buttons. The top
+   padding is the sign-off's height plus the stack gap, so the button row still
+   centres on the row instead of riding above centre. */
+@media (max-width: 1359.98px) {
+    .pt-table__actionstack--gated {
+        padding-top: calc(1.125rem + var(--pt-space-1));
+    }
+}
+
+.pt-table__gates {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--pt-space-2);
+}
+
+.pt-table__primary .pt-fs-caption {
+    display: block;
+}
+
+.pt-table__queue-action form,
+.pt-table__rent-action form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--pt-space-1);
+    margin: 0;
+}
+
+.pt-table__door .pt-field,
+.pt-table__category .pt-field,
+.pt-table__door select,
+.pt-table__category select {
+    width: 100%;
 }
 
 /* Table legend & status flags */

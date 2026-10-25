@@ -138,7 +138,7 @@ def queue_env(tmp_path, monkeypatch, owner):
     yield signed_in, db_uri
 
 
-def test_review_queue_page_and_filtering(queue_env):
+def test_review_queue_page_and_filtering(queue_env, parse_html):
     signed_in, _ = queue_env
 
     # 1. Base page load returns total count (6 items: 3 Apple + 2 Hertz + 1 ATM)
@@ -146,7 +146,10 @@ def test_review_queue_page_and_filtering(queue_env):
     assert res.status_code == 200
     html = res.text
     assert "Reconciliation & Review Queue" in html
-    assert "6 Pending" in html
+    page = parse_html(html)
+    summary = page.select_one(".pt-fs-caption strong")
+    assert summary is not None and summary.get_text(strip=True) == "6"
+    assert page.select_one("[data-clear-selection]") is not None
     assert "Apple Services" in html
     assert "Hertz Rent-A-Car" in html
     assert "Vendor Classification Rules" in html
@@ -162,13 +165,80 @@ def test_review_queue_page_and_filtering(queue_env):
     assert res_hertz.status_code == 200
     assert "HERTZ RENT A CAR" in res_hertz.text
     assert "APPLE.COM/BILL" not in res_hertz.text
-    assert "Found 2 unallocated transactions" in res_hertz.text
+    page = parse_html(res_hertz.text)
+    assert len(page.select('form[id^="rowForm_"]')) == 2
 
     # 4. Governance gate filter (?gate=CBD1)
     res_cbd1 = signed_in.client.get("/reconciliation?gate=CBD1")
     assert res_cbd1.status_code == 200
     assert "BKOFAMERICA ATM DEPOSIT CARPENTERSVILLE" in res_cbd1.text
     assert "APPLE.COM/BILL" not in res_cbd1.text
+
+
+def test_vendor_chip_filters_by_suggestion_vendor_name(tmp_path, owner):
+    """A chip labeled with a suggestion's vendor name must return those rows.
+
+    "Retail / Dining" is a suggestion vendor name, not a substring of the bank
+    text or the rule description, so the filter has to consider it explicitly.
+    """
+    db_uri = f"sqlite:///{tmp_path / 'vendor_chip.db'}"
+    engine = get_engine(db_uri)
+    init_schema(engine)
+
+    with Session(engine) as session:
+        ensure_entity_ledger_accounts(session)
+        session.add(Document(
+            id="doc_vendor_chip",
+            file_sha256="sha_vendor_chip",
+            original_filename="stmt.pdf",
+            storage_path="/tmp/stmt.pdf",
+            file_size_bytes=100,
+        ))
+        session.add(FinancialInstitution(id="inst_vendor_chip", name="Bank of America"))
+        session.flush()
+        session.add(FinancialAccount(
+            id="acct_vendor_chip",
+            institution_id="inst_vendor_chip",
+            account_name="Checking",
+            account_type="CHECKING",
+            account_number_masked="...9456",
+        ))
+        session.add(Statement(
+            id="stmt_vendor_chip",
+            document_id="doc_vendor_chip",
+            financial_account_id="acct_vendor_chip",
+            statement_type="CHECKING",
+            active_parser_name="Test",
+            active_parser_version="1.0",
+            statement_date=date(2026, 2, 1),
+        ))
+        for tx_id, description, amount in (
+            ("tx_restaurant", "WOODLANDS RESTAURANT FAIRFAX VA", -5151),
+            ("tx_apple", "APPLE.COM/BILL CUPERTINO CA", -299),
+        ):
+            session.add(Transaction(
+                id=tx_id,
+                statement_id="stmt_vendor_chip",
+                financial_account_id="acct_vendor_chip",
+                transaction_date=date(2026, 1, 10),
+                amount_cents=amount,
+                direction="OUTFLOW",
+                raw_description=description,
+            ))
+            session.add(TransactionProcessingState(
+                transaction_id=tx_id,
+                allocation_status="UNALLOCATED",
+                allocated_cents=0,
+                residual_cents=abs(amount),
+                posting_status="UNPOSTED",
+            ))
+        session.commit()
+
+    signed_in = owner(db_url=db_uri)
+    res = signed_in.client.get("/reconciliation?vendor_pattern=Retail%20%2F%20Dining")
+    assert res.status_code == 200
+    assert "WOODLANDS RESTAURANT" in res.text
+    assert "APPLE.COM/BILL" not in res.text
 
 
 def test_batch_vendor_rule_application(queue_env):
@@ -293,7 +363,7 @@ def test_a_rule_requiring_confirmation_stages_instead_of_authorising(queue_env):
             ).all()
 
 
-def test_batch_vendor_rule_by_vendor_display_name_and_truncated_raw_desc(queue_env):
+def test_batch_vendor_rule_by_vendor_display_name_and_truncated_raw_desc(queue_env, parse_html):
     """Batch action succeeds when vendor_pattern is the vendor display name,
     the rule pattern is a prefix, and the raw description is truncated bank text.
     """
@@ -324,7 +394,8 @@ def test_batch_vendor_rule_by_vendor_display_name_and_truncated_raw_desc(queue_e
     # 1. Reconciliation view matches on vendor display name
     res = signed_in.client.get("/reconciliation?vendor_pattern=Hughes Network Systems")
     assert res.status_code == 200
-    assert "Found 3 unallocated transactions" in res.text
+    page = parse_html(res.text)
+    assert len(page.select('form[id^="rowForm_"]')) == 3
 
     # 2. Batch post using the vendor display name
     res_batch = signed_in.post(
@@ -345,4 +416,44 @@ def test_batch_vendor_rule_by_vendor_display_name_and_truncated_raw_desc(queue_e
             st = session.get(TransactionProcessingState, f"tx_hughes_{i}")
             assert st.allocation_status == "FULLY_ALLOCATED"
             assert st.posting_status == "POSTED"
+
+
+def test_vendor_rules_table_displays_property_name_not_id(queue_env):
+    """The saved vendor rules table in the reconciliation view displays the property's
+    name/short label instead of the raw property ID.
+    """
+    signed_in, db_uri = queue_env
+    engine = get_engine(db_uri)
+    with Session(engine) as session:
+        prop = session.exec(select(Property)).first()
+        assert prop is not None
+        prop_id = prop.id
+        expected_name = prop.short_label or prop.name
+        rule = session.get(VendorRule, "vrule_regency_hoa")
+        if rule:
+            rule.default_property_id = prop_id
+        else:
+            rule = VendorRule(
+                id="vrule_regency_hoa",
+                pattern="REGENCY SQUARE",
+                vendor_name="Regency Square HOA",
+                service_type="Homeowners Association Assessments & Common Dues",
+                default_category="HOA",
+                default_property_id=prop_id,
+                confidence=0.95,
+                is_active=True,
+            )
+            session.add(rule)
+        session.commit()
+
+    soup = signed_in.soup("/reconciliation")
+    rule_cell = soup.find("td", string=lambda s: s and "REGENCY SQUARE" in s)
+    assert rule_cell is not None
+    row = rule_cell.find_parent("tr")
+    row_text = row.get_text()
+
+    # The raw property ID must NOT appear in the rendered row
+    assert prop_id not in row_text
+    # The property name or short label MUST appear
+    assert expected_name in row_text
 

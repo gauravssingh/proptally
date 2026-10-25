@@ -547,6 +547,48 @@ def _migrate_constraints(engine) -> int:
     return len(needing)
 
 
+def _heal_posted_transaction_states(engine) -> int:
+    """Points a processing state at the ledger entry its transaction already has.
+
+    ``posting_status`` is a projection of the ledger, not the ledger itself. An
+    interrupted posting (or an older import) can leave a transaction allocated
+    and its entry posted while the state still says UNPOSTED. That puts an
+    already-posted record back in the review queue, and the next posting attempt
+    then collides with the entry's idempotency key.
+
+    Only the entry created under the transaction's own base key is adopted, so a
+    reclassified transaction (posted under a suffixed key) is never mistaken for
+    the current one.
+    """
+    with engine.connect() as conn:
+        # A partial database written by another code line may not have both
+        # tables yet; there is nothing to heal there.
+        if not _table_exists(conn, "transaction_processing_states") or not _table_exists(
+            conn, "journal_entries"
+        ):
+            return 0
+
+    with engine.begin() as conn:
+        result = conn.execute(text(
+            _sql("""
+                UPDATE transaction_processing_states
+                SET posting_status = 'POSTED',
+                    journal_entry_id = (
+                        SELECT je.id FROM journal_entries je
+                        WHERE je.idempotency_key = 'TXN_POST:' || transaction_processing_states.transaction_id
+                          AND je.status = 'POSTED'
+                    )
+                WHERE posting_status != 'POSTED'
+                  AND EXISTS (
+                        SELECT 1 FROM journal_entries je
+                        WHERE je.idempotency_key = 'TXN_POST:' || transaction_processing_states.transaction_id
+                          AND je.status = 'POSTED'
+                  )
+            """)
+        ))
+        return result.rowcount or 0
+
+
 def _create_portfolio_setup(engine) -> int:
     """Creates the guided-setup state table and enrolls empty portfolios.
 
@@ -643,6 +685,7 @@ SCHEMA_MIGRATIONS = (
     # written by another code line may not have the ledger tables the generic
     # constraint step reinstalls triggers for.
     (109, "allow PROCESSING document extraction status", _migrate_document_extraction_status),
+    (110, "heal processing states from posted ledger entries", _heal_posted_transaction_states),
 )
 
 

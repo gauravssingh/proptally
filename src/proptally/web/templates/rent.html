@@ -1,0 +1,358 @@
+{% extends "base.html" %}
+{% import "components/ui.html" as ui with context %}
+
+{% block title %}Rent Received — PropTally{% endblock %}
+
+{# ===========================================================================
+   Rent received.
+   ---------------------------------------------------------------------------
+   The same queue shape as the reconciliation register, scoped to tenant
+   payments: one compact row per inflow, the evidence that supports it, and the
+   one decision left to a person. Nothing posts without a person confirming it,
+   and a confirmation teaches the remitter alias so the next month is
+   attributed automatically.
+   =========================================================================== #}
+{% block content %}
+
+{% call ui.page_header(
+    "Rent Received",
+    "Search tenant payments, confirm which property they belong to, and post rent income or a tenant deposit."
+) %}
+    {{ ui.btn("Back to review queue", variant="secondary", href="/reconciliation") }}
+{% endcall %}
+
+<div class="pt-flex pt-flex-wrap pt-items-baseline pt-gap-4">
+    <span class="pt-fs-caption pt-text-secondary">
+        <strong>{{ candidate_count }}</strong> candidates
+    </span>
+    <span class="pt-fs-caption pt-text-secondary">
+        <strong>{{ ready_count }}</strong> ready to post
+    </span>
+    <span class="pt-fs-caption pt-text-secondary">
+        <strong>{{ needs_door_count }}</strong> need a property
+    </span>
+</div>
+
+{% set door_options = [{"value": "", "label": "Choose…"}] %}
+{% for p in properties %}
+    {% set _ = door_options.append({"value": p.id, "label": p.name}) %}
+{% endfor %}
+
+{% set state_options = [
+    {"value": "pending", "label": "Awaiting classification"},
+    {"value": "all", "label": "Include posted history"},
+    {"value": "dismissed", "label": "Ruled out (not rent)"}
+] %}
+
+{% set category_options = [
+    {"value": "", "label": "Choose"},
+    {"value": "RENT_INCOME", "label": "Rent"},
+    {"value": "SECURITY_DEPOSIT", "label": "Deposit"}
+] %}
+
+{% set bulk_door_options = [{"value": "", "label": "Use each payment's suggestion"}] %}
+{% for p in properties %}
+    {% set _ = bulk_door_options.append({"value": p.id, "label": p.name}) %}
+{% endfor %}
+
+{% set bulk_category_options = [
+    {"value": "", "label": "Use each payment's suggestion"},
+    {"value": "RENT_INCOME", "label": "Rent income"},
+    {"value": "SECURITY_DEPOSIT", "label": "Security deposit"}
+] %}
+
+{% set has_active_filters = active_filters.q
+    or active_filters.property_id
+    or active_filters.state != "pending" %}
+
+<form method="GET" action="/reconciliation/rent" class="pt-filterbar" role="search"
+      aria-label="Filter rent received">
+    <div class="pt-filterbar__grid pt-filterbar__grid--actions">
+        {{ ui.search_field(
+            "q", "Search remitter or memo", value=active_filters.q,
+            placeholder="e.g. Dzitkowski, rent, Tinsley…",
+            cls="pt-filterbar__grid--wide"
+        ) }}
+        {{ ui.select_field("property_id", "Property", door_options,
+                           selected=active_filters.property_id, cls="pt-field--sm") }}
+        {{ ui.select_field("state", "Status", state_options,
+                           selected=active_filters.state, cls="pt-field--sm") }}
+        <div class="pt-filterbar__submit">
+            <span class="pt-fs-caption pt-text-muted">{{ candidate_count }} in view</span>
+            {% if has_active_filters %}
+            {{ ui.btn("Clear", variant="ghost", size="sm", href="/reconciliation/rent") }}
+            {% endif %}
+            {{ ui.btn("Apply filters", variant="neutral", size="sm", type="submit") }}
+        </div>
+    </div>
+</form>
+
+{% if selectable_count > 0 %}
+<div class="pt-batchbar pt-queue-bulkbar">
+    <div>
+        <div class="pt-flex pt-items-center pt-gap-2">
+            {{ ui.badge("Bulk apply", variant="chrome", upper=true) }}
+            <h3 class="pt-batchbar__title">Select payments, then apply one property and category</h3>
+        </div>
+        <p class="pt-batchbar__note">
+            {{ selectable_count }} in this view &middot; <span data-bulk-count>0 selected</span>
+            <button type="button" class="pt-queue-bulkbar__clear" data-clear-selection hidden>Clear selection</button><span class="pt-queue-bulkbar__hint">. Leave a menu on “Use each payment's suggestion” to apply what the evidence proposes. Rows that need a sign-off are left unposted.</span>
+        </p>
+    </div>
+    <form id="rentBulkForm" action="/reconciliation/rent/apply" method="POST"
+          class="pt-flex pt-flex-wrap pt-items-end pt-gap-3">
+        {{ csrf_field() }}
+        {{ ui.select_field("property_id", "Property for all", bulk_door_options, cls="pt-field--sm") }}
+        {{ ui.select_field("category", "Category for all", bulk_category_options, cls="pt-field--sm") }}
+        {% if ready_count > 0 %}
+        {{ ui.btn("Select all ready", variant="secondary", size="sm", type="button",
+                  attrs="data-select-ready") }}
+        {% endif %}
+        {{ ui.btn("Apply to selected", variant="primary", size="sm", type="submit",
+                  attrs="data-bulk-submit") }}
+    </form>
+</div>
+{% endif %}
+
+{% set section_meta %}
+    {{ ui.badge(candidate_count ~ " in view", variant="neutral", upper=false,
+                title="Payments listed below, not the whole ledger.") }}
+{% endset %}
+
+{{ ui.section_open(
+    "Payments",
+    "Bank wording and confirmed tenants are evidence. A matching amount is only a hint; “Not rent” removes a payment from this list.",
+    actions=section_meta,
+    cls="pt-queue-section"
+) }}
+
+{% if rows %}
+<div class="pt-queue-sticky-gap" aria-hidden="true"></div>
+{% set rent_gate_ns = namespace(any=false) %}
+{% for row in rows %}
+    {% if not row.dismissed and not row.candidate.is_settled and row.policy
+          and (row.policy.requires_client_confirmation or row.policy.requires_cpa_review) %}
+        {% set rent_gate_ns.any = true %}
+    {% endif %}
+{% endfor %}
+{{ ui.table_open(compact=true, label="Rent received",
+                 cls="pt-table-wrap--page" ~ (" pt-gated-actions" if rent_gate_ns.any else "")) }}
+    <thead>
+        <tr>
+            <th scope="col"><span class="pt-sr-only">Select</span></th>
+            {{ ui.th("Date", cls="pt-table__date pt-table__date--tight") }}
+            {{ ui.th("Tenant & memo") }}
+            {{ ui.th("Amount", num=true) }}
+            {{ ui.th("Evidence") }}
+            {{ ui.th("Property", cls="pt-table__door") }}
+            {{ ui.th("Category", cls="pt-table__category") }}
+            {{ ui.th("Action", cls="pt-table__rent-action") }}
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        {% set c = row.candidate %}
+        {% set row_form_id = "rentRowForm_" ~ c.transaction.id %}
+        <tr{% if not c.is_settled and not row.dismissed %} data-queue-row{% endif %}>
+            <td>
+                {% if not c.is_settled and not row.dismissed %}
+                <input type="checkbox" name="transaction_id" value="{{ c.transaction.id }}"
+                       form="rentBulkForm" data-bulk-pick
+                       data-ready="{{ 'true' if c.is_actionable else 'false' }}"
+                       aria-label="Select {{ c.tenant_name or c.transaction.raw_description }}">
+                {% endif %}
+            </td>
+            <td class="pt-table__date pt-table__date--tight" title="{{ c.transaction.transaction_date | format_date }}">{{ c.transaction.transaction_date | format_date_numeric }}</td>
+            <td class="pt-table__primary" title="{{ c.transaction.raw_description }}">
+                {{ c.tenant_name or "No remitter named" }}
+                <span class="pt-fs-caption pt-text-muted">
+                    {% if c.payment and c.payment.memo %}“{{ c.payment.memo }}”
+                    {% else %}{{ c.transaction.raw_description[:60] }}{% if c.transaction.raw_description | length > 60 %}…{% endif %}{% endif %}
+                </span>
+            </td>
+            <td class="pt-table__num">{{ ui.amount(c.amount_cents, mode="income", strong=true) }}</td>
+            <td>
+                {% if row.dismissed %}
+                    {{ ui.badge("Not rent", variant="warning", upper=true) }}
+                    <span class="pt-fs-caption pt-text-muted">Ruled out as rent</span>
+                {% elif c.is_settled %}
+                    {{ ui.badge("In ledger", variant="neutral", upper=true, dot=true) }}
+                    <span class="pt-fs-caption pt-text-muted">{{ c.reasons | join(" · ") if c.reasons else "Already posted" }}</span>
+                {% elif c.payment and c.payment.is_mixed_deposit_and_rent %}
+                    {{ ui.badge("Split needed", variant="warning", upper=false) }}
+                    <span class="pt-fs-caption pt-text-muted">Split the rent and deposit manually</span>
+                {% else %}
+                    {% if c.category == "SECURITY_DEPOSIT" %}
+                        {{ ui.badge("Security deposit", variant="outline", upper=false) }}
+                    {% elif c.category == "RENT_INCOME" %}
+                        {{ ui.badge("Rent income", variant="outline", upper=false) }}
+                    {% else %}
+                        {{ ui.badge("No category", variant="warning", upper=false) }}
+                    {% endif %}
+                    <span class="pt-fs-caption pt-text-muted">{{ c.reasons | join(" · ") if c.reasons else "No rent wording" }}</span>
+                    {% set needed = c.blockers | reject("equalto", "Choose the property") | list %}
+                    {% if needed %}
+                    <span class="pt-fs-caption pt-text-muted">Still: {{ needed | join(" · ") }}</span>
+                    {% endif %}
+                {% endif %}
+            </td>
+            <td class="pt-table__door">
+                {% if row.dismissed or c.is_settled %}
+                    <span class="pt-text-muted">{{ c.door.name if c.door else "—" }}</span>
+                {% else %}
+                    {{ ui.select_field("property_id", "Property", door_options,
+                                       selected=(c.door.id if c.door else ""), required=true,
+                                       cls="pt-field--sm", hidden_label=true,
+                                       extra='form="' ~ row_form_id ~ '"') }}
+                {% endif %}
+            </td>
+            <td class="pt-table__category">
+                {% if row.dismissed or c.is_settled %}
+                    <span class="pt-text-muted">{{ c.category or "—" }}</span>
+                {% else %}
+                    {{ ui.select_field("category", "Category", category_options,
+                                       selected=(c.category or ""), required=true,
+                                       cls="pt-field--sm", hidden_label=true,
+                                       extra='form="' ~ row_form_id ~ '"') }}
+                {% endif %}
+            </td>
+            <td class="pt-table__rent-action">
+                {% if row.dismissed %}
+                <div class="pt-table__actionrow">
+                    <form action="/reconciliation/rent/restore" method="POST">
+                        {{ csrf_field() }}
+                        <input type="hidden" name="transaction_id" value="{{ c.transaction.id }}">
+                        {{ ui.btn("Restore", variant="secondary", size="sm", type="submit") }}
+                    </form>
+                </div>
+                {% elif not c.is_settled %}
+                <form id="{{ row_form_id }}" action="/reconciliation/rent/row" method="POST">
+                    {{ csrf_field() }}
+                    <input type="hidden" name="transaction_id" value="{{ c.transaction.id }}">
+                </form>
+                <div class="pt-table__actionstack{% if row.policy and (row.policy.requires_client_confirmation or row.policy.requires_cpa_review) %} pt-table__actionstack--gated{% endif %}">
+                    <div class="pt-table__actionrow">
+                        <form action="/reconciliation/rent/dismiss" method="POST">
+                            {{ csrf_field() }}
+                            <input type="hidden" name="transaction_id" value="{{ c.transaction.id }}">
+                            {{ ui.btn("Not rent", variant="secondary", size="sm", type="submit",
+                                      title="Remove this payment from rent candidates. It stays in the review queue.") }}
+                        </form>
+                        {{ ui.btn("Post", variant="neutral", size="sm", type="submit",
+                                  attrs='form="' ~ row_form_id ~ '"',
+                                  title="Post to the ledger, or hold for a sign-off when a gate is unmet.") }}
+                    </div>
+                    {% if row.policy and (row.policy.requires_client_confirmation or row.policy.requires_cpa_review) %}
+                    <div class="pt-table__gates">
+                        {% if row.policy.requires_client_confirmation %}
+                        <label class="pt-check pt-fs-caption" for="rent_client_{{ c.transaction.id }}">
+                            <input type="checkbox" id="rent_client_{{ c.transaction.id }}" name="client_confirmed"
+                                   form="{{ row_form_id }}">
+                            <span class="pt-check__label">Client OK</span>
+                        </label>
+                        {% endif %}
+                        {% if row.policy.requires_cpa_review %}
+                        <label class="pt-check pt-fs-caption" for="rent_cpa_{{ c.transaction.id }}">
+                            <input type="checkbox" id="rent_cpa_{{ c.transaction.id }}" name="user_attested_cpa_review"
+                                   form="{{ row_form_id }}">
+                            <span class="pt-check__label">CPA OK</span>
+                        </label>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+{{ ui.table_close() }}
+{% else %}
+    {{ ui.empty_state(
+        "No rent payments found",
+        "Nothing in the scanned window carries rent evidence. Search a remitter or memo, or include posted history.",
+        action_label=("Clear the filters" if has_active_filters else none),
+        action_href=("/reconciliation/rent" if has_active_filters else none),
+        icon_name="check_circle"
+    ) }}
+{% endif %}
+
+{{ ui.section_close() }}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var form = document.getElementById('rentBulkForm');
+    if (!form) return;
+
+    var picks = Array.prototype.slice.call(document.querySelectorAll('[data-bulk-pick]'));
+    var submit = form.querySelector('[data-bulk-submit]');
+    var count = document.querySelector('[data-bulk-count]');
+    var clear = document.querySelector('[data-clear-selection]');
+
+    function refresh() {
+        var selected = 0;
+        picks.forEach(function (box) {
+            if (box.checked) selected += 1;
+            var row = box.closest('tr');
+            if (row) row.classList.toggle('is-selected', box.checked);
+        });
+        if (count) count.textContent = selected + ' selected';
+        if (submit) {
+            submit.textContent = selected ? 'Apply to ' + selected + ' selected' : 'Apply to selected';
+            submit.disabled = selected === 0;
+        }
+        if (clear) clear.hidden = selected === 0;
+    }
+
+    picks.forEach(function (box) { box.addEventListener('change', refresh); });
+
+    /* The whole row is the toggle; controls inside it keep their own behaviour. */
+    document.querySelectorAll('tr[data-queue-row]').forEach(function (row) {
+        row.addEventListener('click', function (event) {
+            if (event.target.closest('a, button, input, select, textarea, label, form')) return;
+            var box = row.querySelector('[data-bulk-pick]');
+            if (!box) return;
+            box.checked = !box.checked;
+            refresh();
+        });
+    });
+
+    var ready = document.querySelector('[data-select-ready]');
+    if (ready) ready.addEventListener('click', function () {
+        picks.forEach(function (box) {
+            if (box.dataset.ready === 'true') box.checked = true;
+        });
+        refresh();
+    });
+
+    if (clear) clear.addEventListener('click', function () {
+        picks.forEach(function (box) { box.checked = false; });
+        refresh();
+    });
+
+    refresh();
+
+    /* Same floating bar/header offsets as the review queue. */
+    (function () {
+        var bar = document.querySelector('.pt-queue-bulkbar');
+        if (!bar) return;
+
+        function syncOffsets() {
+            var appbar = document.querySelector('.pt-appbar');
+            var appbarVisible = appbar && getComputedStyle(appbar).display !== 'none';
+            var top = appbarVisible ? appbar.offsetHeight : 0;
+            var gap = 12;
+            document.documentElement.style.setProperty('--queue-bar-top', top + 'px');
+            document.documentElement.style.setProperty('--queue-bar-bottom', (top + bar.offsetHeight) + 'px');
+            document.documentElement.style.setProperty('--queue-head-top', (top + bar.offsetHeight + gap) + 'px');
+        }
+
+        syncOffsets();
+        window.addEventListener('resize', syncOffsets);
+    })();
+})();
+</script>
+{% endblock %}

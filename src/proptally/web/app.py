@@ -51,6 +51,7 @@ from proptally.web.helpers import (
     format_cents,
     format_cents_sign,
     format_date,
+    format_date_numeric,
     initials,
 )
 from proptally.web.property_forms import fresh_coordinates, google_maps_url
@@ -146,6 +147,7 @@ def create_app(
     templates.env.filters["format_cents_sign"] = format_cents_sign
     templates.env.filters["format_bps"] = format_bps
     templates.env.filters["format_date"] = format_date
+    templates.env.filters["format_date_numeric"] = format_date_numeric
     templates.env.filters["format_bytes"] = format_bytes
     templates.env.filters["initials"] = initials
     # Stylesheets are fetched with a version query, so a changed file is a changed URL and

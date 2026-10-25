@@ -104,6 +104,13 @@ def format_date(d: Optional[date]) -> str:
     return d.strftime("%b %d, %Y")
 
 
+def format_date_numeric(d: Optional[date]) -> str:
+    """Compact US date for dense tables: 2026-03-28 -> 03/28/2026."""
+    if not d:
+        return "—"
+    return d.strftime("%m/%d/%Y")
+
+
 def asset_version() -> str:
     """Cache-busting version for the design-system stylesheets and scripts.
 

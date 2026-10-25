@@ -126,6 +126,44 @@ class Lease(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class TenantAlias(SQLModel, table=True):
+    """A bank remitter confirmed to be a known tenant on one rental door.
+
+    The remitter a bank prints is not the tenant's name: it carries initials,
+    ordering and casing the lease does not. This record is the bridge, written
+    when a person confirms a rent payment, so later payments from the same
+    remitter are attributed without asking again. ``alias_key`` is the
+    normalised form (lower case, single letters and company suffixes removed)
+    and is unique within a portfolio database.
+    """
+
+    __tablename__ = "tenant_aliases"
+
+    id: str = Field(primary_key=True)  # "alias_<sha1(alias_key)>"
+    alias_key: str = Field(index=True)  # normalised remitter, see rent._name_key
+    display_name: str  # as the bank printed it, for the review table
+    tenant_name: str  # the name on the lease, when one exists
+    property_id: str = Field(foreign_key="properties.id")
+    lease_id: Optional[str] = Field(default=None, foreign_key="leases.id")
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class RentDismissal(SQLModel, table=True):
+    """A transaction a person has ruled out as rent received.
+
+    Discovery proposes rent from bank wording and confirmed remitters, and an
+    amount equal to a door's rent is a hint, not evidence. When the owner says a
+    payment is not rent, this record keeps it out of the rent workbench; the
+    transaction itself stays in the review queue for its real classification.
+    """
+
+    __tablename__ = "rent_candidate_dismissals"
+
+    transaction_id: str = Field(primary_key=True, foreign_key="transactions.id")
+    reason: Optional[str] = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 # --- 2. Financial Accounts & Mortgage Domain ---
 
 class FinancialInstitution(SQLModel, table=True):

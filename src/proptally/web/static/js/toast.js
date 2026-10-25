@@ -111,7 +111,7 @@
     try {
         var url = new URL(window.location.href);
         var changed = false;
-        ["message", "error"].forEach(function (key) {
+        ["message", "error", "posted", "allocated", "skipped"].forEach(function (key) {
             if (url.searchParams.has(key)) {
                 url.searchParams.delete(key);
                 changed = true;

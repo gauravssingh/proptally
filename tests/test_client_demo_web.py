@@ -22,7 +22,7 @@ def csrf_fixture(signed_in):
     return signed_in.csrf()
 
 
-def test_dashboard_overview_renders_successfully(client: TestClient):
+def test_dashboard_overview_renders_successfully(client: TestClient, parse_html):
     """GET / renders portfolio overview with equity, debt, NOI, CADS, and property cards."""
     response = client.get("/")
     assert response.status_code == 200
@@ -39,7 +39,9 @@ def test_dashboard_overview_renders_successfully(client: TestClient):
     assert "2718 Foxglove Ct" in html
     assert "3345 Elderberry Dr" in html
     assert "PRIMARY RESIDENCE" in html
-    assert "CBD REVIEW" in html  # Review queue alert
+    page = parse_html(html)
+    review_banner = page.select_one('.pt-alert--strip a[href="/reconciliation"]')
+    assert review_banner is not None, "the review-queue banner must link to the queue"
 
 
 def test_property_detail_views(client: TestClient):
@@ -147,7 +149,7 @@ def test_transaction_split_flow(client: TestClient, csrf: str):
     assert "Allocated" in resp_split.text
 
 
-def test_reconciliation_review_queue_and_assignment(client: TestClient, csrf: str):
+def test_reconciliation_review_queue_and_assignment(client: TestClient, csrf: str, parse_html):
     """GET /reconciliation displays CBD-1 and CBD-2 items; POST /reconciliation/assign resolves an item."""
     # 1. Review queue contains CBD-1 and CBD-2
     resp_queue = client.get("/reconciliation")
@@ -155,10 +157,14 @@ def test_reconciliation_review_queue_and_assignment(client: TestClient, csrf: st
     html = resp_queue.text
 
     assert "Reconciliation & Review Queue" in html
-    assert "CBD-1 CASH RENT" in html
-    assert "CBD-2 MIXED CARD" in html
-    assert "ATM CASH DEPOSIT" in html
-    assert "APPLE.COM/BILL" in html
+    page = parse_html(html)
+    items = page.select("table tbody tr")
+
+    atm_item = next(item for item in items if "ATM CASH DEPOSIT" in item.get_text())
+    assert atm_item.select_one('input[name="client_confirmed"]') is not None
+
+    card_item = next(item for item in items if "APPLE.COM/BILL" in item.get_text())
+    assert card_item.select_one('input[name="user_attested_cpa_review"]') is not None
 
     # 2. Assign CBD-1 ATM Deposit. The backend gate rejects the request without
     #    explicit client confirmation, regardless of what the UI sends.
