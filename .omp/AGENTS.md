@@ -3,7 +3,7 @@
 @../GEMINI.md
 
 ## Runtime
-- Live service: launchd `com.proptally.mt`, port 8141, this checkout, its own `.venv`; the plist runs `scripts/run_server.sh`. The older checkout (`com.proptally.server`) stays separate on 8080 — never merge the two.
+- Live service: launchd `com.proptally.mt`, port 8141, this checkout, its own `.venv`; the plist runs `scripts/run_server.sh`. The legacy server (`com.proptally.server` on 8080) is retired.
 - After any Python, template, or static change:
   1. `launchctl kickstart -k gui/$(id -u)/com.proptally.mt`
   2. `lsof -nP -iTCP:8141 -sTCP:LISTEN` must show **exactly one** PID
